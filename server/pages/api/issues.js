@@ -1,11 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = process.env.NEXT_PUBLIC_SUPABASE_URL
-  ? createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    )
-  : null;
+const supabaseKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+const supabase =
+  process.env.NEXT_PUBLIC_SUPABASE_URL && supabaseKey
+    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, supabaseKey)
+    : null;
 
 export default async function handler(req, res) {
   if (!supabase) {

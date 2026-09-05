@@ -56,6 +56,7 @@ ALTER TABLE issues ENABLE ROW LEVEL SECURITY;
 -- Create public access policies
 CREATE POLICY "Allow read all" ON jobs FOR SELECT USING (true);
 CREATE POLICY "Allow insert" ON jobs FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow update" ON jobs FOR UPDATE USING (true) WITH CHECK (true); -- needed for upsert on job_id
 CREATE POLICY "Allow read all" ON materials FOR SELECT USING (true);
 CREATE POLICY "Allow insert" ON materials FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow read all" ON issues FOR SELECT USING (true);
