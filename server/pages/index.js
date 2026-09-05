@@ -15,6 +15,9 @@ export async function getServerSideProps({ req, res }) {
     return { redirect: { destination: '/login', permanent: false } };
   }
 
+  // Prefer a `profiles` row (server/db/001_profiles.sql); fall back to the
+  // values stored on the user at creation time so auth works before that
+  // migration is run.
   let profile = null;
   try {
     const { data } = await supabase
@@ -24,15 +27,20 @@ export async function getServerSideProps({ req, res }) {
       .maybeSingle();
     profile = data;
   } catch {
-    // profiles table not set up yet — fall back to defaults below
+    // profiles table not set up yet
   }
+
+  const meta = user.user_metadata || {};
+  const appMeta = user.app_metadata || {};
+  // app_metadata is not user-writable, so it wins over user_metadata.
+  const role = profile?.role || appMeta.role || meta.role || 'operator';
 
   const ftUser = {
     id: user.id,
     email: user.email,
-    fullName: profile?.full_name || user.email,
-    role: profile?.role || 'operator',
-    station: profile?.station || 'LINE 02 · STASIUN W-04',
+    fullName: profile?.full_name || meta.full_name || user.email,
+    role: ['operator', 'gudang', 'admin'].includes(role) ? role : 'operator',
+    station: profile?.station || meta.station || 'LINE 02 · STASIUN W-04',
   };
 
   const filePath = path.join(process.cwd(), '..', 'design', 'stitch', 'app.html');

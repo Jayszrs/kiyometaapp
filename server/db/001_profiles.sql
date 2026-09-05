@@ -30,11 +30,19 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  meta_role text := coalesce(
+    new.raw_app_meta_data ->> 'role',
+    new.raw_user_meta_data ->> 'role'
+  );
 begin
-  insert into public.profiles (id, full_name)
+  insert into public.profiles (id, full_name, role, station)
   values (
     new.id,
-    coalesce(new.raw_user_meta_data ->> 'full_name', new.email)
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.email),
+    case when meta_role in ('operator', 'gudang', 'admin')
+         then meta_role else 'operator' end,
+    new.raw_user_meta_data ->> 'station'
   )
   on conflict (id) do nothing;
   return new;
@@ -46,10 +54,20 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- 3. Backfill profiles for users that already exist.
-insert into public.profiles (id, full_name)
-select id, coalesce(raw_user_meta_data ->> 'full_name', email)
-from auth.users
+-- 3. Backfill profiles for users that already exist (reads role/station/name
+--    from the metadata set when the account was created).
+insert into public.profiles (id, full_name, role, station)
+select
+  u.id,
+  coalesce(u.raw_user_meta_data ->> 'full_name', u.email),
+  case
+    when coalesce(u.raw_app_meta_data ->> 'role', u.raw_user_meta_data ->> 'role')
+         in ('operator', 'gudang', 'admin')
+    then coalesce(u.raw_app_meta_data ->> 'role', u.raw_user_meta_data ->> 'role')
+    else 'operator'
+  end,
+  u.raw_user_meta_data ->> 'station'
+from auth.users u
 on conflict (id) do nothing;
 
 -- 4. Set roles for your accounts (edit the emails):
