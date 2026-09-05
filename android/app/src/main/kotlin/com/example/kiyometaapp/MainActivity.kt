@@ -1,0 +1,5 @@
+package com.example.kiyometaapp
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
