@@ -24,8 +24,18 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { job_id, customer, product, qty_target, qty_completed, status } =
-        req.body;
+      const {
+        job_id,
+        customer,
+        product,
+        qty_target,
+        qty_completed,
+        status,
+        order_no,
+        product_type,
+        operation_type,
+        route,
+      } = req.body;
 
       if (!job_id) {
         return res.status(400).json({ error: 'job_id is required' });
@@ -41,14 +51,31 @@ export default async function handler(req, res) {
         updated_at: new Date().toISOString(),
       };
       if (qty_completed != null) record.qty_completed = qty_completed;
+      const optional = { order_no, product_type, operation_type, route };
+      for (const [k, v] of Object.entries(optional)) {
+        if (v !== undefined) record[k] = v;
+      }
 
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('jobs')
         .upsert([record], { onConflict: 'job_id' })
         .select();
 
+      // If server/db/002_jobs_columns.sql hasn't been run yet, retry without
+      // the columns that don't exist so the core job still saves.
+      let warning;
+      if (error && /column .* does not exist|Could not find the '.*' column/i.test(error.message || '')) {
+        for (const k of Object.keys(optional)) delete record[k];
+        warning =
+          'Kolom order/rute belum ada — jalankan server/db/002_jobs_columns.sql. Job inti tetap tersimpan.';
+        ({ data, error } = await supabase
+          .from('jobs')
+          .upsert([record], { onConflict: 'job_id' })
+          .select());
+      }
+
       if (error) throw error;
-      return res.status(201).json({ data });
+      return res.status(201).json({ data, warning });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

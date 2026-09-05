@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
 <style>
   :root{
     --font-sans:'Inter';
@@ -45,7 +44,7 @@
     --transition-control:all .15s ease;
   }
   *,*::before,*::after{box-sizing:border-box}
-  html,body{margin:0;padding:0}
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden}
   body{
     background:var(--surface-app);
     font-family:var(--font-sans),system-ui,-apple-system,sans-serif;
@@ -60,19 +59,20 @@
   ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:8px}
   ::-webkit-scrollbar-track{background:transparent}
 
-  .stage{display:flex;justify-content:center;align-items:flex-start;padding:24px;min-height:100vh}
+  /* Full-bleed: the app fills the tablet viewport exactly, no outer chrome,
+     no page scroll (inner lists scroll instead). */
+  .stage{width:100%;height:100%;display:flex;overflow:hidden}
   .frame{
-    width:1280px;height:800px;display:flex;flex-direction:column;flex:none;
-    background:var(--surface-app);border:1px solid var(--border-strong);
-    box-shadow:var(--shadow-md);overflow:hidden;position:relative;
+    width:100%;height:100%;
+    display:flex;flex-direction:column;flex:none;
+    background:var(--surface-app);overflow:hidden;position:relative;
   }
-  #frame{display:flex;flex-direction:column;height:100%}
+  #frame{display:flex;flex-direction:column;height:100%;min-height:0}
 
   .spin{display:inline-flex;animation:spin 1s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
 
-  i[data-lucide]{display:inline-block;vertical-align:middle}
-  svg.lucide{display:inline-block;vertical-align:middle;stroke-width:2}
+  svg.ic{display:inline-block;vertical-align:middle;flex:none}
 
   /* hover helpers */
   .nav-btn:hover{background:var(--surface-hover)}
@@ -113,24 +113,25 @@
     { seq:'05', name:'QC',        operator:'Dewi Anggraini',   start:'',      finish:'',      duration:'' }
   ];
 
-  var ROLES = [
-    { key:'operator', label:'Operator', line:'OPERATOR · SHIFT 1', screens:['home','job','progress'] },
-    { key:'gudang',   label:'Gudang',   line:'GUDANG · SHIFT 1',   screens:['home','material'] },
-    { key:'admin',    label:'Admin',    line:'ADMIN PRODUKSI',          screens:['home','job','progress','material'] }
-  ];
-
+  // Single role: every signed-in account sees every menu.
   var NAV = [
     { key:'home',     label:'Dasbor',        icon:'layout-grid' },
     { key:'job',      label:'Scan job',      icon:'scan-barcode' },
     { key:'progress', label:'Produksi',      icon:'list-checks' },
-    { key:'material', label:'Scan material', icon:'package-check' }
+    { key:'material', label:'Scan material', icon:'package-check' },
+    { key:'create',   label:'Buat job',      icon:'file-plus' }
   ];
 
+  var HARI  = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+  var BULAN = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+  var ROUTE_PRESET = ['Cutting','Drilling','Welding','Finishing','QC'];
+
+  // Fallback demo job — used until a real job is loaded from the database.
   var JOB = {
     no:'JOB-2026-0914', customer:'PT Samakta Mitra', product:'Bracket Assembly A-220',
     order:'SO-88412', target:'1.500', done:'940', pct:63, pctWidth:'63%',
     operation:'Welding (3/5)', elapsed:'2j 34m', remaining:'560',
-    date:'06 Sep 2026', startTime:'07.12 WIB'
+    date:'06 Sep 2026', startTime:'07.12'
   };
   var MATERIAL = { code:'MAT-4471-B', name:'Pelat baja 2mm SPHC', stock:'1.240 SHT', unit:'SHT' };
 
@@ -153,11 +154,14 @@
   var FT_USER = (typeof window !== 'undefined' && window.__FT_USER__) || null;
 
   var state = {
-    screen:'home', role: FT_USER ? FT_USER.role : 'admin',
-    jobScan:'found', matScan:'idle',
-    now:new Date(2026, 8, 6, 9, 46, 12),
+    screen:'home',
+    jobScan:'idle', matScan:'idle',
+    now:new Date(),
     currentStep:2, running:true, stepSeconds:2288,
-    qty:6, notes:'', toast:null, queue:3, online:true
+    qty:6, notes:'', toast:null, queue:3, online:true,
+    jobLookup:'', jobList:[], job:null, jobBusy:false,
+    form:{ job_id:'', order_no:'', customer:'', product:'', product_type:'', operation_type:'', qty_target:'', route:ROUTE_PRESET.slice(0,5) },
+    formBusy:false
   };
 
   var scanTimer, toastTimer;
@@ -172,28 +176,31 @@
     var h = Math.floor(total/3600), m = Math.floor((total%3600)/60), s = total%60;
     return pad(h)+':'+pad(m)+':'+pad(s);
   }
-  function roleObj(){
-    return ROLES.filter(function(r){ return r.key===state.role; })[0] || ROLES[0];
-  }
   function operatorName(){
-    if (FT_USER && FT_USER.fullName) return FT_USER.fullName;
-    return state.role==='gudang' ? 'Bagus Setiawan'
-         : state.role==='admin'  ? 'Dewi Anggraini'
-         : 'Rizky Pratama';
+    return (FT_USER && FT_USER.fullName) ? FT_USER.fullName : 'Operator Stasiun';
   }
   function stationLabel(){
-    return (FT_USER && FT_USER.station) ? FT_USER.station : 'LINE 02 · STASIUN W-04';
+    return (FT_USER && FT_USER.station) ? FT_USER.station : 'STASIUN W-04';
   }
   function initials(name){
     return name.split(' ').map(function(w){ return w[0]; }).slice(0,2).join('');
   }
   function clockStr(){
     var d = state.now;
-    return pad(d.getHours())+'.'+pad(d.getMinutes())+'.'+pad(d.getSeconds())+' WIB';
+    return pad(d.getHours())+'.'+pad(d.getMinutes())+'.'+pad(d.getSeconds());
   }
+  function dateStr(){
+    var d = state.now;
+    return HARI[d.getDay()]+', '+pad(d.getDate())+' '+BULAN[d.getMonth()]+' '+d.getFullYear();
+  }
+  // Lucide icons, inlined so the tablet needs no CDN (works offline / flaky wifi).
+  var LUCIDE = {"circle-alert":"<circle cx=\"12\" cy=\"12\" r=\"10\" /> <line x1=\"12\" x2=\"12\" y1=\"8\" y2=\"12\" /> <line x1=\"12\" x2=\"12.01\" y1=\"16\" y2=\"16\" />","circle-check":"<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m9 12 2 2 4-4\" />","cloud-off":"<path d=\"m2 2 20 20\" /> <path d=\"M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193\" /> <path d=\"M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07\" />","layout-grid":"<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\" />","list-checks":"<path d=\"M13 5h8\" /> <path d=\"M13 12h8\" /> <path d=\"M13 19h8\" /> <path d=\"m3 17 2 2 4-4\" /> <path d=\"m3 7 2 2 4-4\" />","loader-circle":"<path d=\"M21 12a9 9 0 1 1-6.219-8.56\" />","log-out":"<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />","package-check":"<path d=\"m16 16 2 2 4-4\" /> <path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" />","package-plus":"<path d=\"M16 16h6\" /> <path d=\"M19 13v6\" /> <path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" />","package-search":"<path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" /> <circle cx=\"18.5\" cy=\"15.5\" r=\"2.5\" /> <path d=\"M20.27 17.27 22 19\" />","pause":"<rect x=\"14\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\" /> <rect x=\"5\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\" />","play":"<path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\" />","scan-barcode":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <path d=\"M8 7v10\" /> <path d=\"M12 7v10\" /> <path d=\"M17 7v10\" />","scan-line":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <path d=\"M7 12h10\" />","scan-search":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" /> <path d=\"m16 16-1.9-1.9\" />","square-check-big":"<path d=\"M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344\" /> <path d=\"m9 11 3 3L22 4\" />","triangle-alert":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />","user-round-check":"<path d=\"M2 21a8 8 0 0 1 13.292-6\" /> <circle cx=\"10\" cy=\"8\" r=\"5\" /> <path d=\"m16 19 2 2 4-4\" />","file-plus":"<path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\" /> <path d=\"M14 2v4a2 2 0 0 0 2 2h4\" /> <path d=\"M9 15h6\" /> <path d=\"M12 18v-6\" />","search":"<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />","x":"<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />","rotate-cw":"<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />"};
+
   function ic(name, size, color){
-    return '<i data-lucide="'+name+'" width="'+size+'" height="'+size+'"'+
-      (color ? ' style="color:'+color+'"' : '')+'></i>';
+    var inner = LUCIDE[name] || '';
+    return '<svg class="ic" xmlns="http://www.w3.org/2000/svg" width="'+size+'" height="'+size+
+      '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'+
+      (color ? ' style="color:'+color+'"' : '')+'>'+inner+'</svg>';
   }
   function frameStyle(mode){
     var map = {
@@ -240,57 +247,39 @@
         '<div style="width:1px;height:24px;background:var(--border-nav)"></div>'+
         '<div style="text-align:right">'+
           '<div class="js-clock" style="font:500 15px/1.1 var(--font-mono);color:#fff;letter-spacing:.02em">'+clockStr()+'</div>'+
-          '<div style="font:400 10px/1.3 var(--font-mono);color:var(--neutral-500);letter-spacing:.04em">Sabtu, 06 Sep 2026</div>'+
+          '<div class="js-date" style="font:400 10px/1.3 var(--font-mono);color:var(--neutral-500);letter-spacing:.04em">'+dateStr()+'</div>'+
         '</div>'+
         '<div style="width:1px;height:24px;background:var(--border-nav)"></div>'+
         '<div style="display:flex;align-items:center;gap:10px">'+
           '<div style="width:34px;height:34px;flex:none;border-radius:999px;background:var(--brand-brown-500);color:#fff;display:flex;align-items:center;justify-content:center;font:500 12px/1 var(--font-sans)">'+esc(initials(name))+'</div>'+
           '<div>'+
             '<div style="font:500 13px/1.2 var(--font-sans);color:#fff">'+esc(name)+'</div>'+
-            '<div style="font:400 11px/1.3 var(--font-mono);color:var(--neutral-500);letter-spacing:.03em">'+roleObj().line+'</div>'+
+            '<div style="font:400 11px/1.3 var(--font-mono);color:var(--neutral-500);letter-spacing:.03em">'+esc(stationLabel())+'</div>'+
           '</div>'+
         '</div>'+
       '</div>'+
     '</header>';
   }
 
-  /* ---------------- nav + role tabs ---------------- */
+  /* ---------------- nav ---------------- */
   function navHtml(){
-    var items = NAV.filter(function(n){ return roleObj().screens.indexOf(n.key) !== -1; });
-    var buttons = items.map(function(n){
+    var buttons = NAV.map(function(n){
       var active = state.screen === n.key;
       var rule = active ? '2px solid var(--brand-red-600)' : '2px solid transparent';
       var fg = active ? 'var(--text-strong)' : 'var(--text-muted)';
       var fw = active ? '600' : '400';
-      return '<button class="nav-btn" data-act="go" data-arg="'+n.key+'" style="display:flex;align-items:center;gap:10px;height:100%;padding:0 18px;border:0;border-bottom:'+rule+';background:transparent;color:'+fg+';font:'+fw+' 15px/1 var(--font-sans);cursor:pointer;transition:var(--transition-control)">'+
-        ic(n.icon, 19)+'<span>'+n.label+'</span></button>';
+      return '<button class="nav-btn" data-act="go" data-arg="'+n.key+'" style="display:flex;align-items:center;gap:9px;height:100%;padding:0 16px;border:0;border-bottom:'+rule+';background:transparent;color:'+fg+';font:'+fw+' 14.5px/1 var(--font-sans);cursor:pointer;transition:var(--transition-control)">'+
+        ic(n.icon, 18)+'<span>'+n.label+'</span></button>';
     }).join('');
 
-    var rightSide;
-    if (FT_USER){
-      // Real session: role comes from the account, not a toggle. Show it +
-      // a sign-out control.
-      rightSide =
-        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Peran</div>'+
-        '<div style="height:36px;display:flex;align-items:center;padding:0 14px;border:1px solid var(--border-default);border-radius:6px;background:var(--neutral-900);color:#fff;font:500 13px/1 var(--font-sans)">'+esc(roleObj().label)+'</div>'+
-        '<a href="/api/auth/signout" class="nav-btn" style="height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-muted);font:500 13px/1 var(--font-sans);text-decoration:none;transition:var(--transition-control)">'+ic('log-out',15)+'Keluar</a>';
-    } else {
-      var tabs = ROLES.map(function(r){
-        var on = state.role === r.key;
-        var bg = on ? 'var(--neutral-900)' : 'var(--surface-card)';
-        var fg = on ? '#fff' : 'var(--text-muted)';
-        var fw = on ? '500' : '400';
-        return '<button class="roletab" data-act="role" data-arg="'+r.key+'" style="height:36px;padding:0 14px;border:0;background:'+bg+';color:'+fg+';font:'+fw+' 13px/1 var(--font-sans);cursor:pointer">'+r.label+'</button>';
-      }).join('');
-      rightSide =
-        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Peran</div>'+
-        '<div style="display:flex;border:1px solid var(--border-default);border-radius:6px;overflow:hidden">'+tabs+'</div>';
-    }
+    var rightSide = FT_USER
+      ? '<a href="/api/auth/signout" class="nav-btn" style="height:36px;display:flex;align-items:center;gap:8px;padding:0 14px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-muted);font:500 13px/1 var(--font-sans);text-decoration:none;transition:var(--transition-control)">'+ic('log-out',15)+'Keluar</a>'
+      : '';
 
     return ''+
-    '<div style="height:60px;flex:none;background:var(--surface-card);border-bottom:1px solid var(--border-subtle);display:flex;align-items:stretch;padding:0 24px;gap:4px">'+
+    '<div style="height:60px;flex:none;background:var(--surface-card);border-bottom:1px solid var(--border-subtle);display:flex;align-items:stretch;padding:0 20px;gap:2px">'+
       buttons+
-      '<div style="margin-left:auto;display:flex;align-items:center;gap:14px">'+rightSide+'</div>'+
+      (rightSide ? '<div style="margin-left:auto;display:flex;align-items:center">'+rightSide+'</div>' : '')+
     '</div>';
   }
 
@@ -383,61 +372,95 @@
   }
 
   /* ---------------- JOB ---------------- */
-  function screenJob(){
-    var jf = frameStyle(state.jobScan);
-    var titles = JOB_TITLES[state.jobScan] || JOB_TITLES.idle;
-    var titleFg = state.jobScan==='notfound' ? 'var(--brand-red-600)'
-                : state.jobScan==='active' ? 'var(--amber-600)' : 'var(--text-strong)';
-    var codeFg = state.jobScan==='found' ? 'var(--green-600)'
-               : state.jobScan==='notfound' ? 'var(--brand-red-600)'
-               : state.jobScan==='active' ? 'var(--amber-600)' : 'var(--text-subtle)';
-    var scanning = state.jobScan==='scanning';
+  // Normalise a raw DB job row into what the screens render.
+  function jobView(j){
+    if (!j) return null;
+    var target = Number(j.qty_target) || 0;
+    var done = Number(j.qty_completed) || 0;
+    var pct = target ? Math.round(done / target * 100) : 0;
+    var route = Array.isArray(j.route) && j.route.length ? j.route : ROUTE_PRESET;
+    return {
+      no: j.job_id, customer: j.customer || '—', product: j.product || '—',
+      order: j.order_no || '—', productType: j.product_type || '—',
+      operationType: j.operation_type || '—',
+      target: target.toLocaleString('id-ID'), done: done.toLocaleString('id-ID'),
+      targetN: target, doneN: done,
+      pct: pct, pctWidth: Math.min(100, pct) + '%',
+      remaining: Math.max(0, target - done).toLocaleString('id-ID'),
+      route: route, operator: j.operator || operatorName(),
+      status: j.status || 'READY',
+      _raw: j
+    };
+  }
+  function curJob(){ return state.job ? jobView(state.job) : jobView({ job_id:JOB.no, customer:JOB.customer, product:JOB.product, order_no:JOB.order, product_type:'Bracket pelat baja', operation_type:'Welding — MIG', qty_target:1500, qty_completed:940, route:ROUTE_PRESET }); }
 
-    var simButtons = [
-      { label:'Job valid',        fg:'var(--green-600)',     arg:'found' },
-      { label:'Tidak ditemukan',  fg:'var(--brand-red-600)', arg:'notfound' },
-      { label:'Sudah aktif',      fg:'var(--amber-600)',     arg:'active' }
-    ].map(function(b){
-      return '<button class="simbtn" data-act="scanJob" data-arg="'+b.arg+'" style="height:'+TOUCH_H+';padding:0 6px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:'+b.fg+';font:500 12.5px/1.25 var(--font-sans);cursor:pointer;transition:var(--transition-control)">'+b.label+'</button>';
-    }).join('');
+  function screenJob(){
+    var searching = state.jobBusy;
+
+    var listHtml;
+    if (searching && !state.jobList.length){
+      listHtml = '<div style="padding:24px;text-align:center;color:var(--text-subtle);font:400 13px/1.5 var(--font-sans)"><span class="spin" style="display:inline-block">'+ic('loader-circle',20,'var(--neutral-300)')+'</span><div style="margin-top:8px">Memuat daftar job…</div></div>';
+    } else if (!state.jobList.length){
+      listHtml = '<div style="padding:24px;text-align:center;color:var(--text-subtle);font:400 13px/1.5 var(--font-sans)">Belum ada job di database.<br>Buat lewat menu <b>Buat job</b>.</div>';
+    } else {
+      listHtml = state.jobList.map(function(j){
+        var sel = state.job && state.job.job_id === j.job_id;
+        return '<button class="nav-btn" data-act="jobPick" data-arg="'+esc(j.job_id)+'" style="display:block;width:100%;text-align:left;padding:11px 16px;border:0;border-bottom:1px solid var(--border-subtle);background:'+(sel?'var(--surface-hover)':'transparent')+';cursor:pointer">'+
+          '<div style="font:500 13px/1.2 var(--font-mono);color:var(--text-strong)">'+esc(j.job_id)+'</div>'+
+          '<div style="font:400 12px/1.4 var(--font-sans);color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(j.product||'—')+' · '+esc(j.customer||'—')+'</div>'+
+        '</button>';
+      }).join('');
+    }
 
     var left = ''+
     '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;overflow:hidden">'+
-      '<div style="padding:13px 18px;border-bottom:1px solid var(--border-subtle);font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Barcode job</div>'+
-      '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px">'+
-        '<div style="width:230px;height:142px;border:2px solid '+jf.border+';border-radius:6px;background:'+jf.bg+';display:flex;align-items:center;justify-content:center;transition:var(--transition-control)">'+
-          '<span class="'+(scanning?'spin':'')+'">'+ic(jf.icon, 50, jf.fg)+'</span>'+
+      '<div style="padding:13px 18px;border-bottom:1px solid var(--border-subtle);font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Scan / cari job</div>'+
+      '<div style="padding:16px 18px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--border-subtle)">'+
+        '<div style="position:relative">'+
+          '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-subtle)">'+ic('search',17)+'</span>'+
+          '<input data-model="jobLookup" data-enter="jobLookupGo" value="'+esc(state.jobLookup)+'" placeholder="Ketik / scan nomor job, lalu Enter" autofocus style="width:100%;box-sizing:border-box;height:'+TOUCH_H+';padding:0 12px 0 38px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-strong);font:500 14px/1 var(--font-mono);outline:none">'+
         '</div>'+
-        '<div style="text-align:center">'+
-          '<div style="font:500 16px/1.3 var(--font-sans);color:'+titleFg+'">'+titles[0]+'</div>'+
-          '<div style="font:400 13px/1.5 var(--font-sans);color:var(--text-muted);margin-top:4px;max-width:290px">'+titles[1]+'</div>'+
-        '</div>'+
-        '<div style="font:500 15px/1 var(--font-mono);letter-spacing:.06em;color:'+codeFg+';height:18px">'+codeFor(state.jobScan, JOB.no)+'</div>'+
+        '<button class="btn-brand" data-act="jobLookupGo" style="height:'+TOUCH_H+';border:1px solid transparent;border-radius:6px;background:var(--surface-brand);color:#fff;font:500 14px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">'+ic('search',16)+'Cari job</button>'+
+        '<div style="font:400 11.5px/1.5 var(--font-sans);color:var(--text-subtle)">Scanner barcode = ketik otomatis lalu Enter. Data job diambil dari database.</div>'+
       '</div>'+
-      '<div style="padding:14px 18px;border-top:1px solid var(--border-subtle);background:var(--neutral-25);display:flex;flex-direction:column;gap:10px">'+
-        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Simulasi pembacaan barcode</div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'+simButtons+'</div>'+
-        '<div style="font:400 11.5px/1.5 var(--font-sans);color:var(--text-subtle)">Di perangkat asli, ketiga hasil ini datang dari scanner. Data job dibaca dari master data — tidak ada yang diketik.</div>'+
+      '<div style="padding:11px 18px 8px;font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle);display:flex;align-items:center;gap:8px">Job terdaftar'+
+        '<button class="nav-btn" data-act="jobRefresh" title="Muat ulang" style="margin-left:auto;border:0;background:transparent;color:var(--text-muted);cursor:pointer;padding:2px;border-radius:4px">'+ic('rotate-cw',14)+'</button>'+
       '</div>'+
+      '<div style="flex:1;min-height:0;overflow:auto">'+listHtml+'</div>'+
     '</div>';
 
     var right;
-    if (state.jobScan === 'found') {
+    if (state.jobBusy && !state.job){
+      right = emptyPanel('loader-circle', 'Memuat job…', '', true);
+    } else if (state.jobScan === 'notfound'){
+      right = ''+
+      '<div style="min-width:0;display:flex;flex-direction:column;height:100%">'+
+        '<div style="flex:1;background:var(--surface-card);border:1px solid var(--border-subtle);border-left:2px solid var(--brand-red-600);border-radius:8px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px">'+
+          ic('circle-alert', 40, 'var(--brand-red-600)')+
+          '<div style="font:600 20px/1.3 var(--font-sans);color:var(--text-strong);letter-spacing:-.011em">Job tidak ditemukan</div>'+
+          '<div style="font:400 13.5px/1.6 var(--font-sans);color:var(--text-muted);text-align:center;max-width:400px">Nomor <span style="font-family:var(--font-mono);color:var(--text-strong)">'+esc(state.jobLookup||'—')+'</span> tidak ada di database. Periksa nomornya, atau buat job baru lewat menu <b>Buat job</b>.</div>'+
+          '<button class="btn-soft2" data-act="jobReset" style="height:'+TOUCH_H+';padding:0 26px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 15px/1 var(--font-sans);cursor:pointer">Coba lagi</button>'+
+        '</div>'+
+      '</div>';
+    } else if (!state.job){
+      right = emptyPanel('scan-search', 'Belum ada job dipilih', 'Scan / ketik nomor job di kiri, atau pilih dari daftar. Detail pelanggan, produk, order, dan kuantitas muncul otomatis.', false);
+    } else {
+      var jv = jobView(state.job);
       var jobFields = [
-        { label:'Nomor job',           value:JOB.no,                 font:FONT_MONO },
-        { label:'Nomor order',         value:JOB.order,              font:FONT_MONO },
-        { label:'Pelanggan',           value:JOB.customer,           font:FONT_SANS },
-        { label:'Produk',              value:JOB.product,            font:FONT_SANS },
-        { label:'Jenis produk',        value:'Bracket pelat baja',   font:FONT_SANS },
-        { label:'Jenis operasi',       value:'Welding — MIG',   font:FONT_SANS },
-        { label:'Kuantitas target',    value:JOB.target+' pcs',      font:FONT_MONO },
-        { label:'Kuantitas selesai',   value:JOB.done+' pcs',        font:FONT_MONO },
-        { label:'Operator',            value:operatorName(),         font:FONT_SANS },
-        { label:'Jam mulai',           value:JOB.startTime,          font:FONT_MONO }
+        { label:'Nomor job',         value:jv.no,               font:FONT_MONO },
+        { label:'Nomor order',       value:jv.order,            font:FONT_MONO },
+        { label:'Pelanggan',         value:jv.customer,         font:FONT_SANS },
+        { label:'Produk',            value:jv.product,          font:FONT_SANS },
+        { label:'Jenis produk',      value:jv.productType,      font:FONT_SANS },
+        { label:'Jenis operasi',     value:jv.operationType,    font:FONT_SANS },
+        { label:'Kuantitas target',  value:jv.target+' pcs',    font:FONT_MONO },
+        { label:'Kuantitas selesai', value:jv.done+' pcs',      font:FONT_MONO },
+        { label:'Rute operasi',      value:jv.route.join(' → '), font:FONT_SANS },
+        { label:'Operator',          value:jv.operator,         font:FONT_SANS }
       ].map(function(f){
         return '<div style="display:grid;grid-template-columns:158px 1fr;align-items:center;gap:12px;height:40px;padding:0 18px;border-bottom:1px solid var(--border-subtle)">'+
           '<div style="font:400 12.5px/1.3 var(--font-sans);color:var(--text-muted)">'+f.label+'</div>'+
-          '<div style="font:'+f.font+';color:var(--text-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(f.value)+'</div>'+
+          '<div style="font:'+f.font+';color:var(--text-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(f.value)+'">'+esc(f.value)+'</div>'+
         '</div>';
       }).join('');
 
@@ -445,9 +468,9 @@
       '<div style="min-width:0;display:flex;flex-direction:column;gap:14px;height:100%">'+
         '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);overflow:hidden">'+
           '<div style="display:flex;align-items:center;gap:14px;padding:13px 18px;border-bottom:1px solid var(--border-subtle)">'+
-            '<div style="font:500 20px/1.1 var(--font-mono);letter-spacing:.01em;color:var(--text-strong)">'+JOB.no+'</div>'+
-            statusPill('var(--status-progress-bg)','var(--status-progress-fg)','var(--status-progress-dot)','Berjalan')+
-            '<div style="margin-left:auto;font:400 12px/1 var(--font-mono);color:var(--text-muted)">Mulai '+JOB.startTime+' · '+JOB.date+'</div>'+
+            '<div style="font:500 20px/1.1 var(--font-mono);letter-spacing:.01em;color:var(--text-strong)">'+esc(jv.no)+'</div>'+
+            statusPill('var(--status-progress-bg)','var(--status-progress-fg)','var(--status-progress-dot)', esc(jv.status))+
+            '<div style="margin-left:auto;font:400 12px/1 var(--font-mono);color:var(--text-muted)">'+dateStr()+'</div>'+
           '</div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr">'+jobFields+'</div>'+
         '</div>'+
@@ -455,60 +478,80 @@
         '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);padding:16px 18px">'+
           '<div style="display:flex;align-items:baseline;gap:10px">'+
             '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Progres produksi</div>'+
-            '<div style="margin-left:auto;font:500 15px/1 var(--font-mono);color:var(--text-strong)">'+JOB.done+' / '+JOB.target+' pcs</div>'+
-            '<div style="font:500 15px/1 var(--font-mono);color:var(--amber-600)">'+JOB.pct+'%</div>'+
+            '<div style="margin-left:auto;font:500 15px/1 var(--font-mono);color:var(--text-strong)">'+jv.done+' / '+jv.target+' pcs</div>'+
+            '<div style="font:500 15px/1 var(--font-mono);color:var(--amber-600)">'+jv.pct+'%</div>'+
           '</div>'+
           '<div style="height:10px;border-radius:999px;background:var(--surface-sunken);margin-top:11px;overflow:hidden">'+
-            '<div style="height:100%;width:'+JOB.pctWidth+';background:var(--amber-500);border-radius:999px"></div>'+
+            '<div style="height:100%;width:'+jv.pctWidth+';background:var(--amber-500);border-radius:999px"></div>'+
           '</div>'+
           '<div style="display:flex;gap:26px;margin-top:12px">'+
-            '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Operasi <span style="color:var(--text-strong);font-weight:500">'+JOB.operation+'</span></div>'+
-            '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Berjalan <span style="font-family:var(--font-mono);color:var(--text-strong)">'+JOB.elapsed+'</span></div>'+
-            '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Sisa <span style="font-family:var(--font-mono);color:var(--text-strong)">'+JOB.remaining+' pcs</span></div>'+
+            '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Sisa <span style="font-family:var(--font-mono);color:var(--text-strong)">'+jv.remaining+' pcs</span></div>'+
+            '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Langkah <span style="color:var(--text-strong);font-weight:500">'+jv.route.length+'</span></div>'+
           '</div>'+
         '</div>'+
 
-        '<div style="margin-top:auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">'+
-          '<button class="btn-brand" data-act="go" data-arg="progress" style="height:'+TOUCH_HLG+';border:1px solid transparent;border-radius:6px;background:var(--surface-brand);color:#fff;font:500 17px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic('play',20)+'Lanjutkan job</button>'+
+        '<div style="margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+          '<button class="btn-brand" data-act="go" data-arg="progress" style="height:'+TOUCH_HLG+';border:1px solid transparent;border-radius:6px;background:var(--surface-brand);color:#fff;font:500 17px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic('play',20)+'Kerjakan job</button>'+
           '<button class="btn-soft" data-act="go" data-arg="material" style="height:'+TOUCH_HLG+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 17px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic('package-plus',20)+'Issue material</button>'+
-          '<button class="btn-danger-ghost" data-act="jobFinish" style="height:'+TOUCH_HLG+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--brand-red-600);font:500 17px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic('square-check-big',20)+'Selesaikan job</button>'+
-        '</div>'+
-      '</div>';
-    } else if (state.jobScan === 'notfound') {
-      right = ''+
-      '<div style="min-width:0;display:flex;flex-direction:column;height:100%">'+
-        '<div style="flex:1;background:var(--surface-card);border:1px solid var(--border-subtle);border-left:2px solid var(--brand-red-600);border-radius:8px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px">'+
-          ic('circle-alert', 40, 'var(--brand-red-600)')+
-          '<div style="font:600 20px/1.3 var(--font-sans);color:var(--text-strong);letter-spacing:-.011em">Job tidak ditemukan</div>'+
-          '<div style="font:400 13.5px/1.6 var(--font-sans);color:var(--text-muted);text-align:center;max-width:400px">Kode <span style="font-family:var(--font-mono);color:var(--text-strong)">JOB-2026-9###</span> tidak ada di master data. Periksa kartu job atau minta supervisor menerbitkan ulang kartunya.</div>'+
-          '<button class="btn-soft2" data-act="jobReset" style="height:'+TOUCH_H+';padding:0 26px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 15px/1 var(--font-sans);cursor:pointer">Scan ulang</button>'+
-        '</div>'+
-      '</div>';
-    } else if (state.jobScan === 'active') {
-      right = ''+
-      '<div style="min-width:0;display:flex;flex-direction:column;height:100%">'+
-        '<div style="flex:1;background:var(--surface-card);border:1px solid var(--border-subtle);border-left:2px solid var(--amber-500);border-radius:8px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px">'+
-          ic('triangle-alert', 40, 'var(--amber-500)')+
-          '<div style="font:600 20px/1.3 var(--font-sans);color:var(--text-strong);letter-spacing:-.011em">Job sedang dikerjakan operator lain</div>'+
-          '<div style="font:400 13.5px/1.6 var(--font-sans);color:var(--text-muted);text-align:center;max-width:420px"><span style="font-family:var(--font-mono);color:var(--text-strong)">JOB-2026-0908</span> aktif di stasiun W-02 oleh Bagus Setiawan sejak 08.31 WIB. Satu job hanya boleh berjalan di satu stasiun.</div>'+
-          '<div style="display:flex;gap:12px">'+
-            '<button class="btn-soft2" data-act="jobReset" style="height:'+TOUCH_H+';padding:0 24px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 15px/1 var(--font-sans);cursor:pointer">Scan job lain</button>'+
-            '<button class="btn-red" data-act="jobTakeover" style="height:'+TOUCH_H+';padding:0 24px;border:1px solid transparent;border-radius:6px;background:var(--brand-red-600);color:#fff;font:500 15px/1 var(--font-sans);cursor:pointer">Minta alih stasiun</button>'+
-          '</div>'+
-        '</div>'+
-      '</div>';
-    } else {
-      right = ''+
-      '<div style="min-width:0;display:flex;flex-direction:column;height:100%">'+
-        '<div style="flex:1;background:var(--surface-card);border:1px dashed var(--border-default);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:40px">'+
-          '<span class="'+(scanning?'spin':'')+'">'+ic(scanning?'loader-circle':'scan-search', 40, 'var(--neutral-300)')+'</span>'+
-          '<div style="font:500 17px/1.3 var(--font-sans);color:var(--text-muted)">'+(scanning?'Menunggu data job…':'Belum ada job dimuat')+'</div>'+
-          '<div style="font:400 13.5px/1.6 var(--font-sans);color:var(--text-subtle);text-align:center;max-width:380px">Scan barcode kartu job. Nomor job, pelanggan, produk, order, kuantitas, dan operator terisi otomatis.</div>'+
         '</div>'+
       '</div>';
     }
 
     return '<div style="display:grid;grid-template-columns:400px 1fr;gap:16px;height:100%">'+left+right+'</div>';
+  }
+
+  function emptyPanel(icon, title, body, spinning){
+    return ''+
+    '<div style="min-width:0;display:flex;flex-direction:column;height:100%">'+
+      '<div style="flex:1;background:var(--surface-card);border:1px dashed var(--border-default);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:40px">'+
+        '<span class="'+(spinning?'spin':'')+'">'+ic(icon, 40, 'var(--neutral-300)')+'</span>'+
+        '<div style="font:500 17px/1.3 var(--font-sans);color:var(--text-muted)">'+title+'</div>'+
+        (body ? '<div style="font:400 13.5px/1.6 var(--font-sans);color:var(--text-subtle);text-align:center;max-width:380px">'+body+'</div>' : '')+
+      '</div>'+
+    '</div>';
+  }
+
+  /* ---------------- BUAT JOB ---------------- */
+  function screenCreate(){
+    var f = state.form;
+    function fld(key, label, ph, mono){
+      return '<div>'+
+        '<div style="font:600 11px/1 var(--font-mono);letter-spacing:.08em;color:var(--text-muted);margin-bottom:7px;text-transform:uppercase">'+label+'</div>'+
+        '<input data-model="form.'+key+'" value="'+esc(f[key])+'" placeholder="'+esc(ph)+'" style="width:100%;box-sizing:border-box;height:48px;padding:0 13px;border:1px solid var(--border-default);border-radius:7px;background:var(--surface-card);color:var(--text-strong);font:'+(mono?'500 14px/1 var(--font-mono)':'400 14px/1 var(--font-sans)')+';outline:none">'+
+      '</div>';
+    }
+    var routeChips = ROUTE_PRESET.map(function(op){
+      var on = f.route.indexOf(op) !== -1;
+      return '<button data-act="formRoute" data-arg="'+op+'" style="height:38px;padding:0 14px;border:1px solid '+(on?'var(--brand-brown-500)':'var(--border-default)')+';border-radius:999px;background:'+(on?'var(--surface-brand)':'var(--surface-card)')+';color:'+(on?'#fff':'var(--text-muted)')+';font:500 13px/1 var(--font-sans);cursor:pointer;transition:var(--transition-control)">'+op+'</button>';
+    }).join('');
+
+    return ''+
+    '<div style="max-width:760px;margin:0 auto;height:100%;overflow:auto">'+
+      '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);overflow:hidden">'+
+        '<div style="padding:16px 20px;border-bottom:1px solid var(--border-subtle)">'+
+          '<div style="font:600 18px/1.2 var(--font-sans);letter-spacing:-.011em;color:var(--text-strong)">Buat job baru</div>'+
+          '<div style="font:400 12.5px/1.5 var(--font-sans);color:var(--text-muted);margin-top:3px">Isi dari sales order. Job tersimpan ke database dan langsung bisa di-scan di menu Scan job.</div>'+
+        '</div>'+
+        '<div style="padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:16px">'+
+          fld('job_id','Nomor job','JOB-2026-0921', true)+
+          fld('order_no','Nomor order','SO-88420', true)+
+          fld('customer','Pelanggan','PT Samakta Mitra', false)+
+          fld('product','Produk','Bracket Assembly A-220', false)+
+          fld('product_type','Jenis produk','Bracket pelat baja', false)+
+          fld('operation_type','Jenis operasi','Welding — MIG', false)+
+          fld('qty_target','Kuantitas target (pcs)','1500', true)+
+          '<div></div>'+
+          '<div style="grid-column:1/-1">'+
+            '<div style="font:600 11px/1 var(--font-mono);letter-spacing:.08em;color:var(--text-muted);margin-bottom:9px;text-transform:uppercase">Rute operasi</div>'+
+            '<div style="display:flex;flex-wrap:wrap;gap:8px">'+routeChips+'</div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="padding:16px 20px;border-top:1px solid var(--border-subtle);background:var(--neutral-25);display:grid;grid-template-columns:1fr 2fr;gap:12px">'+
+          '<button class="btn-soft2" data-act="formReset" style="height:'+TOUCH_HLG+';border:1px solid var(--border-default);border-radius:7px;background:var(--surface-card);color:var(--text-muted);font:500 15px/1 var(--font-sans);cursor:pointer">Kosongkan</button>'+
+          '<button class="btn-brand" data-act="formSubmit" style="height:'+TOUCH_HLG+';border:1px solid transparent;border-radius:7px;background:var(--surface-brand);color:#fff;font:500 17px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;opacity:'+(state.formBusy?'.6':'1')+'">'+ic('file-plus',20)+(state.formBusy?'Menyimpan…':'Simpan job')+'</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
   }
 
   /* ---------------- PROGRESS ---------------- */
@@ -555,8 +598,8 @@
     '<div style="display:flex;flex-direction:column;gap:14px;height:100%">'+
       '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);padding:13px 18px;display:flex;align-items:center;gap:20px">'+
         '<div>'+
-          '<div style="font:500 19px/1.1 var(--font-mono);color:var(--text-strong)">'+JOB.no+'</div>'+
-          '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted);margin-top:3px">'+JOB.product+' · '+JOB.customer+'</div>'+
+          '<div style="font:500 19px/1.1 var(--font-mono);color:var(--text-strong)">'+esc(curJob().no)+'</div>'+
+          '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted);margin-top:3px">'+esc(curJob().product)+' · '+esc(curJob().customer)+'</div>'+
         '</div>'+
         '<div style="width:1px;height:38px;background:var(--border-subtle)"></div>'+
         '<div>'+
@@ -593,11 +636,11 @@
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
               '<div>'+
                 '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Jam mulai</div>'+
-                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+(curDef.start ? curDef.start+' WIB' : '—')+'</div>'+
+                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+(curDef.start ? curDef.start : '—')+'</div>'+
               '</div>'+
               '<div>'+
                 '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Qty baik</div>'+
-                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+JOB.done+' pcs</div>'+
+                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+curJob().done+' pcs</div>'+
               '</div>'+
             '</div>'+
             '<div style="font:400 11.5px/1.5 var(--font-sans);color:var(--text-subtle);margin-top:12px">Jam mulai dan jam selesai ditulis otomatis oleh sistem.</div>'+
@@ -663,10 +706,10 @@
       }).join('');
 
       var issueFields = [
-        { label:'Nomor job', value:JOB.no,          font:FONT_MONO },
-        { label:'Produk',    value:JOB.product,     font:FONT_SANS },
-        { label:'Operator',  value:operatorName(),  font:FONT_SANS },
-        { label:'Waktu',     value:clockStr(),      font:FONT_MONO }
+        { label:'Nomor job', value:curJob().no,      font:FONT_MONO },
+        { label:'Produk',    value:curJob().product, font:FONT_SANS },
+        { label:'Operator',  value:operatorName(),   font:FONT_SANS },
+        { label:'Waktu',     value:clockStr(),       font:FONT_MONO }
       ].map(function(f){
         return '<div style="display:grid;grid-template-columns:126px 1fr;align-items:center;gap:10px;height:38px;padding:0 16px;border-bottom:1px solid var(--border-subtle)">'+
           '<div style="font:400 12.5px/1.3 var(--font-sans);color:var(--text-muted)">'+f.label+'</div>'+
@@ -709,7 +752,7 @@
             '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Deskripsi / catatan</div>'+
             '<div style="font:400 12px/1 var(--font-sans);color:var(--text-subtle)">Opsional — satu-satunya kolom teks bebas</div>'+
           '</div>'+
-          '<textarea data-act="notes" placeholder="mis. ganti coil, batch B beda ketebalan" rows="2" style="width:100%;box-sizing:border-box;margin-top:9px;padding:10px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:400 14px/1.5 var(--font-sans);resize:none;outline:none">'+esc(state.notes)+'</textarea>'+
+          '<textarea data-model="notes" placeholder="mis. ganti coil, batch B beda ketebalan" rows="2" style="width:100%;box-sizing:border-box;margin-top:9px;padding:10px 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:400 14px/1.5 var(--font-sans);resize:none;outline:none">'+esc(state.notes)+'</textarea>'+
         '</div>'+
 
         '<div style="margin-top:auto;display:grid;grid-template-columns:1fr 2fr;gap:12px">'+
@@ -747,13 +790,12 @@
     if (state.screen === 'home') body = screenHome();
     else if (state.screen === 'job') body = screenJob();
     else if (state.screen === 'progress') body = screenProgress();
+    else if (state.screen === 'create') body = screenCreate();
     else body = screenMaterial();
 
     $('#frame').innerHTML =
       headerHtml() + navHtml() +
       '<main style="flex:1;min-height:0;overflow:hidden;padding:18px 24px;background:var(--surface-app)">' + body + '</main>';
-
-    if (window.lucide) lucide.createIcons();
   }
 
   function renderToast(){
@@ -771,7 +813,6 @@
         '<div style="font:500 14px/1.3 var(--font-sans)">'+esc(t.title)+'</div>'+
         '<div style="font:400 12.5px/1.45 var(--font-sans);color:var(--neutral-400);margin-top:2px">'+esc(t.body)+'</div>'+
       '</div>';
-    if (window.lucide) lucide.createIcons();
   }
 
   function showToast(title, body, icon, iconFg){
@@ -781,12 +822,43 @@
     toastTimer = setTimeout(function(){ state.toast = null; renderToast(); }, 3600);
   }
 
-  /* ---------------- best-effort server sync (silent) ---------------- */
-  function post(url, payload){
-    try{
-      fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(payload) })
-        .catch(function(){});
-    }catch(e){}
+  /* ---------------- server ---------------- */
+  var HAS_API = (typeof window !== 'undefined' && !!window.__FT_USER__); // only when served by the Next.js app
+
+  function apiGet(url){
+    if (!HAS_API) return Promise.reject(new Error('offline demo'));
+    return fetch(url, { headers:{ 'Accept':'application/json' } })
+      .then(function(r){ return r.ok ? r.json() : r.json().then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); });
+  }
+  function apiPost(url, payload){
+    if (!HAS_API) return Promise.reject(new Error('offline demo'));
+    return fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(payload) })
+      .then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }); });
+  }
+  function post(url, payload){ apiPost(url, payload).catch(function(){}); } // fire-and-forget
+
+  function loadJobList(){
+    if (state.jobBusy) return;
+    state.jobBusy = true; render();
+    apiGet('/api/jobs').then(function(res){
+      state.jobList = Array.isArray(res.data) ? res.data : [];
+    }).catch(function(){
+      state.jobList = [];
+    }).then(function(){ state.jobBusy = false; render(); });
+  }
+  function loadJob(jobId){
+    jobId = (jobId||'').trim();
+    if (!jobId) return;
+    state.jobBusy = true; state.jobScan = 'idle'; render();
+    apiGet('/api/jobs').then(function(res){
+      var rows = Array.isArray(res.data) ? res.data : [];
+      var hit = rows.filter(function(j){ return String(j.job_id).toLowerCase() === jobId.toLowerCase(); })[0];
+      if (hit){ state.job = hit; state.jobScan = 'found'; state.jobLookup = ''; }
+      else { state.job = null; state.jobScan = 'notfound'; }
+    }).catch(function(e){
+      state.jobScan = 'notfound';
+      showToast('Gagal memuat job', e.message || 'Periksa koneksi.', 'triangle-alert', 'var(--amber-500)');
+    }).then(function(){ state.jobBusy = false; render(); });
   }
 
   /* ---------------- actions ---------------- */
@@ -801,27 +873,56 @@
 
   var actions = {
     toggleConn: function(){ state.online = !state.online; },
-    go: function(arg){ state.screen = arg; },
-    role: function(arg){
-      var r = ROLES.filter(function(x){ return x.key === arg; })[0];
-      state.role = arg;
-      if (r.screens.indexOf(state.screen) === -1) state.screen = r.screens[0];
+    go: function(arg){
+      state.screen = arg;
+      if (arg === 'job' && !state.jobList.length && !state.jobBusy) loadJobList();
     },
-    scanJob: function(arg){ doScan('job', arg); },
     scanMat: function(arg){ doScan('mat', arg); },
-    jobReset: function(){ state.jobScan = 'idle'; },
+    jobReset: function(){ state.jobScan = 'idle'; state.jobLookup = ''; },
+    jobLookupGo: function(){ loadJob(state.jobLookup); },
+    jobPick: function(arg){
+      var hit = state.jobList.filter(function(j){ return j.job_id === arg; })[0];
+      if (hit){ state.job = hit; state.jobScan = 'found'; }
+    },
+    jobRefresh: function(){ state.jobBusy = false; state.jobList = []; loadJobList(); },
     matReset: function(){ state.matScan = 'idle'; state.notes = ''; state.qty = 6; },
     qtyInc: function(){ state.qty = Math.min(999, state.qty + 1); },
     qtyDec: function(){ state.qty = Math.max(1, state.qty - 1); },
-    jobTakeover: function(){
-      showToast('Permintaan alih stasiun dikirim', 'Menunggu persetujuan supervisor Line 02.', 'user-round-check', 'var(--blue-500)');
+    formRoute: function(op){
+      var r = state.form.route, i = r.indexOf(op);
+      if (i === -1){ r.push(op); state.form.route = ROUTE_PRESET.filter(function(x){ return r.indexOf(x) !== -1; }); }
+      else r.splice(i, 1);
     },
-    jobFinish: function(){
-      state.screen = 'progress';
-      showToast('Job belum bisa diselesaikan', 'QC masih menunggu — selesaikan rute operasi lebih dulu.', 'triangle-alert', 'var(--amber-500)');
+    formReset: function(){
+      state.form = { job_id:'', order_no:'', customer:'', product:'', product_type:'', operation_type:'', qty_target:'', route:ROUTE_PRESET.slice(0,5) };
+    },
+    formSubmit: function(){
+      var f = state.form;
+      if (!f.job_id.trim()){ showToast('Nomor job wajib diisi', 'Isi nomor job dulu.', 'triangle-alert', 'var(--amber-500)'); return; }
+      if (state.formBusy) return;
+      state.formBusy = true; render();
+      apiPost('/api/jobs', {
+        job_id: f.job_id.trim(),
+        order_no: f.order_no.trim() || null,
+        customer: f.customer.trim() || null,
+        product: f.product.trim() || null,
+        product_type: f.product_type.trim() || null,
+        operation_type: f.operation_type.trim() || null,
+        qty_target: parseInt(f.qty_target, 10) || 0,
+        qty_completed: 0,
+        route: f.route,
+        status: 'READY'
+      }).then(function(){
+        showToast('Job disimpan', f.job_id.trim() + ' tersimpan ke database.', 'circle-check', 'var(--green-500)');
+        actions.formReset();
+        state.jobList = []; state.screen = 'job'; loadJobList();
+      }).catch(function(e){
+        showToast('Gagal menyimpan job', e.message || 'Coba lagi.', 'triangle-alert', 'var(--amber-500)');
+      }).then(function(){ state.formBusy = false; render(); });
     },
     stepPrimary: function(){
       var st = state;
+      var jv = curJob();
       var curDef = STEP_DEFS[st.currentStep] || STEP_DEFS[STEP_DEFS.length-1];
       if (st.running){
         var last = st.currentStep >= STEP_DEFS.length - 1;
@@ -830,11 +931,11 @@
         st.stepSeconds = 0;
         showToast(
           last ? 'Rute operasi selesai' : curDef.name + ' selesai',
-          last ? JOB.no + ' siap ditutup.' : 'Jam selesai ' + clockStr() + ' ditulis otomatis.'
+          last ? jv.no + ' siap ditutup.' : 'Jam selesai ' + clockStr() + ' ditulis otomatis.'
         );
         post('/api/jobs', {
-          job_id:JOB.no, customer:JOB.customer, product:JOB.product,
-          qty_target:1500, qty_completed:940,
+          job_id:jv.no, customer:jv._raw.customer, product:jv._raw.product,
+          qty_target:jv.targetN, qty_completed:jv.doneN,
           status: last ? 'ROUTE_DONE' : ('STEP_DONE:' + curDef.name.toUpperCase())
         });
       } else {
@@ -852,7 +953,7 @@
       var st = state;
       if (st.online){
         showToast(
-          st.qty + ' ' + MATERIAL.unit + ' di-issue ke ' + JOB.no,
+          st.qty + ' ' + MATERIAL.unit + ' di-issue ke ' + curJob().no,
           MATERIAL.code + ' · tercatat ' + clockStr() + ' oleh ' + operatorName()
         );
         post('/api/issues', {
@@ -882,40 +983,47 @@
     renderToast();
   }
   function onInput(e){
-    var el = e.target.closest('[data-act="notes"]');
-    if (el) state.notes = el.value;
+    var el = e.target.closest('[data-model]');
+    if (!el) return;
+    var m = el.getAttribute('data-model');
+    if (m === 'notes') state.notes = el.value;
+    else if (m === 'jobLookup') state.jobLookup = el.value;
+    else if (m.indexOf('form.') === 0) state.form[m.slice(5)] = el.value;
+  }
+  function onKeydown(e){
+    var el = e.target.closest('[data-enter]');
+    if (el && e.key === 'Enter'){ e.preventDefault(); var fn = actions[el.getAttribute('data-enter')]; if (fn){ fn(); render(); renderToast(); } }
   }
 
   function tick(){
-    state.now = new Date(state.now.getTime() + 1000);
+    state.now = new Date();
     if (state.running) state.stepSeconds += 1;
     if (state.screen === 'progress'){
       render();
     } else {
-      var els = document.querySelectorAll('.js-clock');
-      for (var i = 0; i < els.length; i++) els[i].textContent = clockStr();
+      var c = document.querySelectorAll('.js-clock');
+      for (var i = 0; i < c.length; i++) c[i].textContent = clockStr();
+      var d = document.querySelectorAll('.js-date');
+      for (var j = 0; j < d.length; j++) d[j].textContent = dateStr();
     }
   }
 
   document.addEventListener('DOMContentLoaded', function(){
     var parts = (location.hash || '').replace('#', '').split('/');
     var h = parts[0];
-    if (['home', 'job', 'progress', 'material'].indexOf(h) !== -1){
-      // Standalone demo may widen the role to reach the screen; a real
-      // session keeps whatever role the account has.
-      if (roleObj().screens.indexOf(h) === -1 && !FT_USER) state.role = 'admin';
-      if (roleObj().screens.indexOf(h) !== -1){
-        state.screen = h;
-        if (h === 'job' && parts[1]) state.jobScan = parts[1];
-        if (h === 'material' && parts[1]) state.matScan = parts[1];
-      }
+    if (['home','job','progress','material','create'].indexOf(h) !== -1){
+      state.screen = h;
+      if (h === 'job' && parts[1]) state.jobScan = parts[1];
+      if (h === 'material' && parts[1]) state.matScan = parts[1];
     }
     render();
     renderToast();
     var f = $('#frame');
     f.addEventListener('click', onClick);
     f.addEventListener('input', onInput);
+    f.addEventListener('keydown', onKeydown);
     setInterval(tick, 1000);
+    if (state.screen === 'job') loadJobList();
   });
 })();
 </script>
