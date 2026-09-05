@@ -25,19 +25,33 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { job_id, customer, product, qty_target } = req.body;
+      const {
+        job_id,
+        customer,
+        product,
+        qty_target,
+        qty_completed,
+        status,
+      } = req.body;
+
+      if (!job_id) {
+        return res.status(400).json({ error: 'job_id is required' });
+      }
+
+      // Upsert on job_id so START / CONTINUE / FINISH update the same row.
+      const record = {
+        job_id,
+        customer,
+        product,
+        qty_target,
+        status: status || 'READY',
+        updated_at: new Date().toISOString(),
+      };
+      if (qty_completed != null) record.qty_completed = qty_completed;
 
       const { data, error } = await supabase
         .from('jobs')
-        .insert([
-          {
-            job_id,
-            customer,
-            product,
-            qty_target,
-            status: 'READY',
-          },
-        ])
+        .upsert([record], { onConflict: 'job_id' })
         .select();
 
       if (error) throw error;

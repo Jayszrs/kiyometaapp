@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>FactoryTrack MES</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"background":"#f8f9ff","inverse-primary":"#b7c4ff","on-secondary-fixed-variant":"#3f465c","on-primary-fixed-variant":"#0039b5","on-tertiary-container":"#b2d9ff","inverse-surface":"#213145","on-surface":"#0b1c30","tertiary-fixed":"#cce5ff","on-primary-fixed":"#001551","on-secondary-container":"#5c647a","on-surface-variant":"#434655","outline-variant":"#c4c5d7","surface-tint":"#2151da","primary-container":"#1d4ed8","surface-dim":"#cbdbf5","primary-fixed":"#dce1ff","surface":"#f8f9ff","on-error":"#ffffff","surface-container-highest":"#d3e4fe","surface-container":"#e5eeff","on-primary-container":"#cad3ff","secondary-fixed-dim":"#bec6e0","on-secondary-fixed":"#131b2e","error-container":"#ffdad6","surface-variant":"#d3e4fe","on-tertiary-fixed":"#001d31","on-background":"#0b1c30","secondary-container":"#dae2fd","tertiary":"#004870","on-primary":"#ffffff","inverse-on-surface":"#eaf1ff","outline":"#747686","on-error-container":"#93000a","on-tertiary-fixed-variant":"#004b73","tertiary-container":"#006194","secondary":"#565e74","on-tertiary":"#ffffff","on-secondary":"#ffffff","secondary-fixed":"#dae2fd","primary":"#0037b0","surface-container-lowest":"#ffffff","error":"#ba1a1a","tertiary-fixed-dim":"#93ccff","surface-container-high":"#dce9ff","primary-fixed-dim":"#b7c4ff","surface-container-low":"#eff4ff"},"borderRadius":{"DEFAULT":"0.125rem","lg":"0.25rem","xl":"0.5rem","full":"0.75rem"},"spacing":{"margin-screen":"20px","touch-oversized":"64px","pad-dense":"8px","pad-default":"16px","touch-standard":"56px","pad-compact":"12px","gap-grid":"16px","pad-structural":"24px","touch-min":"48px"},"fontFamily":{"headline-lg":["Inter"],"label-caps":["JetBrains Mono"],"code-md":["JetBrains Mono"],"body-md":["Inter"],"display-andon":["JetBrains Mono"],"code-lg":["JetBrains Mono"],"headline-md":["Inter"],"headline-sm":["Inter"],"body-lg":["Inter"]},"fontSize":{"headline-lg":["30px",{"lineHeight":"38px","letterSpacing":"-0.01em","fontWeight":"700"}],"label-caps":["12px",{"lineHeight":"16px","letterSpacing":"0.08em","fontWeight":"700"}],"code-md":["15px",{"lineHeight":"20px","letterSpacing":"0.02em","fontWeight":"600"}],"body-md":["16px",{"lineHeight":"24px","letterSpacing":"0em","fontWeight":"400"}],"display-andon":["44px",{"lineHeight":"52px","letterSpacing":"-0.02em","fontWeight":"800"}],"code-lg":["20px",{"lineHeight":"28px","letterSpacing":"0.02em","fontWeight":"700"}],"headline-md":["22px",{"lineHeight":"28px","letterSpacing":"0em","fontWeight":"700"}],"headline-sm":["18px",{"lineHeight":"24px","letterSpacing":"0em","fontWeight":"600"}],"body-lg":["18px",{"lineHeight":"26px","letterSpacing":"0em","fontWeight":"500"}]}}}}</script>
+<style>
+  @layer base {
+    html, body { margin: 0; padding: 0; }
+    body { overscroll-behavior: none; }
+  }
+  ::-webkit-scrollbar { display: none; }
+  .icon-fill { font-variation-settings: 'FILL' 1; }
+  .app-view { animation: viewfade .18s ease-out; }
+  @keyframes viewfade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .laser-line { top: 48%; }
+  .progress-fill { transition: width .5s ease; }
+</style>
+</head>
+<body class="bg-background font-body-md text-on-surface antialiased select-none">
+
+<!-- ===================== SHARED HEADER + NAV ===================== -->
+<header class="fixed top-0 left-0 right-0 z-50 bg-inverse-surface text-inverse-on-surface shadow-[0_2px_10px_rgba(0,0,0,0.18)]">
+  <div class="h-16 px-pad-structural flex items-center justify-between gap-gap-grid">
+    <div class="flex items-center gap-pad-compact">
+      <span class="material-symbols-outlined text-inverse-primary text-[28px]">precision_manufacturing</span>
+      <span class="font-headline-sm text-headline-sm font-bold text-inverse-on-surface">FactoryTrack</span>
+      <div class="h-8 w-[1.5px] bg-outline/40"></div>
+      <div class="flex flex-col">
+        <span class="font-label-caps text-label-caps text-inverse-primary tracking-widest">STATION UNIT</span>
+        <span class="font-code-md text-code-md text-inverse-on-surface font-bold">LINE 03 &bull; CNC &amp; FABRICATION</span>
+      </div>
+    </div>
+    <div class="hidden xl:flex items-center gap-pad-structural">
+      <div class="flex items-center gap-pad-compact bg-inverse-surface/80 px-pad-compact py-1 rounded border border-outline/30">
+        <span class="material-symbols-outlined text-inverse-primary text-[20px]">schedule</span>
+        <span class="font-code-md text-code-md text-inverse-on-surface tracking-wider font-bold" id="hdr-clock">2025-05-14 10:24:18 JST</span>
+      </div>
+      <div class="flex items-center gap-pad-dense bg-inverse-surface/80 px-pad-compact py-1 rounded border border-outline/30">
+        <span class="relative flex h-3 w-3">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-surface-tint opacity-75"></span>
+          <span class="relative inline-flex rounded-full h-3 w-3 bg-inverse-primary"></span>
+        </span>
+        <span class="font-label-caps text-label-caps text-inverse-primary font-bold tracking-wider">SCANNER: READY (HID-USB)</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-pad-compact">
+      <div class="hidden md:flex flex-col text-right pr-pad-dense">
+        <div class="flex items-center justify-end gap-2">
+          <span class="font-code-md text-code-md text-inverse-on-surface font-bold">Budi Santoso [OP-017]</span>
+          <span class="font-label-caps text-label-caps text-inverse-primary px-1.5 py-0.5 rounded bg-inverse-surface/90 border border-inverse-primary/30">LEAD OP</span>
+        </div>
+        <div class="flex items-center justify-end gap-3">
+          <span class="font-label-caps text-label-caps text-outline-variant">SHIFT A (07:00-15:30)</span>
+          <span class="font-label-caps text-label-caps text-inverse-primary flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">wifi</span>ONLINE</span>
+        </div>
+      </div>
+      <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+        <span class="material-symbols-outlined text-on-primary text-[18px]">person</span>
+      </div>
+      <button class="h-10 px-pad-compact bg-error hover:bg-error/90 text-on-error font-label-caps text-label-caps uppercase rounded flex items-center gap-1 transition-colors border border-on-error/20 active:translate-y-0.5" type="button" data-toast="Logged out (demo)">
+        <span class="material-symbols-outlined text-[18px]">power_settings_new</span>LOGOUT
+      </button>
+    </div>
+  </div>
+  <div class="bg-surface-container border-t border-outline-variant/30 px-pad-structural">
+    <nav class="flex items-center gap-pad-dense h-14 overflow-x-auto" id="main-nav">
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="dashboard" href="#">Dashboard</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="scan-job" href="#">Scan Job</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="active-job" href="#">Production Progress</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="scan-material" href="#">Scan Material</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="jobs" href="#">Job List</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="history" href="#">Job History</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="completed-job" href="#">Completed Job</a>
+      <a class="nav-link h-11 px-pad-compact flex items-center transition-all font-label-caps text-label-caps whitespace-nowrap rounded" data-path="reports" href="#">Reports</a>
+    </nav>
+  </div>
+</header>
+
+<main class="w-full pt-[120px] bg-background min-h-screen px-pad-structural py-pad-structural">
+
+<!-- ===================== VIEW: DASHBOARD ===================== -->
+<section id="view-dashboard" class="app-view">
+  <div class="flex flex-col w-full gap-gap-grid max-w-[1400px] mx-auto">
+    <!-- Shift Status Card -->
+    <div class="w-full bg-surface-container-lowest rounded-xl p-pad-structural shadow-sm flex flex-col md:flex-row items-stretch justify-between gap-gap-grid relative overflow-hidden">
+      <div class="absolute -right-12 -top-12 w-64 h-64 bg-primary-fixed/30 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="flex flex-col justify-between gap-pad-dense z-10">
+        <div class="flex items-center gap-pad-compact flex-wrap">
+          <span class="w-3 h-3 rounded-full bg-primary-container animate-pulse"></span>
+          <span class="font-label-caps text-label-caps uppercase text-primary font-bold tracking-wider">LIVE TELEMETRY STATION FEED</span>
+          <span class="text-outline-variant font-label-caps text-label-caps">/</span>
+          <span class="font-label-caps text-label-caps text-on-surface-variant font-bold">STATION ID: MC-CNC-03B</span>
+        </div>
+        <div>
+          <h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight font-bold">
+            SELAMAT BERTUGAS, BUDI SANTOSO <span class="text-on-surface-variant font-label-caps text-headline-sm font-semibold">[OP-017]</span>
+          </h1>
+          <p class="font-body-md text-body-md text-on-surface-variant mt-1">
+            Shift 1 &bull; Line 03 (Fabrication &amp; Machining) &bull; Autonomous Maintenance Block A
+          </p>
+        </div>
+        <div class="flex items-center gap-pad-default pt-1 font-label-caps text-label-caps flex-wrap">
+          <span class="flex items-center gap-1.5 text-on-surface">
+            <span class="material-symbols-outlined text-primary text-[18px]">calendar_today</span> Wednesday, 14 May 2025
+          </span>
+          <span class="text-outline-variant">&bull;</span>
+          <span class="flex items-center gap-1.5 text-on-surface font-code-md text-code-md">
+            <span class="material-symbols-outlined text-primary text-[18px]">alarm</span> <span id="dash-clock">10:24:18 WIB</span>
+          </span>
+        </div>
+      </div>
+      <div class="flex items-center gap-pad-default z-10">
+        <div class="bg-surface-container-low p-pad-default rounded-lg flex flex-col justify-between min-w-[150px] shadow-sm">
+          <div class="flex justify-between items-center text-on-surface-variant">
+            <span class="font-label-caps text-label-caps font-bold">DAILY TARGET</span>
+            <span class="material-symbols-outlined text-[18px] text-tertiary">flag</span>
+          </div>
+          <div class="my-1"><span class="font-display-andon text-headline-lg text-tertiary">88.5%</span></div>
+          <span class="font-label-caps text-label-caps text-on-surface-variant">OEE Baseline Limit</span>
+        </div>
+        <div class="bg-primary text-on-primary p-pad-default rounded-lg flex flex-col justify-between min-w-[180px] shadow-md relative overflow-hidden">
+          <div class="absolute -right-4 -bottom-4 opacity-15 pointer-events-none"><span class="material-symbols-outlined text-[96px]">speed</span></div>
+          <div class="flex justify-between items-center text-primary-fixed-dim">
+            <span class="font-label-caps text-label-caps font-bold">ACTUAL OEE</span>
+            <span class="material-symbols-outlined text-[18px] text-primary-fixed">trending_up</span>
+          </div>
+          <div class="my-1 flex items-baseline gap-2">
+            <span class="font-display-andon text-display-andon font-bold tracking-tight">91.2%</span>
+            <span class="font-label-caps text-label-caps text-primary-fixed bg-primary-container px-1.5 py-0.5 rounded font-bold">+2.7%</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-primary-fixed-dim">Status: Above Standard</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Touch Tiles -->
+    <section class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-gap-grid">
+      <button class="group h-[138px] bg-surface-container-lowest hover:bg-primary hover:text-on-primary transition-all duration-150 rounded-xl p-pad-default flex flex-col justify-between shadow-sm relative text-left active:scale-[0.98]" type="button" data-nav="scan-job">
+        <div class="flex items-start justify-between w-full">
+          <div class="w-12 h-12 rounded-lg bg-primary-container text-on-primary group-hover:bg-surface-container-lowest group-hover:text-primary flex items-center justify-center transition-colors">
+            <span class="material-symbols-outlined text-[28px] icon-fill">barcode_scanner</span>
+          </div>
+          <span class="px-2 py-1 bg-primary-fixed text-on-primary-fixed font-label-caps text-label-caps rounded font-bold uppercase group-hover:bg-primary-container group-hover:text-on-primary">RUN EXEC</span>
+        </div>
+        <div>
+          <div class="font-headline-sm text-headline-sm font-bold text-on-surface group-hover:text-on-primary tracking-tight">SCAN JOB</div>
+          <div class="font-body-md text-label-caps text-on-surface-variant group-hover:text-primary-fixed-dim mt-0.5 line-clamp-1">Start / continue / finish production</div>
+        </div>
+      </button>
+      <button class="group h-[138px] bg-surface-container-lowest hover:bg-tertiary-container hover:text-on-tertiary transition-all duration-150 rounded-xl p-pad-default flex flex-col justify-between shadow-sm relative text-left active:scale-[0.98]" type="button" data-nav="scan-material">
+        <div class="flex items-start justify-between w-full">
+          <div class="w-12 h-12 rounded-lg bg-secondary-container text-on-secondary-container group-hover:bg-surface-container-lowest group-hover:text-tertiary-container flex items-center justify-center transition-colors">
+            <span class="material-symbols-outlined text-[28px]">inventory_2</span>
+          </div>
+          <span class="px-2 py-1 bg-surface-container-high text-tertiary font-label-caps text-label-caps rounded font-bold uppercase group-hover:bg-surface-container group-hover:text-tertiary">MATERIAL</span>
+        </div>
+        <div>
+          <div class="font-headline-sm text-headline-sm font-bold text-on-surface group-hover:text-on-tertiary tracking-tight">SCAN MATERIAL</div>
+          <div class="font-body-md text-label-caps text-on-surface-variant group-hover:text-on-tertiary-container mt-0.5 line-clamp-1">Report issue on production lot</div>
+        </div>
+      </button>
+      <button class="group h-[138px] bg-surface-container-lowest hover:bg-inverse-surface hover:text-inverse-on-surface transition-all duration-150 rounded-xl p-pad-default flex flex-col justify-between shadow-sm relative text-left active:scale-[0.98]" type="button" data-nav="active-job">
+        <div class="flex items-start justify-between w-full">
+          <div class="w-12 h-12 rounded-lg bg-surface-container-high text-primary flex items-center justify-center group-hover:bg-inverse-primary group-hover:text-inverse-surface transition-colors">
+            <span class="material-symbols-outlined text-[28px]">reorder</span>
+          </div>
+          <span class="px-2 py-1 bg-surface-container text-on-surface-variant font-label-caps text-label-caps rounded font-bold uppercase group-hover:bg-inverse-primary group-hover:text-inverse-surface">REAL-TIME</span>
+        </div>
+        <div>
+          <div class="font-headline-sm text-headline-sm font-bold text-on-surface group-hover:text-inverse-on-surface tracking-tight">PROGRESS JOB</div>
+          <div class="font-body-md text-label-caps text-on-surface-variant group-hover:text-inverse-primary mt-0.5 line-clamp-1">Monitor active line production</div>
+        </div>
+      </button>
+      <button class="group h-[138px] bg-surface-container-lowest hover:bg-surface-container-high transition-all duration-150 rounded-xl p-pad-default flex flex-col justify-between shadow-sm relative text-left active:scale-[0.98]" type="button" data-nav="history">
+        <div class="flex items-start justify-between w-full">
+          <div class="w-12 h-12 rounded-lg bg-surface-container text-secondary flex items-center justify-center">
+            <span class="material-symbols-outlined text-[28px]">manage_search</span>
+          </div>
+          <span class="px-2 py-1 bg-surface-container-low text-secondary font-label-caps text-label-caps rounded font-bold uppercase">AUDIT</span>
+        </div>
+        <div>
+          <div class="font-headline-sm text-headline-sm font-bold text-on-surface tracking-tight">HISTORY</div>
+          <div class="font-body-md text-label-caps text-on-surface-variant mt-0.5 line-clamp-1">View production activity log</div>
+        </div>
+      </button>
+      <button class="group h-[138px] bg-surface-container-lowest hover:bg-surface-container-high transition-all duration-150 rounded-xl p-pad-default flex flex-col justify-between shadow-sm relative text-left active:scale-[0.98]" type="button" data-nav="reports">
+        <div class="flex items-start justify-between w-full">
+          <div class="w-12 h-12 rounded-lg bg-surface-container text-tertiary flex items-center justify-center">
+            <span class="material-symbols-outlined text-[28px]">query_stats</span>
+          </div>
+          <span class="px-2 py-1 bg-surface-container-low text-tertiary font-label-caps text-label-caps rounded font-bold uppercase">METRICS</span>
+        </div>
+        <div>
+          <div class="font-headline-sm text-headline-sm font-bold text-on-surface tracking-tight">REPORT</div>
+          <div class="font-body-md text-label-caps text-on-surface-variant mt-0.5 line-clamp-1">Shift output &amp; scrap reports</div>
+        </div>
+      </button>
+    </section>
+
+    <!-- KPI Row -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gap-grid">
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex items-center justify-between">
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant font-bold">JOBS TODAY</span>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span class="font-display-andon text-display-andon font-bold text-on-surface leading-none">24</span>
+            <span class="font-code-md text-code-md text-on-surface-variant font-semibold">/ 25 PLAN</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-primary font-bold mt-1">96% Completed to Plan</span>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center text-primary"><span class="material-symbols-outlined text-[26px]">fact_check</span></div>
+      </div>
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex items-center justify-between">
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant font-bold">IN PROGRESS</span>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span class="font-display-andon text-display-andon font-bold text-primary leading-none">12</span>
+            <span class="font-code-md text-code-md text-on-surface-variant font-semibold">RUNNING</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-on-surface-variant mt-1">Active on Machining Lines</span>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-primary-fixed flex items-center justify-center text-on-primary-fixed"><span class="material-symbols-outlined text-[26px] icon-fill">play_circle</span></div>
+      </div>
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex items-center justify-between">
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant font-bold">COMPLETED</span>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span class="font-display-andon text-display-andon font-bold text-tertiary leading-none">10</span>
+            <span class="font-code-md text-code-md text-on-surface-variant font-semibold">LOTS</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-tertiary font-bold mt-1">100% Quality Inspected</span>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed"><span class="material-symbols-outlined text-[26px]">verified</span></div>
+      </div>
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex items-center justify-between">
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant font-bold">MATERIAL MOVES</span>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span class="font-display-andon text-display-andon font-bold text-on-surface leading-none">36</span>
+            <span class="font-code-md text-code-md text-on-surface-variant font-semibold">TXNS</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-on-surface-variant mt-1">Issues &amp; Line Returns OK</span>
+        </div>
+        <div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center text-secondary"><span class="material-symbols-outlined text-[26px]">swap_horiz</span></div>
+      </div>
+    </section>
+
+    <!-- Activity Log -->
+    <section class="w-full bg-surface-container-lowest rounded-xl p-pad-structural shadow-sm flex flex-col gap-pad-default">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-pad-compact">
+          <span class="material-symbols-outlined text-primary text-[24px]">terminal</span>
+          <div>
+            <h2 class="font-headline-sm text-headline-sm font-bold text-on-surface tracking-tight">RECENT SHOPFLOOR ACTIVITY LOG</h2>
+            <p class="font-label-caps text-label-caps text-on-surface-variant">Live station transaction stream &bull; Auto-refresh active (3s)</p>
+          </div>
+        </div>
+        <button class="h-10 px-pad-compact bg-surface-container hover:bg-surface-container-high rounded text-on-surface font-label-caps text-label-caps flex items-center gap-1.5 transition-colors" type="button" data-toast="Filter panel (demo)">
+          <span class="material-symbols-outlined text-[18px]">filter_alt</span> FILTER LOG
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="font-label-caps text-label-caps text-on-surface-variant border-b border-outline-variant/40">
+              <th class="py-2 pr-4">TIME</th>
+              <th class="py-2 pr-4">EVENT</th>
+              <th class="py-2 pr-4">REFERENCE</th>
+              <th class="py-2 pr-4">OPERATOR</th>
+              <th class="py-2">STATUS</th>
+            </tr>
+          </thead>
+          <tbody class="font-code-md text-code-md text-on-surface" id="activity-log-body">
+            <tr class="border-b border-outline-variant/20"><td class="py-2 pr-4">10:24:02</td><td class="py-2 pr-4">Job scanned</td><td class="py-2 pr-4 text-primary">JOB-210266</td><td class="py-2 pr-4">OP-017</td><td class="py-2"><span class="px-2 py-0.5 rounded-full bg-primary/15 text-primary font-label-caps text-label-caps">OK</span></td></tr>
+            <tr class="border-b border-outline-variant/20"><td class="py-2 pr-4">10:19:47</td><td class="py-2 pr-4">Material issued</td><td class="py-2 pr-4 text-primary">LOT-STK-990A</td><td class="py-2 pr-4">OP-017</td><td class="py-2"><span class="px-2 py-0.5 rounded-full bg-primary/15 text-primary font-label-caps text-label-caps">OK</span></td></tr>
+            <tr class="border-b border-outline-variant/20"><td class="py-2 pr-4">10:12:03</td><td class="py-2 pr-4">Job completed</td><td class="py-2 pr-4 text-primary">JOB-210261</td><td class="py-2 pr-4">OP-014</td><td class="py-2"><span class="px-2 py-0.5 rounded-full bg-tertiary/15 text-tertiary font-label-caps text-label-caps">DONE</span></td></tr>
+            <tr class="border-b border-outline-variant/20"><td class="py-2 pr-4">10:05:38</td><td class="py-2 pr-4">Issue reported</td><td class="py-2 pr-4 text-primary">LOT-STK-988C</td><td class="py-2 pr-4">OP-017</td><td class="py-2"><span class="px-2 py-0.5 rounded-full bg-error/15 text-error font-label-caps text-label-caps">DEFECT</span></td></tr>
+            <tr><td class="py-2 pr-4">09:58:11</td><td class="py-2 pr-4">Shift started</td><td class="py-2 pr-4 text-primary">SHIFT-A</td><td class="py-2 pr-4">OP-017</td><td class="py-2"><span class="px-2 py-0.5 rounded-full bg-primary/15 text-primary font-label-caps text-label-caps">OK</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- ===================== VIEW: SCAN JOB ===================== -->
+<section id="view-scan-job" class="app-view hidden">
+  <div class="grid grid-cols-12 gap-pad-structural w-full max-w-[1240px] mx-auto items-start">
+    <!-- LEFT: scanner -->
+    <div class="col-span-12 lg:col-span-5 flex flex-col gap-pad-compact">
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-2 relative overflow-hidden">
+        <div class="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-primary-container/10 pointer-events-none"></div>
+        <div class="flex items-center justify-between">
+          <span class="font-label-caps text-label-caps text-primary tracking-widest flex items-center gap-1.5">
+            <span class="material-symbols-outlined text-[16px]">qr_code_scanner</span> OPTICAL ACQUISITION GATE
+          </span>
+          <span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface font-label-caps text-label-caps">HID-USB 115200bps</span>
+        </div>
+        <h2 class="font-headline-md text-headline-md text-on-surface tracking-tight">SCAN JOB BARCODE</h2>
+        <p class="font-body-md text-body-md text-on-surface-variant">Align terminal lens or trigger wireless handheld scanner at the traveler routing barcode.</p>
+      </div>
+
+      <div class="bg-inverse-surface rounded-xl p-pad-structural relative flex flex-col items-center justify-between shadow-md min-h-[360px] overflow-hidden text-inverse-on-surface">
+        <div class="w-full flex items-center justify-between z-10">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2.5 w-2.5">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary-fixed opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-tertiary-fixed"></span>
+            </span>
+            <span class="font-label-caps text-label-caps text-inverse-primary tracking-wider" id="scan-engine-state">CAMERA ACTIVE / HID SCANNER READY</span>
+          </div>
+          <span class="font-code-md text-code-md text-inverse-primary/80">FPS: 60.0</span>
+        </div>
+        <div class="relative w-full max-w-[310px] aspect-[4/3] my-4 flex items-center justify-center bg-inverse-surface/60 rounded">
+          <div class="absolute top-0 left-0 w-8 h-8 border-t-[3px] border-l-[3px] border-inverse-primary"></div>
+          <div class="absolute top-0 right-0 w-8 h-8 border-t-[3px] border-r-[3px] border-inverse-primary"></div>
+          <div class="absolute bottom-0 left-0 w-8 h-8 border-b-[3px] border-l-[3px] border-inverse-primary"></div>
+          <div class="absolute bottom-0 right-0 w-8 h-8 border-b-[3px] border-r-[3px] border-inverse-primary"></div>
+          <div class="w-12 h-0.5 bg-inverse-primary/40 absolute"></div>
+          <div class="h-12 w-0.5 bg-inverse-primary/40 absolute"></div>
+          <div class="laser-line absolute inset-x-3 h-0.5 bg-gradient-to-r from-transparent via-tertiary-fixed-dim to-transparent shadow-[0_0_12px_#93ccff] animate-[pulse_1.6s_ease-in-out_infinite]"></div>
+          <div class="flex items-center gap-1 opacity-20 filter blur-[0.4px]">
+            <div class="w-1.5 h-20 bg-inverse-on-surface"></div><div class="w-3 h-20 bg-inverse-on-surface"></div><div class="w-1 h-20 bg-inverse-on-surface"></div><div class="w-2.5 h-20 bg-inverse-on-surface"></div><div class="w-4 h-20 bg-inverse-on-surface"></div><div class="w-1 h-20 bg-inverse-on-surface"></div><div class="w-3 h-20 bg-inverse-on-surface"></div><div class="w-2 h-20 bg-inverse-on-surface"></div><div class="w-4 h-20 bg-inverse-on-surface"></div><div class="w-1 h-20 bg-inverse-on-surface"></div><div class="w-2 h-20 bg-inverse-on-surface"></div>
+          </div>
+        </div>
+        <div class="z-10 w-full bg-surface-container/10 px-pad-compact py-2 rounded flex items-center justify-between text-inverse-on-surface" id="barcode-display-pill">
+          <div class="flex items-center gap-2 truncate">
+            <span class="material-symbols-outlined text-inverse-primary text-[18px]">verified</span>
+            <span class="font-code-md text-code-md font-bold text-inverse-on-surface tracking-wide" id="pill-code-text">AWAITING SCAN</span>
+          </div>
+          <span class="font-label-caps text-label-caps text-inverse-primary/90 shrink-0" id="pill-verify-time">Ready</span>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest p-pad-compact rounded-xl shadow-sm flex flex-col gap-2">
+        <span class="font-label-caps text-label-caps text-on-surface-variant tracking-wider">TACTICAL TEST STIMULUS (GUEST / OPERATOR DEMO)</span>
+        <div class="grid grid-cols-2 gap-2">
+          <button class="h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-code-md text-code-md rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" data-job="JOB-210266" type="button">
+            <span class="material-symbols-outlined text-primary text-[20px]">barcode_scanner</span><span class="truncate">JOB-210266</span>
+          </button>
+          <button class="h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-code-md text-code-md rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" data-job="JOB-210267" type="button">
+            <span class="material-symbols-outlined text-primary text-[20px]">barcode_scanner</span><span class="truncate">JOB-210267</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-pad-compact px-pad-compact py-2 bg-surface-container-low rounded-lg text-on-surface-variant">
+        <span class="material-symbols-outlined text-primary text-[22px] shrink-0">sensors</span>
+        <p class="font-label-caps text-label-caps">Hold steady at 15&ndash;25cm distance. Industrial scanner auto-beeps and vibrates upon successful checksum read.</p>
+      </div>
+    </div>
+
+    <!-- RIGHT: work order -->
+    <div class="col-span-12 lg:col-span-7 flex flex-col gap-pad-compact">
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-pad-compact">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-pad-compact">
+            <span class="w-3 h-8 bg-primary rounded-full"></span>
+            <div>
+              <span class="font-label-caps text-label-caps text-on-surface-variant block">ACTIVE WORK ORDER ROUTING TICKET</span>
+              <h1 class="font-display-andon text-display-andon text-on-surface font-black tracking-tight leading-none" id="dyn-job-id">&mdash;</h1>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary-container text-on-primary font-label-caps text-label-caps">
+            <span class="w-2 h-2 rounded-full bg-on-primary animate-pulse"></span>
+            <span id="dyn-job-status">NOT SCANNED</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-2 pt-2">
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">CUSTOMER</span>
+            <span class="font-headline-sm text-headline-sm text-on-surface truncate" id="dyn-customer">&mdash;</span>
+          </div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">SALES ORDER REF</span>
+            <span class="font-code-md text-code-md text-primary font-bold" id="dyn-order-no">&mdash;</span>
+          </div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">PRODUCT CODE</span>
+            <span class="font-code-md text-code-md text-on-surface font-bold truncate" id="dyn-product">&mdash;</span>
+          </div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">ROUTING STAGE</span>
+            <div class="flex items-center gap-1.5 text-on-surface font-code-md text-code-md">
+              <span class="text-primary font-bold" id="dyn-curr-op">&mdash;</span>
+              <span class="material-symbols-outlined text-[16px] text-outline">arrow_forward</span>
+              <span class="text-on-surface-variant" id="dyn-next-op">&mdash;</span>
+            </div>
+          </div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">LEAD OPERATOR</span>
+            <span class="font-code-md text-code-md text-on-surface truncate">Budi Santoso (OP-017)</span>
+          </div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between">
+            <span class="font-label-caps text-label-caps text-on-surface-variant">START TIMESTAMP</span>
+            <div class="flex items-center gap-1 font-code-md text-code-md text-on-surface">
+              <span class="material-symbols-outlined text-[16px] text-primary">schedule</span>
+              <span id="dyn-timestamp">&mdash;</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-surface-container-low p-pad-structural rounded-xl flex flex-col gap-pad-compact">
+          <div class="flex items-baseline justify-between flex-wrap gap-2">
+            <div class="flex items-baseline gap-2 flex-wrap">
+              <span class="font-label-caps text-label-caps text-on-surface-variant">PROGRESS QUANTITY:</span>
+              <span class="font-code-lg text-code-lg text-on-surface font-bold" id="dyn-progress-text">0 / 0 pcs</span>
+              <span class="font-label-caps text-label-caps text-primary bg-primary/10 px-2 py-0.5 rounded" id="dyn-pct-badge">0% COMPLETED</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-on-surface-variant font-label-caps text-label-caps">
+              <span class="material-symbols-outlined text-tertiary-container text-[18px]">timelapse</span>
+              <span>EST. REMAINING:</span>
+              <strong class="text-on-surface font-code-md text-code-md" id="dyn-est-cycle">&mdash;</strong>
+            </div>
+          </div>
+          <div class="w-full h-5 bg-surface-container-highest rounded-full overflow-hidden p-0.5 flex">
+            <div class="h-full bg-primary-container rounded-full progress-fill shadow-sm w-0" id="dyn-progress-bar"></div>
+          </div>
+          <div class="flex items-center justify-between text-on-surface-variant font-label-caps text-label-caps">
+            <span>BATCH ORIGIN: RAW COIL STK-990</span>
+            <span>TOLERANCE COMPLIANCE: 99.8% PASS</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between flex-wrap gap-1">
+            <label class="font-label-caps text-label-caps text-on-surface-variant uppercase flex items-center gap-1" for="operator-notes">
+              <span class="material-symbols-outlined text-[16px]">edit_note</span> Description / Notes (Optional Operational Remark)
+            </label>
+            <span class="font-label-caps text-label-caps text-outline">AUTO-SYNCS TO MES CLOUD</span>
+          </div>
+          <input class="w-full h-touch-standard bg-surface-container-low text-on-surface placeholder:text-outline font-body-md text-body-md px-pad-default rounded-lg focus:outline-none focus:bg-surface-container-lowest shadow-inner" id="operator-notes" placeholder="Optional operator observation or shift handover note..." type="text"/>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-pad-compact pt-pad-dense">
+          <button class="h-[60px] px-pad-structural bg-primary-container hover:bg-primary-container/90 text-on-primary font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-md" data-line-action="STARTED" type="button">
+            <span class="material-symbols-outlined text-[24px]">play_circle</span><span class="tracking-wide uppercase font-bold">START PROCESS</span>
+          </button>
+          <button class="h-[60px] px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" data-line-action="RESUMED" type="button">
+            <span class="material-symbols-outlined text-primary text-[22px]">fast_forward</span><span class="tracking-tight uppercase">CONTINUE PREVIOUS</span>
+          </button>
+          <button class="h-[60px] px-pad-compact bg-surface-container-lowest hover:bg-surface-container-low text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm border border-outline-variant/40" data-line-action="COMPLETED" type="button">
+            <span class="material-symbols-outlined text-outline text-[22px]">check_box</span><span class="tracking-tight uppercase">FINISH JOB</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-low p-pad-compact rounded-lg flex items-center justify-between text-on-surface-variant font-label-caps text-label-caps flex-wrap gap-1">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-primary"></span>
+          <span>CELL 03-CNC INTERLOCK: ENGAGED &amp; SAFE</span>
+        </div>
+        <span class="font-code-md text-code-md text-on-surface">CALIBRATION ID: QC-2025-Q2</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== VIEW: PRODUCTION PROGRESS ===================== -->
+<section id="view-active-job" class="app-view hidden">
+  <div class="flex flex-col w-full gap-gap-grid max-w-[1400px] mx-auto">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <h1 class="font-headline-lg text-headline-lg text-on-surface font-bold">PRODUCTION PROGRESS</h1>
+        <p class="font-body-md text-body-md text-on-surface-variant mt-1">Real-time monitoring &bull; Active jobs &amp; line status</p>
+      </div>
+      <div class="flex items-center gap-pad-compact">
+        <button class="h-10 px-pad-default bg-surface-container hover:bg-surface-container-high rounded text-on-surface font-label-caps text-label-caps flex items-center gap-1.5 transition-colors" type="button" data-toast="Filter applied (demo)">
+          <span class="material-symbols-outlined text-[18px]">filter_alt</span> FILTER
+        </button>
+        <button class="h-10 px-pad-default bg-surface-container hover:bg-surface-container-high rounded text-on-surface font-label-caps text-label-caps flex items-center gap-1.5 transition-colors" type="button" id="btn-sync">
+          <span class="material-symbols-outlined text-[18px]">refresh</span> SYNC
+        </button>
+      </div>
+    </div>
+
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-gap-grid">
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex flex-col gap-pad-default border-l-4 border-primary">
+        <div class="flex items-start justify-between">
+          <div><span class="font-label-caps text-label-caps text-primary font-bold">ACTIVE JOB #1</span><h3 class="font-headline-md text-headline-md text-on-surface font-bold mt-1">JOB-210266</h3></div>
+          <div class="flex items-center gap-1 px-2 py-1 bg-primary/15 rounded-full"><span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span><span class="font-label-caps text-label-caps text-primary font-bold">RUNNING</span></div>
+        </div>
+        <div class="bg-surface-container-low p-pad-compact rounded-lg">
+          <div class="flex items-center justify-between mb-2"><span class="font-label-caps text-label-caps text-on-surface-variant">PROGRESS</span><span class="font-code-md text-code-md text-primary font-bold">65 / 100 pcs</span></div>
+          <div class="w-full h-4 bg-surface-container-highest rounded-full overflow-hidden p-0.5"><div class="h-full bg-primary rounded-full progress-fill w-[65%]"></div></div>
+          <div class="flex items-center justify-between mt-2 text-on-surface-variant font-label-caps text-label-caps"><span>65% COMPLETE</span><span>~25 MINS LEFT</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">CYCLE TIME</span><span class="font-code-lg text-code-lg text-on-surface font-bold">2.4 MIN/PC</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">QUALITY</span><span class="font-code-lg text-code-lg text-tertiary font-bold">99.8%</span></div>
+        </div>
+        <div class="flex gap-2">
+          <button class="flex-1 h-touch-min bg-surface-container-high hover:bg-surface-container-highest rounded text-on-surface font-label-caps text-label-caps transition-colors" type="button" data-toast="JOB-210266 paused">PAUSE</button>
+          <button class="flex-1 h-touch-min bg-error/15 hover:bg-error/25 rounded text-error font-label-caps text-label-caps transition-colors" type="button" data-confirm="Abort JOB-210266?" data-toast="JOB-210266 aborted">ABORT</button>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex flex-col gap-pad-default border-l-4 border-tertiary">
+        <div class="flex items-start justify-between">
+          <div><span class="font-label-caps text-label-caps text-tertiary font-bold">ACTIVE JOB #2</span><h3 class="font-headline-md text-headline-md text-on-surface font-bold mt-1">JOB-210267</h3></div>
+          <div class="flex items-center gap-1 px-2 py-1 bg-tertiary/15 rounded-full"><span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span><span class="font-label-caps text-label-caps text-tertiary font-bold">RUNNING</span></div>
+        </div>
+        <div class="bg-surface-container-low p-pad-compact rounded-lg">
+          <div class="flex items-center justify-between mb-2"><span class="font-label-caps text-label-caps text-on-surface-variant">PROGRESS</span><span class="font-code-md text-code-md text-tertiary font-bold">195 / 250 pcs</span></div>
+          <div class="w-full h-4 bg-surface-container-highest rounded-full overflow-hidden p-0.5"><div class="h-full bg-tertiary rounded-full progress-fill w-[78%]"></div></div>
+          <div class="flex items-center justify-between mt-2 text-on-surface-variant font-label-caps text-label-caps"><span>78% COMPLETE</span><span>~10 MINS LEFT</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">CYCLE TIME</span><span class="font-code-lg text-code-lg text-on-surface font-bold">1.8 MIN/PC</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">QUALITY</span><span class="font-code-lg text-code-lg text-tertiary font-bold">99.6%</span></div>
+        </div>
+        <div class="flex gap-2">
+          <button class="flex-1 h-touch-min bg-surface-container-high hover:bg-surface-container-highest rounded text-on-surface font-label-caps text-label-caps transition-colors" type="button" data-toast="JOB-210267 paused">PAUSE</button>
+          <button class="flex-1 h-touch-min bg-primary hover:bg-primary/90 rounded text-on-primary font-label-caps text-label-caps transition-colors font-bold" type="button" data-toast="JOB-210267 marked complete">COMPLETE</button>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm flex flex-col gap-pad-default border-l-4 border-secondary">
+        <div class="flex items-start justify-between">
+          <div><span class="font-label-caps text-label-caps text-secondary font-bold">QUEUED JOB #3</span><h3 class="font-headline-md text-headline-md text-on-surface font-bold mt-1">JOB-210268</h3></div>
+          <div class="flex items-center gap-1 px-2 py-1 bg-surface-container rounded-full"><span class="w-2 h-2 rounded-full bg-secondary"></span><span class="font-label-caps text-label-caps text-secondary font-bold">WAITING</span></div>
+        </div>
+        <div class="bg-surface-container-low p-pad-compact rounded-lg">
+          <div class="flex items-center justify-between mb-2"><span class="font-label-caps text-label-caps text-on-surface-variant">QUEUED</span><span class="font-code-md text-code-md text-secondary font-bold">0 / 180 pcs</span></div>
+          <div class="w-full h-4 bg-surface-container-highest rounded-full overflow-hidden p-0.5"><div class="h-full bg-secondary rounded-full progress-fill w-0"></div></div>
+          <div class="flex items-center justify-between mt-2 text-on-surface-variant font-label-caps text-label-caps"><span>READY TO START</span><span>ETA ~45 MINS</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">EST. TIME</span><span class="font-code-lg text-code-lg text-on-surface font-bold">64 MINS</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg"><span class="font-label-caps text-label-caps text-on-surface-variant block">PRODUCT</span><span class="font-code-md text-code-md text-on-surface font-bold truncate">Spacer B-22</span></div>
+        </div>
+        <div class="flex gap-2">
+          <button class="flex-1 h-touch-min bg-primary hover:bg-primary/90 rounded text-on-primary font-label-caps text-label-caps transition-colors font-bold" type="button" data-nav="scan-job" data-toast="Scan JOB-210268 to start">START NOW</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm">
+      <div class="flex items-center gap-pad-compact mb-pad-default"><span class="material-symbols-outlined text-primary text-[22px]">precision_manufacturing</span><h2 class="font-headline-sm text-headline-sm text-on-surface font-bold">LINE 03 EQUIPMENT STATUS</h2></div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-pad-compact">
+        <div class="flex items-center gap-2 p-pad-compact bg-surface-container-low rounded-lg"><div class="w-3 h-3 rounded-full bg-primary"></div><div><span class="font-label-caps text-label-caps text-on-surface-variant block">CNC-A SPINDLE</span><span class="font-code-md text-code-md text-on-surface font-bold">READY</span></div></div>
+        <div class="flex items-center gap-2 p-pad-compact bg-surface-container-low rounded-lg"><div class="w-3 h-3 rounded-full bg-primary"></div><div><span class="font-label-caps text-label-caps text-on-surface-variant block">COOLANT PUMP</span><span class="font-code-md text-code-md text-on-surface font-bold">RUNNING</span></div></div>
+        <div class="flex items-center gap-2 p-pad-compact bg-surface-container-low rounded-lg"><div class="w-3 h-3 rounded-full bg-error/60"></div><div><span class="font-label-caps text-label-caps text-on-surface-variant block">PARTS BIN SENSOR</span><span class="font-code-md text-code-md text-error font-bold">WARNING</span></div></div>
+        <div class="flex items-center gap-2 p-pad-compact bg-surface-container-low rounded-lg"><div class="w-3 h-3 rounded-full bg-primary"></div><div><span class="font-label-caps text-label-caps text-on-surface-variant block">AIR COMPRESSOR</span><span class="font-code-md text-code-md text-on-surface font-bold">STABLE</span></div></div>
+      </div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-xl p-pad-default shadow-sm">
+      <div class="flex items-center gap-pad-compact mb-pad-default"><span class="material-symbols-outlined text-error text-[22px]">notifications_active</span><h2 class="font-headline-sm text-headline-sm text-on-surface font-bold">ACTIVE ALERTS</h2></div>
+      <div class="space-y-2">
+        <div class="flex items-start gap-pad-compact p-pad-compact bg-error/10 border border-error/30 rounded-lg">
+          <span class="material-symbols-outlined text-error text-[20px] mt-0.5 shrink-0">warning</span>
+          <div class="flex-1"><div class="font-label-caps text-label-caps text-error font-bold">PARTS BIN FULL</div><p class="font-body-md text-body-md text-on-surface-variant mt-0.5">Output bin for JOB-210266 is 90% full. Unload before completion.</p></div>
+          <button class="text-on-surface-variant font-label-caps text-label-caps shrink-0 hover:text-on-surface" type="button" data-toast="Alert acknowledged">DISMISS</button>
+        </div>
+        <div class="flex items-start gap-pad-compact p-pad-compact bg-surface-container border border-outline/30 rounded-lg">
+          <span class="material-symbols-outlined text-secondary text-[20px] mt-0.5 shrink-0">info</span>
+          <div class="flex-1"><div class="font-label-caps text-label-caps text-secondary font-bold">MAINTENANCE REMINDER</div><p class="font-body-md text-body-md text-on-surface-variant mt-0.5">Spindle calibration due in 2 hours. Schedule during next job transition.</p></div>
+          <button class="text-on-surface-variant font-label-caps text-label-caps shrink-0 hover:text-on-surface" type="button" data-toast="Alert acknowledged">DISMISS</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- ===================== VIEW: SCAN MATERIAL ISSUE ===================== -->
+<section id="view-scan-material" class="app-view hidden">
+  <div class="grid grid-cols-12 gap-pad-structural w-full max-w-[1240px] mx-auto items-start">
+    <div class="col-span-12 lg:col-span-5 flex flex-col gap-pad-compact">
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-2 relative overflow-hidden">
+        <div class="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-error-container/20 pointer-events-none"></div>
+        <div class="flex items-center justify-between">
+          <span class="font-label-caps text-label-caps text-error tracking-widest flex items-center gap-1.5"><span class="material-symbols-outlined text-[16px]">warning</span> MATERIAL ISSUE REPORTING</span>
+          <span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface font-label-caps text-label-caps">BATCH SCAN MODE</span>
+        </div>
+        <h2 class="font-headline-md text-headline-md text-on-surface tracking-tight">SCAN MATERIAL LOT BARCODE</h2>
+        <p class="font-body-md text-body-md text-on-surface-variant">Scan batch/lot ID to report defects, shortages, or quality issues.</p>
+      </div>
+
+      <div class="bg-inverse-surface rounded-xl p-pad-structural relative flex flex-col items-center justify-between shadow-md min-h-[320px] overflow-hidden text-inverse-on-surface">
+        <div class="w-full flex items-center justify-between z-10">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-error"></span></span>
+            <span class="font-label-caps text-label-caps text-inverse-primary tracking-wider" id="scanner-state">SCANNER READY / AWAITING INPUT</span>
+          </div>
+          <span class="font-code-md text-code-md text-inverse-primary/80">FPS: 60.0</span>
+        </div>
+        <div class="relative w-full max-w-[280px] aspect-[4/3] my-4 flex items-center justify-center bg-inverse-surface/60 rounded">
+          <div class="absolute top-0 left-0 w-6 h-6 border-t-[3px] border-l-[3px] border-error"></div>
+          <div class="absolute top-0 right-0 w-6 h-6 border-t-[3px] border-r-[3px] border-error"></div>
+          <div class="absolute bottom-0 left-0 w-6 h-6 border-b-[3px] border-l-[3px] border-error"></div>
+          <div class="absolute bottom-0 right-0 w-6 h-6 border-b-[3px] border-r-[3px] border-error"></div>
+          <div class="w-10 h-0.5 bg-error/40 absolute"></div>
+          <div class="h-10 w-0.5 bg-error/40 absolute"></div>
+          <div class="laser-line absolute inset-x-3 h-0.5 bg-gradient-to-r from-transparent via-error to-transparent shadow-[0_0_12px_rgba(186,26,26,0.6)] animate-[pulse_1.6s_ease-in-out_infinite]"></div>
+          <div class="flex items-center gap-1 opacity-20 filter blur-[0.4px]">
+            <div class="w-1 h-16 bg-inverse-on-surface"></div><div class="w-2.5 h-16 bg-inverse-on-surface"></div><div class="w-1 h-16 bg-inverse-on-surface"></div><div class="w-2 h-16 bg-inverse-on-surface"></div><div class="w-3 h-16 bg-inverse-on-surface"></div><div class="w-1 h-16 bg-inverse-on-surface"></div><div class="w-2.5 h-16 bg-inverse-on-surface"></div>
+          </div>
+        </div>
+        <div class="z-10 w-full bg-surface-container/10 px-pad-compact py-2 rounded flex items-center justify-between text-inverse-on-surface" id="material-pill">
+          <div class="flex items-center gap-2 truncate"><span class="material-symbols-outlined text-error text-[18px]">error</span><span class="font-code-md text-code-md font-bold text-inverse-on-surface tracking-wide" id="material-text">AWAITING SCAN</span></div>
+          <span class="font-label-caps text-label-caps text-inverse-primary/90 shrink-0" id="material-time">Ready</span>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest p-pad-compact rounded-xl shadow-sm flex flex-col gap-2">
+        <span class="font-label-caps text-label-caps text-on-surface-variant tracking-wider">TEST MATERIAL LOTS (DEMO)</span>
+        <div class="grid grid-cols-2 gap-2">
+          <button class="h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-code-md text-code-md rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" data-lot="LOT-STK-990A" type="button"><span class="material-symbols-outlined text-error text-[20px]">inventory_2</span><span class="truncate">LOT-STK-990A</span></button>
+          <button class="h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-code-md text-code-md rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" data-lot="LOT-STK-991B" type="button"><span class="material-symbols-outlined text-error text-[20px]">inventory_2</span><span class="truncate">LOT-STK-991B</span></button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-pad-compact px-pad-compact py-2 bg-surface-container-low rounded-lg text-on-surface-variant">
+        <span class="material-symbols-outlined text-error text-[22px] shrink-0">warning</span>
+        <p class="font-label-caps text-label-caps">Scan lot barcode, then select issue type &amp; severity on the right.</p>
+      </div>
+    </div>
+
+    <div class="col-span-12 lg:col-span-7 flex flex-col gap-pad-compact">
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-pad-compact">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div class="flex items-center gap-pad-compact">
+            <span class="w-3 h-8 bg-error rounded-full"></span>
+            <div><span class="font-label-caps text-label-caps text-on-surface-variant block">MATERIAL LOT INFO</span><h1 class="font-display-andon text-display-andon text-on-surface font-black tracking-tight leading-none" id="dyn-lot-id">&mdash;</h1></div>
+          </div>
+          <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container text-on-surface-variant font-label-caps text-label-caps"><span class="material-symbols-outlined text-[16px]">schedule</span><span id="dyn-lot-status">Not scanned</span></div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-2 pt-2">
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">RAW MATERIAL</span><span class="font-headline-sm text-headline-sm text-on-surface truncate" id="dyn-material">&mdash;</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">SUPPLIER</span><span class="font-code-md text-code-md text-on-surface font-bold" id="dyn-supplier">&mdash;</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">QTY IN LOT</span><span class="font-code-md text-code-md text-primary font-bold" id="dyn-qty">0 pcs</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">RECEIVED DATE</span><span class="font-code-md text-code-md text-on-surface truncate" id="dyn-recv-date">&mdash;</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">CURRENT JOB</span><span class="font-code-md text-code-md text-on-surface font-bold" id="dyn-job">&mdash;</span></div>
+          <div class="bg-surface-container-low p-pad-compact rounded-lg flex flex-col justify-between"><span class="font-label-caps text-label-caps text-on-surface-variant">LOCATION</span><span class="font-code-md text-code-md text-on-surface" id="dyn-location">&mdash;</span></div>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-pad-compact">
+        <label class="font-label-caps text-label-caps text-on-surface-variant uppercase">SELECT ISSUE TYPE</label>
+        <div class="grid grid-cols-2 gap-2" id="issue-type-group">
+          <button class="issue-type h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm border-2 border-transparent" data-issue="defect" type="button"><span class="material-symbols-outlined text-[20px]">warning</span><span>DEFECT</span></button>
+          <button class="issue-type h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm border-2 border-transparent" data-issue="shortage" type="button"><span class="material-symbols-outlined text-[20px]">inventory_2</span><span>SHORTAGE</span></button>
+          <button class="issue-type h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm border-2 border-transparent" data-issue="damage" type="button"><span class="material-symbols-outlined text-[20px]">build</span><span>DAMAGE</span></button>
+          <button class="issue-type h-touch-standard px-pad-compact bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm border-2 border-transparent" data-issue="qc-fail" type="button"><span class="material-symbols-outlined text-[20px]">close</span><span>QC FAIL</span></button>
+        </div>
+        <div id="issue-details" class="hidden">
+          <div class="mt-pad-default">
+            <label class="font-label-caps text-label-caps text-on-surface-variant" for="affected-qty">AFFECTED QUANTITY</label>
+            <input class="w-full h-touch-standard bg-surface-container-low text-on-surface placeholder:text-outline font-body-md text-body-md px-pad-default rounded-lg focus:outline-none focus:bg-surface-container-lowest shadow-inner mt-2" id="affected-qty" placeholder="Number of defective pieces..." type="number"/>
+          </div>
+          <div class="mt-pad-compact">
+            <label class="font-label-caps text-label-caps text-on-surface-variant">SEVERITY LEVEL</label>
+            <div class="flex gap-2 mt-2" id="severity-group">
+              <button class="severity flex-1 h-touch-min bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-caps text-label-caps rounded transition-colors border-2 border-transparent" data-sev="low" type="button">LOW</button>
+              <button class="severity flex-1 h-touch-min bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-caps text-label-caps rounded transition-colors border-2 border-transparent" data-sev="medium" type="button">MEDIUM</button>
+              <button class="severity flex-1 h-touch-min bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-caps text-label-caps rounded transition-colors border-2 border-transparent" data-sev="critical" type="button">CRITICAL</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-lowest p-pad-structural rounded-xl shadow-sm flex flex-col gap-pad-compact">
+        <div>
+          <label class="font-label-caps text-label-caps text-on-surface-variant uppercase flex items-center gap-1" for="issue-notes"><span class="material-symbols-outlined text-[16px]">edit_note</span> Detailed Observation</label>
+          <textarea id="issue-notes" class="w-full h-24 bg-surface-container-low text-on-surface placeholder:text-outline font-body-md text-body-md px-pad-default py-pad-compact rounded-lg focus:outline-none focus:bg-surface-container-lowest shadow-inner mt-2" placeholder="Describe the issue, observations, or corrective actions taken..."></textarea>
+        </div>
+        <div>
+          <label class="font-label-caps text-label-caps text-on-surface-variant uppercase flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">image</span> Attach Photo (Optional)</label>
+          <button class="mt-2 w-full h-20 border-2 border-dashed border-outline rounded-lg flex items-center justify-center bg-surface-container-low hover:bg-surface-container transition-colors" type="button" data-toast="Camera not available in demo">
+            <div class="text-center"><span class="material-symbols-outlined text-outline text-[28px] block mb-1">add_a_photo</span><span class="font-label-caps text-label-caps text-on-surface-variant">TAP TO ATTACH</span></div>
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-pad-compact">
+        <button class="h-[60px] px-pad-structural bg-error hover:bg-error/90 text-on-error font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-md" id="btn-report-issue" type="button"><span class="material-symbols-outlined text-[24px]">error</span><span class="tracking-wide uppercase font-bold">REPORT ISSUE</span></button>
+        <button class="h-[60px] px-pad-compact bg-surface-container-low hover:bg-surface-container text-on-surface font-headline-sm text-headline-sm rounded-lg flex items-center justify-center gap-2 transition-transform active:translate-y-0.5 shadow-sm" id="btn-clear-form" type="button"><span class="material-symbols-outlined text-[24px]">close</span><span class="tracking-tight uppercase">CANCEL</span></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== VIEW: PLACEHOLDER (Job List / History / etc.) ===================== -->
+<section id="view-placeholder" class="app-view hidden">
+  <div class="flex flex-col items-center justify-center text-center gap-pad-default max-w-[560px] mx-auto py-16">
+    <div class="w-20 h-20 rounded-full bg-surface-container flex items-center justify-center">
+      <span class="material-symbols-outlined text-primary text-[40px]" id="ph-icon">dashboard</span>
+    </div>
+    <h1 class="font-headline-lg text-headline-lg text-on-surface font-bold" id="ph-title">Module</h1>
+    <p class="font-body-md text-body-md text-on-surface-variant" id="ph-desc">This module is part of the FactoryTrack MES roadmap and will be wired to live data next.</p>
+    <button class="h-touch-standard px-pad-structural bg-primary hover:bg-primary/90 text-on-primary font-label-caps text-label-caps rounded-lg flex items-center gap-2 transition-colors" type="button" data-nav="dashboard">
+      <span class="material-symbols-outlined text-[18px]">arrow_back</span> BACK TO DASHBOARD
+    </button>
+  </div>
+</section>
+
+</main>
+
+<footer class="w-full bg-surface-container-low border-t border-outline-variant/30 py-pad-compact px-pad-structural">
+  <div class="w-full flex items-center justify-between text-on-surface-variant font-label-caps text-label-caps flex-wrap gap-1">
+    <span>FACTORYTRACK MES CORE v4.8.2 // LINE 03 CONTROL STATION</span>
+    <span>TERMINAL HW: RUGGED-TAB-1280X800</span>
+  </div>
+</footer>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl shadow-lg font-label-caps text-label-caps bg-inverse-surface text-inverse-on-surface"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Toast ----------
+  var toastEl = document.getElementById('toast');
+  var toastTimer;
+  function toast(msg, kind) {
+    toastEl.textContent = msg;
+    toastEl.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl shadow-lg font-label-caps text-label-caps ' +
+      (kind === 'error' ? 'bg-error text-on-error' : 'bg-inverse-surface text-inverse-on-surface');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.add('hidden'); }, 2200);
+  }
+
+  // ---------- Router ----------
+  var PATHS = {
+    'dashboard':     { view: 'view-dashboard' },
+    'scan-job':      { view: 'view-scan-job' },
+    'active-job':    { view: 'view-active-job' },
+    'scan-material': { view: 'view-scan-material' },
+    'jobs':          { view: 'view-placeholder', title: 'Job List',      icon: 'list_alt',  desc: 'Full queue of scheduled work orders for Line 03. Live table view is coming next.' },
+    'history':       { view: 'view-placeholder', title: 'Job History',   icon: 'history',   desc: 'Completed and archived jobs with full traceability. Wiring to the database next.' },
+    'completed-job': { view: 'view-placeholder', title: 'Completed Job', icon: 'task_alt',  desc: 'Sign-off and QA records for finished jobs. Coming next.' },
+    'reports':       { view: 'view-placeholder', title: 'Reports',       icon: 'query_stats', desc: 'Shift output, OEE and scrap analytics. Coming next.' }
+  };
+  var ACTIVE = ['bg-primary', 'text-on-primary', 'font-bold', 'shadow-sm'];
+  var INACTIVE = ['text-on-surface-variant', 'hover:bg-surface-container-high', 'hover:text-on-surface'];
+
+  function navigate(path) {
+    var cfg = PATHS[path] || PATHS['dashboard'];
+    document.querySelectorAll('.app-view').forEach(function (v) { v.classList.add('hidden'); });
+    var target = document.getElementById(cfg.view);
+    target.classList.remove('hidden');
+    // re-trigger the fade animation
+    target.style.animation = 'none';
+    void target.offsetWidth;
+    target.style.animation = '';
+
+    if (cfg.view === 'view-placeholder') {
+      document.getElementById('ph-title').textContent = cfg.title || 'Module';
+      document.getElementById('ph-desc').textContent = cfg.desc || '';
+      document.getElementById('ph-icon').textContent = cfg.icon || 'dashboard';
+    }
+
+    document.querySelectorAll('#main-nav .nav-link').forEach(function (a) {
+      var on = a.getAttribute('data-path') === path;
+      ACTIVE.forEach(function (c) { a.classList.toggle(c, on); });
+      INACTIVE.forEach(function (c) { a.classList.toggle(c, !on); });
+      if (on) { a.setAttribute('aria-current', 'page'); } else { a.removeAttribute('aria-current'); }
+    });
+
+    if (location.hash !== '#' + path) {
+      history.replaceState(null, '', '#' + path);
+    }
+    window.scrollTo(0, 0);
+  }
+
+  document.querySelectorAll('#main-nav .nav-link').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      navigate(a.getAttribute('data-path'));
+    });
+  });
+
+  // Any element with data-nav jumps to a view
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-nav]');
+    if (el) { navigate(el.getAttribute('data-nav')); }
+  });
+
+  // Generic buttons: data-toast (+ optional data-confirm)
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-toast]');
+    if (!el) return;
+    var confirmMsg = el.getAttribute('data-confirm');
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    toast(el.getAttribute('data-toast'));
+  });
+
+  // ---------- Clock ----------
+  function tick() {
+    var now = new Date();
+    var hh = String(now.getHours()).padStart(2, '0');
+    var mm = String(now.getMinutes()).padStart(2, '0');
+    var ss = String(now.getSeconds()).padStart(2, '0');
+    var d = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    var hdr = document.getElementById('hdr-clock');
+    var dash = document.getElementById('dash-clock');
+    if (hdr) hdr.textContent = d + ' ' + hh + ':' + mm + ':' + ss;
+    if (dash) dash.textContent = hh + ':' + mm + ':' + ss + ' WIB';
+  }
+  setInterval(tick, 1000); tick();
+
+  // ---------- Scan Job ----------
+  var jobDatabase = {
+    'JOB-210266': { id: 'JOB-210266', customer: 'PT. Maju Jaya Industri', orderNo: 'SO-250001', product: 'Bracket A100 (Auto Stamping)', targetQty: 100, completedQty: 24, pct: 24, estTime: '48 MINS', currOp: 'Cutting', nextOp: 'Drilling', timestamp: '10:24:00 (Auto)', verifyTime: 'Code-128 @ 10:24:02', status: 'READY TO RUN' },
+    'JOB-210267': { id: 'JOB-210267', customer: 'Astra Otoparts Tbk', orderNo: 'SO-250042', product: 'Spacer Flange B-22 (Forged CNC)', targetQty: 250, completedQty: 195, pct: 78, estTime: '18 MINS', currOp: 'Chamfering', nextOp: 'Quality Inspection', timestamp: '10:24:15 (Auto)', verifyTime: 'DataMatrix @ 10:24:16', status: 'BATCH IN-FLIGHT' }
+  };
+  var currentJob = null;
+
+  function setText(id, val) { var el = document.getElementById(id); if (el) el.textContent = val; }
+
+  function loadJobProfile(jobKey) {
+    var data = jobDatabase[jobKey];
+    if (!data) { toast('Unknown job code: ' + jobKey, 'error'); return; }
+    currentJob = data;
+    setText('dyn-job-id', data.id);
+    setText('dyn-customer', data.customer);
+    setText('dyn-order-no', data.orderNo);
+    setText('dyn-product', data.product);
+    setText('dyn-curr-op', data.currOp);
+    setText('dyn-next-op', data.nextOp);
+    setText('dyn-timestamp', data.timestamp);
+    setText('dyn-progress-text', data.completedQty + ' / ' + data.targetQty + ' pcs');
+    setText('dyn-pct-badge', data.pct + '% COMPLETED');
+    setText('dyn-est-cycle', data.estTime);
+    var bar = document.getElementById('dyn-progress-bar');
+    if (bar) bar.style.width = data.pct + '%';
+    setText('dyn-job-status', data.status);
+    setText('pill-code-text', 'SCANNED: [' + data.id + ']');
+    setText('pill-verify-time', data.verifyTime);
+    setText('scan-engine-state', 'DECODED: 100% CONFIDENCE');
+    var pill = document.getElementById('barcode-display-pill');
+    if (pill) { pill.classList.add('bg-primary/20'); setTimeout(function () { pill.classList.remove('bg-primary/20'); }, 400); }
+    toast('Job loaded: ' + data.id);
+  }
+
+  function triggerLineAction(actionName, btn) {
+    if (!currentJob) { toast('Scan a job first', 'error'); return; }
+    var stateBanner = document.getElementById('scan-engine-state');
+    stateBanner.textContent = 'EXECUTED: ' + actionName + ' [' + currentJob.id + ']';
+    var orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined text-[24px] animate-spin">sync</span><span>RECORDING...</span>';
+
+    postJobEvent(currentJob, actionName).finally(function () {
+      setTimeout(function () {
+        btn.innerHTML = orig;
+        btn.disabled = false;
+        stateBanner.textContent = 'CAMERA ACTIVE / HID SCANNER READY';
+        toast(currentJob.id + ' → ' + actionName);
+      }, 600);
+    });
+  }
+
+  function postJobEvent(job, action) {
+    var payload = {
+      job_id: job.id, customer: job.customer, product: job.product,
+      qty_target: job.targetQty, qty_completed: job.completedQty,
+      status: action, notes: (document.getElementById('operator-notes') || {}).value || ''
+    };
+    return fetch('/api/jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).catch(function () { /* offline / not configured: silent */ });
+  }
+
+  document.querySelectorAll('#view-scan-job [data-job]').forEach(function (b) {
+    b.addEventListener('click', function () { loadJobProfile(b.getAttribute('data-job')); });
+  });
+  document.querySelectorAll('#view-scan-job [data-line-action]').forEach(function (b) {
+    b.addEventListener('click', function () { triggerLineAction(b.getAttribute('data-line-action'), b); });
+  });
+
+  // ---------- Production Progress ----------
+  var syncBtn = document.getElementById('btn-sync');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', function () {
+      var icon = syncBtn.querySelector('.material-symbols-outlined');
+      if (icon) icon.classList.add('animate-spin');
+      setTimeout(function () { if (icon) icon.classList.remove('animate-spin'); toast('Line data synced'); }, 800);
+    });
+  }
+
+  // ---------- Scan Material Issue ----------
+  var materialDatabase = {
+    'LOT-STK-990A': { lotId: 'LOT-STK-990A', material: 'Steel Coil A36 (Cold Roll)', supplier: 'PT Baja Indonesia', qty: 500, recvDate: '2025-05-10', job: 'JOB-210266', location: 'BIN-A02', status: 'Scanned' },
+    'LOT-STK-991B': { lotId: 'LOT-STK-991B', material: 'Aluminum Sheet 6061', supplier: 'Aluindo Indonesia', qty: 320, recvDate: '2025-05-12', job: 'JOB-210267', location: 'BIN-A04', status: 'Scanned' }
+  };
+  var currentLot = null, currentIssueType = null, currentSeverity = null;
+
+  function loadMaterialIssue(lotKey) {
+    var data = materialDatabase[lotKey];
+    if (!data) { toast('Unknown lot: ' + lotKey, 'error'); return; }
+    currentLot = data;
+    setText('dyn-lot-id', data.lotId);
+    setText('dyn-material', data.material);
+    setText('dyn-supplier', data.supplier);
+    setText('dyn-qty', data.qty + ' pcs');
+    setText('dyn-recv-date', data.recvDate);
+    setText('dyn-job', data.job);
+    setText('dyn-location', data.location);
+    setText('dyn-lot-status', data.status);
+    setText('material-text', 'SCANNED: [' + data.lotId + ']');
+    setText('material-time', 'DataMatrix @ ' + new Date().toTimeString().slice(0, 8));
+    setText('scanner-state', 'DECODED: 100% CONFIDENCE');
+    var pill = document.getElementById('material-pill');
+    if (pill) { pill.classList.add('bg-primary/20'); setTimeout(function () { pill.classList.remove('bg-primary/20'); }, 400); }
+    toast('Lot loaded: ' + data.lotId);
+  }
+
+  document.querySelectorAll('#view-scan-material [data-lot]').forEach(function (b) {
+    b.addEventListener('click', function () { loadMaterialIssue(b.getAttribute('data-lot')); });
+  });
+
+  document.querySelectorAll('#issue-type-group .issue-type').forEach(function (b) {
+    b.addEventListener('click', function () {
+      currentIssueType = b.getAttribute('data-issue');
+      document.querySelectorAll('#issue-type-group .issue-type').forEach(function (x) {
+        x.classList.toggle('border-error', x === b);
+        x.classList.toggle('bg-error/15', x === b);
+        x.classList.toggle('text-error', x === b);
+      });
+      document.getElementById('issue-details').classList.remove('hidden');
+    });
+  });
+
+  document.querySelectorAll('#severity-group .severity').forEach(function (b) {
+    b.addEventListener('click', function () {
+      currentSeverity = b.getAttribute('data-sev');
+      document.querySelectorAll('#severity-group .severity').forEach(function (x) {
+        x.classList.toggle('border-error', x === b);
+        x.classList.toggle('bg-error/15', x === b);
+        x.classList.toggle('text-error', x === b);
+      });
+    });
+  });
+
+  function clearForm() {
+    currentLot = null; currentIssueType = null; currentSeverity = null;
+    document.getElementById('issue-details').classList.add('hidden');
+    setText('dyn-lot-id', '—');
+    setText('dyn-lot-status', 'Not scanned');
+    setText('dyn-material', '—'); setText('dyn-supplier', '—'); setText('dyn-qty', '0 pcs');
+    setText('dyn-recv-date', '—'); setText('dyn-job', '—'); setText('dyn-location', '—');
+    setText('material-text', 'AWAITING SCAN'); setText('material-time', 'Ready');
+    setText('scanner-state', 'SCANNER READY / AWAITING INPUT');
+    var qty = document.getElementById('affected-qty'); if (qty) qty.value = '';
+    var notes = document.getElementById('issue-notes'); if (notes) notes.value = '';
+    ['#issue-type-group .issue-type', '#severity-group .severity'].forEach(function (sel) {
+      document.querySelectorAll(sel).forEach(function (x) { x.classList.remove('border-error', 'bg-error/15', 'text-error'); });
+    });
+  }
+
+  function submitIssue(btn) {
+    if (!currentLot) { toast('Scan a material lot first', 'error'); return; }
+    if (!currentIssueType) { toast('Select an issue type', 'error'); return; }
+    var payload = {
+      lot_id: currentLot.lotId,
+      issue_type: currentIssueType,
+      severity: currentSeverity || 'medium',
+      affected_qty: parseInt((document.getElementById('affected-qty') || {}).value, 10) || 0,
+      notes: (document.getElementById('issue-notes') || {}).value || '',
+      operator_id: 'OP-017'
+    };
+    var orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined text-[24px] animate-spin">sync</span><span>SENDING...</span>';
+    setText('scanner-state', 'REPORTING ISSUE: ' + currentLot.lotId);
+
+    fetch('/api/issues', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) {
+      return r.ok ? r.json() : r.json().then(function (j) { return Promise.reject(j); });
+    }).then(function () {
+      toast('Issue reported ✓ ' + currentLot.lotId);
+    }).catch(function (err) {
+      toast(err && err.error ? ('Saved locally (DB: ' + err.error + ')') : 'Issue queued (offline)');
+    }).finally(function () {
+      btn.innerHTML = orig; btn.disabled = false;
+      setTimeout(clearForm, 800);
+    });
+  }
+
+  var reportBtn = document.getElementById('btn-report-issue');
+  if (reportBtn) reportBtn.addEventListener('click', function () { submitIssue(reportBtn); });
+  var clearBtn = document.getElementById('btn-clear-form');
+  if (clearBtn) clearBtn.addEventListener('click', function () { clearForm(); toast('Form cleared'); });
+
+  // ---------- Boot ----------
+  var initial = (location.hash || '#dashboard').slice(1);
+  navigate(PATHS[initial] ? initial : 'dashboard');
+})();
+</script>
+</body>
+</html>

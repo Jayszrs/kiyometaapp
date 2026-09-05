@@ -2,7 +2,7 @@
 
 ## Buat Supabase project
 
-1. Ke https://supabase.com
+1. Ke [https://supabase.com](https://supabase.com)
 2. Create new project
 3. Copy URL & Keys → paste ke `.env.local`
 

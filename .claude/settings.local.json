@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(mkdir -p design/stitch/assets)",
-      "Bash(curl -sL -o design/stitch/assets/factorytrack-logo.png \"https://lh3.googleusercontent.com/aida/AEtjO1WJsbLFpTxtAOuMk95-I4GFTP-HWjqWTLYqsGBH_TdFVnZVvYVWD-WPZiD2Z-ZZaHtYvzy4dGHhAJc0TceeMmBpOnasneeSPkBf_8cTGdgfZ7864yUiqbWz0pvonApTDQq2zW17kFPn6Q2YdTIE8-UQIDn44Ufce4NeF5rsSbOoLzaQUZmHmAWu0LKXiL1iZS8H1S2pAriVYut218gnUtEIpTl4WQuMrO1N5VRIruECQ_Hi7lcjWxo1PFM\")"
+      "Bash(curl -sL -o design/stitch/assets/factorytrack-logo.png \"https://lh3.googleusercontent.com/aida/AEtjO1WJsbLFpTxtAOuMk95-I4GFTP-HWjqWTLYqsGBH_TdFVnZVvYVWD-WPZiD2Z-ZZaHtYvzy4dGHhAJc0TceeMmBpOnasneeSPkBf_8cTGdgfZ7864yUiqbWz0pvonApTDQq2zW17kFPn6Q2YdTIE8-UQIDn44Ufce4NeF5rsSbOoLzaQUZmHmAWu0LKXiL1iZS8H1S2pAriVYut218gnUtEIpTl4WQuMrO1N5VRIruECQ_Hi7lcjWxo1PFM\")",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3000/api/jobs)",
+      "Bash(curl -s http://localhost:3000/api/issues)",
+      "Bash(tail -15 /tmp/mes-dev.log)",
+      "Read(//tmp/**)"
     ]
   }
 }
