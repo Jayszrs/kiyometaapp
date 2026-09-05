@@ -148,8 +148,12 @@
     notfound: ['Kode tidak dikenali', 'Label terbaca, tetapi tidak ada di master material.']
   };
 
+  // Injected by server/pages/index.js when a user is signed in. When absent
+  // (opening app.html directly) the file still works as a standalone demo.
+  var FT_USER = (typeof window !== 'undefined' && window.__FT_USER__) || null;
+
   var state = {
-    screen:'home', role:'admin',
+    screen:'home', role: FT_USER ? FT_USER.role : 'admin',
     jobScan:'found', matScan:'idle',
     now:new Date(2026, 8, 6, 9, 46, 12),
     currentStep:2, running:true, stepSeconds:2288,
@@ -168,11 +172,17 @@
     var h = Math.floor(total/3600), m = Math.floor((total%3600)/60), s = total%60;
     return pad(h)+':'+pad(m)+':'+pad(s);
   }
-  function roleObj(){ return ROLES.filter(function(r){ return r.key===state.role; })[0]; }
+  function roleObj(){
+    return ROLES.filter(function(r){ return r.key===state.role; })[0] || ROLES[0];
+  }
   function operatorName(){
+    if (FT_USER && FT_USER.fullName) return FT_USER.fullName;
     return state.role==='gudang' ? 'Bagus Setiawan'
          : state.role==='admin'  ? 'Dewi Anggraini'
          : 'Rizky Pratama';
+  }
+  function stationLabel(){
+    return (FT_USER && FT_USER.station) ? FT_USER.station : 'LINE 02 · STASIUN W-04';
   }
   function initials(name){
     return name.split(' ').map(function(w){ return w[0]; }).slice(0,2).join('');
@@ -221,7 +231,7 @@
         '<div style="font:400 8.5px/1.3 var(--font-mono);letter-spacing:.07em;color:var(--neutral-500);text-transform:uppercase;margin-top:1px">OneSmartServices</div>'+
       '</div>'+
       '<div style="width:1px;height:30px;background:var(--border-nav)"></div>'+
-      '<div style="font:400 12px/1.4 var(--font-mono);letter-spacing:.05em;color:var(--neutral-400)">LINE 02 · STASIUN W-04</div>'+
+      '<div style="font:400 12px/1.4 var(--font-mono);letter-spacing:.05em;color:var(--neutral-400)">'+esc(stationLabel())+'</div>'+
       '<div style="margin-left:auto;display:flex;align-items:center;gap:18px">'+
         '<button data-act="toggleConn" title="Klik untuk simulasi online/offline" style="display:flex;align-items:center;gap:8px;background:transparent;border:0;cursor:pointer;padding:4px 6px;border-radius:6px">'+
           '<span style="width:8px;height:8px;border-radius:999px;background:'+connDot+'"></span>'+
@@ -256,21 +266,31 @@
         ic(n.icon, 19)+'<span>'+n.label+'</span></button>';
     }).join('');
 
-    var tabs = ROLES.map(function(r){
-      var on = state.role === r.key;
-      var bg = on ? 'var(--neutral-900)' : 'var(--surface-card)';
-      var fg = on ? '#fff' : 'var(--text-muted)';
-      var fw = on ? '500' : '400';
-      return '<button class="roletab" data-act="role" data-arg="'+r.key+'" style="height:36px;padding:0 14px;border:0;background:'+bg+';color:'+fg+';font:'+fw+' 13px/1 var(--font-sans);cursor:pointer">'+r.label+'</button>';
-    }).join('');
+    var rightSide;
+    if (FT_USER){
+      // Real session: role comes from the account, not a toggle. Show it +
+      // a sign-out control.
+      rightSide =
+        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Peran</div>'+
+        '<div style="height:36px;display:flex;align-items:center;padding:0 14px;border:1px solid var(--border-default);border-radius:6px;background:var(--neutral-900);color:#fff;font:500 13px/1 var(--font-sans)">'+esc(roleObj().label)+'</div>'+
+        '<a href="/api/auth/signout" class="nav-btn" style="height:36px;display:flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-muted);font:500 13px/1 var(--font-sans);text-decoration:none;transition:var(--transition-control)">'+ic('log-out',15)+'Keluar</a>';
+    } else {
+      var tabs = ROLES.map(function(r){
+        var on = state.role === r.key;
+        var bg = on ? 'var(--neutral-900)' : 'var(--surface-card)';
+        var fg = on ? '#fff' : 'var(--text-muted)';
+        var fw = on ? '500' : '400';
+        return '<button class="roletab" data-act="role" data-arg="'+r.key+'" style="height:36px;padding:0 14px;border:0;background:'+bg+';color:'+fg+';font:'+fw+' 13px/1 var(--font-sans);cursor:pointer">'+r.label+'</button>';
+      }).join('');
+      rightSide =
+        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Peran</div>'+
+        '<div style="display:flex;border:1px solid var(--border-default);border-radius:6px;overflow:hidden">'+tabs+'</div>';
+    }
 
     return ''+
     '<div style="height:60px;flex:none;background:var(--surface-card);border-bottom:1px solid var(--border-subtle);display:flex;align-items:stretch;padding:0 24px;gap:4px">'+
       buttons+
-      '<div style="margin-left:auto;display:flex;align-items:center;gap:14px">'+
-        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Peran</div>'+
-        '<div style="display:flex;border:1px solid var(--border-default);border-radius:6px;overflow:hidden">'+tabs+'</div>'+
-      '</div>'+
+      '<div style="margin-left:auto;display:flex;align-items:center;gap:14px">'+rightSide+'</div>'+
     '</div>';
   }
 
@@ -881,10 +901,14 @@
     var parts = (location.hash || '').replace('#', '').split('/');
     var h = parts[0];
     if (['home', 'job', 'progress', 'material'].indexOf(h) !== -1){
-      if (roleObj().screens.indexOf(h) === -1) state.role = 'admin';
-      state.screen = h;
-      if (h === 'job' && parts[1]) state.jobScan = parts[1];
-      if (h === 'material' && parts[1]) state.matScan = parts[1];
+      // Standalone demo may widen the role to reach the screen; a real
+      // session keeps whatever role the account has.
+      if (roleObj().screens.indexOf(h) === -1 && !FT_USER) state.role = 'admin';
+      if (roleObj().screens.indexOf(h) !== -1){
+        state.screen = h;
+        if (h === 'job' && parts[1]) state.jobScan = parts[1];
+        if (h === 'material' && parts[1]) state.matScan = parts[1];
+      }
     }
     render();
     renderToast();

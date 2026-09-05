@@ -1,17 +1,14 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL && supabaseKey
-    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, supabaseKey)
-    : null;
+import { createClient } from '../../utils/supabase/api';
 
 export default async function handler(req, res) {
-  if (!supabase) {
-    return res.status(500).json({ error: 'Database not configured' });
+  const supabase = createClient(req, res);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return res.status(401).json({ error: 'Not authenticated' });
   }
 
   try {
@@ -19,10 +16,7 @@ export default async function handler(req, res) {
       const { status } = req.query;
 
       let query = supabase.from('issues').select('*');
-
-      if (status) {
-        query = query.eq('status', status);
-      }
+      if (status) query = query.eq('status', status);
 
       const { data, error } = await query.order('created_at', {
         ascending: false,
@@ -33,14 +27,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const {
-        lot_id,
-        issue_type,
-        severity,
-        affected_qty,
-        notes,
-        operator_id,
-      } = req.body;
+      const { lot_id, issue_type, severity, affected_qty, notes } = req.body;
 
       const { data, error } = await supabase
         .from('issues')
@@ -51,7 +38,7 @@ export default async function handler(req, res) {
             severity,
             affected_qty,
             notes,
-            operator_id,
+            operator_id: user.id,
             status: 'REPORTED',
           },
         ])

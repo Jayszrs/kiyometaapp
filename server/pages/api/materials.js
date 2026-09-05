@@ -1,17 +1,14 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-const supabase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL && supabaseKey
-    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, supabaseKey)
-    : null;
+import { createClient } from '../../utils/supabase/api';
 
 export default async function handler(req, res) {
-  if (!supabase) {
-    return res.status(500).json({ error: 'Database not configured' });
+  const supabase = createClient(req, res);
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return res.status(401).json({ error: 'Not authenticated' });
   }
 
   try {
@@ -19,10 +16,7 @@ export default async function handler(req, res) {
       const { lot_id } = req.query;
 
       let query = supabase.from('materials').select('*');
-
-      if (lot_id) {
-        query = query.eq('lot_id', lot_id);
-      }
+      if (lot_id) query = query.eq('lot_id', lot_id);
 
       const { data, error } = await query.order('received_date', {
         ascending: false,
