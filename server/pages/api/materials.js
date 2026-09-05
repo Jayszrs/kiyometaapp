@@ -1,15 +1,14 @@
-import { createClient } from '../../utils/supabase/api';
+import { createClient, admin } from '../../utils/supabase/api';
 
 export default async function handler(req, res) {
-  const supabase = createClient(req, res);
-
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await createClient(req, res).auth.getUser();
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
+  const supabase = admin;
 
   try {
     if (req.method === 'GET') {

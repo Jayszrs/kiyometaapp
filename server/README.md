@@ -29,24 +29,26 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 The publishable key is all the app needs — auth and every DB call run through
 it, gated by RLS. A `sb_secret_...` key is optional (`SUPABASE_SECRET_KEY`).
 
-### 3. Database + auth setup (Supabase → SQL Editor)
+### 3. Database setup (Supabase → SQL Editor)
 
-1. Run the table DDL + RLS policies in [`QUICKSTART.md`](./QUICKSTART.md).
-2. Run [`db/001_profiles.sql`](./db/001_profiles.sql) — adds the `profiles`
-   table (role per user), the signup trigger, and role-assignment templates.
+Paste each file's contents into the SQL Editor and Run. They are **PostgreSQL**
+(`.pgsql` extension so editors don't lint them as T-SQL). All are idempotent and
+the app degrades gracefully if one hasn't been run yet.
 
-### 4. Create user accounts
+1. Table DDL + RLS policies in [`QUICKSTART.md`](./QUICKSTART.md).
+2. [`db/002_jobs_columns.pgsql`](./db/002_jobs_columns.pgsql) — order_no,
+   product_type, operation_type, route on `jobs` (needed by the "Buat job" form).
+3. [`db/003_steps_and_events.pgsql`](./db/003_steps_and_events.pgsql) — `steps`
+   column + `job_events` table (step tracking + Dasbor activity log).
+4. [`db/001_profiles.pgsql`](./db/001_profiles.pgsql) — *optional*; only if you
+   want to manage roles in a table instead of on the user (single-role now, so
+   not required).
 
-Supabase dashboard → **Authentication → Users → Add user** (set
-"Auto Confirm User"). Then in the SQL editor set each user's role:
+### 4. Create the login account
 
-```sql
-update public.profiles p set role = 'admin', full_name = 'Dewi Anggraini'
-from auth.users u where u.id = p.id and u.email = 'admin@yourco.com';
-```
-
-Roles: `operator` (Dasbor / Scan job / Produksi), `gudang` (Dasbor / Scan
-material), `admin` (all).
+Supabase dashboard → **Authentication → Users → Add user** (tick
+"Auto Confirm User"). One account is enough — every account has full access
+(single role). Current dev account: `operator@kiyometa.app` / `operator1234`.
 
 ### 5. Run development server
 
@@ -60,19 +62,22 @@ Server berjalan di `http://localhost:3000` → redirects to `/login` until signe
 
 | Route | Desc |
 | --- | --- |
-| `/` | Tablet app (Dasbor, Scan job, Produksi, Scan material). Requires login; the signed-in user's role + name are injected as `window.__FT_USER__`. |
-| `/login` | Email + password sign-in |
+| `/` | Tablet app. Requires login; the user's name/station are injected as `window.__FT_USER__`. |
+| `/login` | Email + password sign-in (two-panel) |
 | `/api/auth/signout` | Clears the session, redirects to `/login` |
-| `/api/jobs` | GET list / POST upsert jobs — **401 without a session** |
-| `/api/materials` | GET/POST material lots — 401 without a session |
-| `/api/issues` | GET/POST issue reports — 401 without a session |
+| `/api/jobs` | GET list / POST create-or-update (partial updates preserve other fields) |
+| `/api/events` | GET recent activity / POST append an event |
+| `/api/materials` | GET/POST material lots |
+| `/api/issues` | GET/POST issue reports |
 
-Auth is enforced in [`proxy.js`](./proxy.js) (Next 16's renamed middleware):
-unauthenticated page requests redirect to `/login`, API requests get 401.
+All `/api/*` return **401 without a session**. Auth is enforced in
+[`proxy.js`](./proxy.js) (Next 16's renamed middleware). The API routes verify
+the session then use the service-role client ([`utils/supabase/api.js`](./utils/supabase/api.js)
+`admin`) so DB writes aren't gated by RLS.
 
-The app is a single page. Nav bar switches views client-side; deep links use a hash
-(`/#job`, `/#progress`, `/#material`). Source: `../design/stitch/app.html`
-(also runs standalone as a demo with role tabs when opened without the server).
+The app is one page. Nav switches views client-side; deep links use a hash
+(`/#job`, `/#progress`, `/#material`, `/#create`). Source:
+`../design/stitch/app.html` (runs standalone as a demo when opened without the server).
 
 ## Database Schema
 

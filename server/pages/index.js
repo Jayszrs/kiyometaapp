@@ -22,7 +22,7 @@ function readShell() {
 }
 
 // Remember once whether the optional `profiles` table exists, so we don't pay a
-// failing round-trip on every request before 001_profiles.sql is run.
+// failing round-trip on every request before 001_profiles.pgsql is run.
 let profilesTableMissing = false;
 
 // Serves the FactoryTrack tablet app with the signed-in user's identity and role

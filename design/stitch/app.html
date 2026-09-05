@@ -105,14 +105,6 @@
 
   var pad = function(n){ return String(n).padStart(2,'0'); };
 
-  var STEP_DEFS = [
-    { seq:'01', name:'Cutting',   operator:'Rizky Pratama',    start:'07.12', finish:'08.04', duration:'52m' },
-    { seq:'02', name:'Drilling',  operator:'Rizky Pratama',    start:'08.10', finish:'09.01', duration:'51m' },
-    { seq:'03', name:'Welding',   operator:'Rizky Pratama',    start:'09.08', finish:'',      duration:'' },
-    { seq:'04', name:'Finishing', operator:'Sri Handayani',    start:'',      finish:'',      duration:'' },
-    { seq:'05', name:'QC',        operator:'Dewi Anggraini',   start:'',      finish:'',      duration:'' }
-  ];
-
   // Single role: every signed-in account sees every menu.
   var NAV = [
     { key:'home',     label:'Dasbor',        icon:'layout-grid' },
@@ -125,6 +117,10 @@
   var HARI  = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
   var BULAN = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
   var ROUTE_PRESET = ['Cutting','Drilling','Welding','Finishing','QC'];
+  var PRODUK_OPTS = ['Bracket Assembly A-220','Flange 6 inch','Spacer Ring D-40','Cover Plate C-11','Shaft Coupling S-08','Gusset Plate G-30'];
+  var JENIS_PRODUK_OPTS = ['Bracket pelat baja','Flange tempa','Ring machining','Pelat cover','Poros','Gusset'];
+  var JENIS_OPERASI_OPTS = ['Welding — MIG','Welding — TIG','Machining — CNC','Stamping / press','Assembly','Cutting — Laser','Finishing / coating'];
+  var PELANGGAN_OPTS = ['PT Samakta Mitra','PT Rekaindo Global Jasa','PT Barata Indonesia','PT Pindad','PT Boma Bisma Indra'];
 
   // Fallback demo job — used until a real job is loaded from the database.
   var JOB = {
@@ -157,11 +153,11 @@
     screen:'home',
     jobScan:'idle', matScan:'idle',
     now:new Date(),
-    currentStep:2, running:true, stepSeconds:2288,
     qty:6, notes:'', toast:null, queue:3, online:true,
-    jobLookup:'', jobList:[], job:null, jobBusy:false,
+    jobLookup:'', jobList:[], job:null, jobBusy:false, demoSteps:null,
     form:{ job_id:'', order_no:'', customer:'', product:'', product_type:'', operation_type:'', qty_target:'', route:ROUTE_PRESET.slice(0,5) },
-    formBusy:false
+    formBusy:false,
+    dash:null, dashBusy:false
   };
 
   var scanTimer, toastTimer;
@@ -192,6 +188,45 @@
   function dateStr(){
     var d = state.now;
     return HARI[d.getDay()]+', '+pad(d.getDate())+' '+BULAN[d.getMonth()]+' '+d.getFullYear();
+  }
+  function hm(iso){ if(!iso) return '—'; var d = new Date(iso); return pad(d.getHours())+'.'+pad(d.getMinutes()); }
+  function fmtDur(fromIso, toIso){
+    if(!fromIso || !toIso) return '—';
+    var s = Math.max(0, Math.round((Date.parse(toIso) - Date.parse(fromIso))/1000));
+    var h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+    return h ? (h+'j '+m+'m') : (m+'m');
+  }
+  // Steps for the current job: from the DB row, else derived from its route.
+  function stepsFor(){
+    var j = state.job;
+    if (j){
+      if (!Array.isArray(j.steps) || !j.steps.length){
+        var route = (Array.isArray(j.route) && j.route.length) ? j.route : ROUTE_PRESET;
+        j.steps = route.map(function(n){ return { name:n, status:'menunggu', started:null, finished:null, operator:null }; });
+      }
+      return j.steps;
+    }
+    if (!state.demoSteps){
+      var t = Date.now();
+      state.demoSteps = ROUTE_PRESET.map(function(n, i){
+        return {
+          name:n,
+          status: i < 2 ? 'selesai' : (i === 2 ? 'berjalan' : 'menunggu'),
+          started: i <= 2 ? new Date(t - (3 - i) * 2400e3).toISOString() : null,
+          finished: i < 2 ? new Date(t - (2 - i) * 2400e3).toISOString() : null,
+          operator: i <= 2 ? 'Rizky Pratama' : null
+        };
+      });
+    }
+    return state.demoSteps;
+  }
+  function curStepIdx(steps){
+    for (var i = 0; i < steps.length; i++) if (steps[i].status !== 'selesai') return i;
+    return steps.length;
+  }
+  function stepElapsed(s){
+    if (!s || !s.started) return 0;
+    return Math.max(0, Math.floor((Date.now() - Date.parse(s.started)) / 1000));
   }
   // Lucide icons, inlined so the tablet needs no CDN (works offline / flaky wifi).
   var LUCIDE = {"circle-alert":"<circle cx=\"12\" cy=\"12\" r=\"10\" /> <line x1=\"12\" x2=\"12\" y1=\"8\" y2=\"12\" /> <line x1=\"12\" x2=\"12.01\" y1=\"16\" y2=\"16\" />","circle-check":"<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m9 12 2 2 4-4\" />","cloud-off":"<path d=\"m2 2 20 20\" /> <path d=\"M5.782 5.782A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.307-.193\" /> <path d=\"M21.532 16.5A4.5 4.5 0 0 0 17.5 10h-1.79A7.008 7.008 0 0 0 10 5.07\" />","layout-grid":"<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\" /> <rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\" />","list-checks":"<path d=\"M13 5h8\" /> <path d=\"M13 12h8\" /> <path d=\"M13 19h8\" /> <path d=\"m3 17 2 2 4-4\" /> <path d=\"m3 7 2 2 4-4\" />","loader-circle":"<path d=\"M21 12a9 9 0 1 1-6.219-8.56\" />","log-out":"<path d=\"m16 17 5-5-5-5\" /> <path d=\"M21 12H9\" /> <path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" />","package-check":"<path d=\"m16 16 2 2 4-4\" /> <path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" />","package-plus":"<path d=\"M16 16h6\" /> <path d=\"M19 13v6\" /> <path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" />","package-search":"<path d=\"M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14\" /> <path d=\"m7.5 4.27 9 5.15\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <line x1=\"12\" x2=\"12\" y1=\"22\" y2=\"12\" /> <circle cx=\"18.5\" cy=\"15.5\" r=\"2.5\" /> <path d=\"M20.27 17.27 22 19\" />","pause":"<rect x=\"14\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\" /> <rect x=\"5\" y=\"3\" width=\"5\" height=\"18\" rx=\"1\" />","play":"<path d=\"M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z\" />","scan-barcode":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <path d=\"M8 7v10\" /> <path d=\"M12 7v10\" /> <path d=\"M17 7v10\" />","scan-line":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <path d=\"M7 12h10\" />","scan-search":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\" /> <path d=\"M17 3h2a2 2 0 0 1 2 2v2\" /> <path d=\"M21 17v2a2 2 0 0 1-2 2h-2\" /> <path d=\"M7 21H5a2 2 0 0 1-2-2v-2\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" /> <path d=\"m16 16-1.9-1.9\" />","square-check-big":"<path d=\"M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344\" /> <path d=\"m9 11 3 3L22 4\" />","triangle-alert":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />","user-round-check":"<path d=\"M2 21a8 8 0 0 1 13.292-6\" /> <circle cx=\"10\" cy=\"8\" r=\"5\" /> <path d=\"m16 19 2 2 4-4\" />","file-plus":"<path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\" /> <path d=\"M14 2v4a2 2 0 0 0 2 2h4\" /> <path d=\"M9 15h6\" /> <path d=\"M12 18v-6\" />","search":"<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />","x":"<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />","rotate-cw":"<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /> <path d=\"M21 3v5h-5\" />"};
@@ -288,32 +323,52 @@
       '<span style="width:6px;height:6px;border-radius:999px;background:'+dot+'"></span>'+label+'</span>';
   }
 
+  var TODAY_KEY = function(){ var d = new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); };
+
   /* ---------------- HOME ---------------- */
   function screenHome(){
     var online = state.online;
-    var curName = (STEP_DEFS[state.currentStep] || STEP_DEFS[STEP_DEFS.length-1]).name;
+    var d = state.dash;
 
-    var summary = [
-      { label:'Job hari ini',   value:'7',     unit:'job', note:'1 berjalan · 4 selesai', noteFg:'var(--text-muted)' },
-      { label:'Output hari ini', value:'2.140', unit:'pcs', note:'87% dari rencana', noteFg:'var(--amber-600)' },
-      { label:'Issue material',  value:'12',    unit:'trx', note: online ? 'Semua terkirim' : state.queue+' menunggu antrean', noteFg: online ? 'var(--green-600)' : 'var(--amber-600)' },
-      { label:'Scrap',           value:'18',    unit:'pcs', note:'0,8% — di atas target 0,5%', noteFg:'var(--brand-red-600)' }
-    ];
-
-    var S = {
-      done:  { s:'Selesai',  bg:'var(--status-resolved-bg)', fg:'var(--status-resolved-fg)', dot:'var(--status-resolved-dot)' },
-      run:   { s:'Berjalan', bg:'var(--status-progress-bg)', fg:'var(--status-progress-fg)', dot:'var(--status-progress-dot)' },
-      hold:  { s:'Ditahan',  bg:'var(--status-pending-bg)',  fg:'var(--status-pending-fg)',  dot:'var(--status-pending-dot)' },
-      closed:{ s:'Ditutup',  bg:'var(--status-closed-bg)',   fg:'var(--status-closed-fg)',   dot:'var(--status-closed-dot)' }
+    var summary, activity;
+    var eventPill = function(txt){
+      var t = String(txt || '').toLowerCase();
+      if (/ditutup|selesai/.test(t)) return { s:'Selesai', bg:'var(--status-resolved-bg)', fg:'var(--status-resolved-fg)', dot:'var(--status-resolved-dot)' };
+      if (/dijeda|jeda/.test(t))     return { s:'Jeda',    bg:'var(--status-pending-bg)',  fg:'var(--status-pending-fg)',  dot:'var(--status-pending-dot)' };
+      if (/dimulai|dilanjutkan/.test(t)) return { s:'Berjalan', bg:'var(--status-progress-bg)', fg:'var(--status-progress-fg)', dot:'var(--status-progress-dot)' };
+      if (/issue|material/.test(t))  return { s:'Material', bg:'var(--blue-50)', fg:'var(--blue-600)', dot:'var(--blue-500)' };
+      return { s:'Catatan', bg:'var(--status-closed-bg)', fg:'var(--status-closed-fg)', dot:'var(--status-closed-dot)' };
     };
-    var activity = [
-      { time:'09.08', job:'JOB-2026-0914', event:'Welding dimulai', operator:'Rizky Pratama', k:S.run },
-      { time:'09.02', job:'JOB-2026-0914', event:'Material di-issue — MAT-4471-B · 6 SHT', operator:'Bagus Setiawan', k:S.done },
-      { time:'09.01', job:'JOB-2026-0914', event:'Drilling selesai — 940 pcs baik', operator:'Rizky Pratama', k:S.done },
-      { time:'08.46', job:'JOB-2026-0908', event:'QC menahan — dimensi di luar toleransi', operator:'Dewi Anggraini', k:S.hold },
-      { time:'08.12', job:'JOB-2026-0911', event:'Job selesai — 500 / 500 pcs', operator:'Sri Handayani', k:S.closed },
-      { time:'07.12', job:'JOB-2026-0914', event:'Job dimulai — di-scan di W-04', operator:'Rizky Pratama', k:S.done }
-    ];
+
+    if (d){
+      var running = d.jobs.filter(function(j){ return /RUN|STEP|PAUSE/i.test(j.status||''); }).length;
+      var closed  = d.jobs.filter(function(j){ return /CLOSE|DONE/i.test(j.status||''); }).length;
+      var output  = d.jobs.reduce(function(a, j){ return a + (Number(j.qty_completed) || 0); }, 0);
+      var runningStep = (function(){
+        var j = d.jobs.filter(function(x){ return /RUN|STEP/i.test(x.status||''); })[0];
+        if (j && Array.isArray(j.steps)){ var s = j.steps.filter(function(x){ return x.status === 'berjalan'; })[0]; if (s) return s.name; }
+        return '—';
+      })();
+      summary = [
+        { label:'Job total',      value:String(d.jobs.length), unit:'job', note: running+' berjalan · '+closed+' ditutup', noteFg:'var(--text-muted)' },
+        { label:'Output tercatat', value: output.toLocaleString('id-ID'), unit:'pcs', note:'akumulasi qty selesai', noteFg:'var(--text-muted)' },
+        { label:'Issue material',  value:String(d.issues.length), unit:'trx', note: online ? 'Semua terkirim' : state.queue+' menunggu antrean', noteFg: online ? 'var(--green-600)' : 'var(--amber-600)' },
+        { label:'Operasi aktif',   value: running ? '1' : '0', unit:'', note: runningStep, noteFg:'var(--amber-600)' }
+      ];
+      activity = d.events.map(function(e){
+        var dd = new Date(e.created_at);
+        return { time: pad(dd.getHours())+'.'+pad(dd.getMinutes()), job: e.job_id, event: e.event, operator: e.operator || '—', k: eventPill(e.event) };
+      });
+    } else {
+      summary = [
+        { label:'Job total',       value:'—', unit:'job', note:'memuat…', noteFg:'var(--text-subtle)' },
+        { label:'Output tercatat', value:'—', unit:'pcs', note:'memuat…', noteFg:'var(--text-subtle)' },
+        { label:'Issue material',  value:'—', unit:'trx', note:'memuat…', noteFg:'var(--text-subtle)' },
+        { label:'Operasi aktif',   value:'—', unit:'',    note:'memuat…', noteFg:'var(--text-subtle)' }
+      ];
+      activity = [];
+    }
+    var curName = (d && d.jobs.length) ? (activity[0] ? activity[0].event : '—') : '—';
 
     var summaryCards = summary.map(function(m){
       return '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);padding:14px 18px">'+
@@ -326,15 +381,15 @@
       '</div>';
     }).join('');
 
-    var activityRows = activity.map(function(r){
+    var activityRows = activity.length ? activity.map(function(r){
       return '<div style="display:grid;grid-template-columns:90px 156px 1fr 150px 124px;padding:0 18px;height:44px;align-items:center;border-bottom:1px solid var(--border-subtle);font:400 13px/1.3 var(--font-sans);color:var(--text-body)">'+
-        '<div style="font-family:var(--font-mono);color:var(--text-muted);font-size:12px">'+r.time+'</div>'+
-        '<div style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">'+r.job+'</div>'+
-        '<div>'+r.event+'</div>'+
-        '<div style="color:var(--text-muted)">'+r.operator+'</div>'+
+        '<div style="font-family:var(--font-mono);color:var(--text-muted);font-size:12px">'+esc(r.time)+'</div>'+
+        '<div style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">'+esc(r.job)+'</div>'+
+        '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.event)+'</div>'+
+        '<div style="color:var(--text-muted)">'+esc(r.operator)+'</div>'+
         '<div>'+statusPill(r.k.bg, r.k.fg, r.k.dot, r.k.s)+'</div>'+
       '</div>';
-    }).join('');
+    }).join('') : '<div style="padding:40px;text-align:center;font:400 13px/1.6 var(--font-sans);color:var(--text-subtle)">'+(state.dash ? 'Belum ada aktivitas. Mulai job di menu Scan job → Produksi.' : 'Memuat…')+'</div>';
 
     return ''+
     '<div style="display:flex;flex-direction:column;gap:14px;height:100%">'+
@@ -352,7 +407,7 @@
         '<button class="tile-card" data-act="go" data-arg="progress" style="display:flex;flex-direction:column;justify-content:space-between;height:132px;padding:18px;border:1px solid var(--border-default);border-radius:8px;background:var(--surface-card);cursor:pointer;text-align:left;box-shadow:var(--shadow-sm);transition:var(--transition-control)">'+
           ic('list-checks', 28, 'var(--blue-600)')+
           '<div><div style="font:600 17px/1.15 var(--font-sans);letter-spacing:-.011em;color:var(--text-strong)">Progres job</div>'+
-          '<div style="font:400 12px/1.4 var(--font-sans);margin-top:4px;color:var(--text-muted)">1 job berjalan · '+curName+'</div></div>'+
+          '<div style="font:400 12px/1.4 var(--font-sans);margin-top:4px;color:var(--text-muted)">'+esc(curName === '—' ? 'Buka untuk lihat langkah operasi' : curName)+'</div></div>'+
         '</button>'+
       '</div>'+
 
@@ -511,13 +566,37 @@
     '</div>';
   }
 
+  // Auto job / order numbers for the next new job.
+  function autoJobNo(){ return nextNumber('JOB', state.jobList.map(function(j){ return j.job_id; })); }
+  function autoOrderNo(){ return nextNumber('SO', state.jobList.map(function(j){ return j.order_no; })); }
+
   /* ---------------- BUAT JOB ---------------- */
   function screenCreate(){
     var f = state.form;
-    function fld(key, label, ph, mono){
+    var LBL = 'font:600 11px/1 var(--font-mono);letter-spacing:.08em;color:var(--text-muted);margin-bottom:7px;text-transform:uppercase';
+    var INP = 'width:100%;box-sizing:border-box;height:48px;padding:0 13px;border:1px solid var(--border-default);border-radius:7px;background:var(--surface-card);color:var(--text-strong);outline:none';
+
+    function readonlyFld(label, value){
       return '<div>'+
-        '<div style="font:600 11px/1 var(--font-mono);letter-spacing:.08em;color:var(--text-muted);margin-bottom:7px;text-transform:uppercase">'+label+'</div>'+
-        '<input data-model="form.'+key+'" value="'+esc(f[key])+'" placeholder="'+esc(ph)+'" style="width:100%;box-sizing:border-box;height:48px;padding:0 13px;border:1px solid var(--border-default);border-radius:7px;background:var(--surface-card);color:var(--text-strong);font:'+(mono?'500 14px/1 var(--font-mono)':'400 14px/1 var(--font-sans)')+';outline:none">'+
+        '<div style="'+LBL+';display:flex;align-items:center;gap:6px">'+label+
+          '<span style="font:500 9px/1 var(--font-sans);letter-spacing:.04em;color:var(--brand-brown-500);background:var(--surface-brand);color:#fff;padding:2px 6px;border-radius:999px">OTOMATIS</span>'+
+        '</div>'+
+        '<div style="'+INP+';font:500 14px/48px var(--font-mono);background:var(--neutral-25);color:var(--text-strong)">'+esc(value)+'</div>'+
+      '</div>';
+    }
+    function selectFld(key, label, opts){
+      var options = '<option value="">— pilih —</option>' + opts.map(function(o){
+        return '<option value="'+esc(o)+'"'+(f[key]===o?' selected':'')+'>'+esc(o)+'</option>';
+      }).join('');
+      return '<div>'+
+        '<div style="'+LBL+'">'+label+'</div>'+
+        '<select data-model="form.'+key+'" style="'+INP+';font:400 14px/1 var(--font-sans);appearance:auto;cursor:pointer">'+options+'</select>'+
+      '</div>';
+    }
+    function numFld(key, label, ph){
+      return '<div>'+
+        '<div style="'+LBL+'">'+label+'</div>'+
+        '<input data-model="form.'+key+'" type="number" inputmode="numeric" value="'+esc(f[key])+'" placeholder="'+esc(ph)+'" style="'+INP+';font:500 14px/1 var(--font-mono)">'+
       '</div>';
     }
     var routeChips = ROUTE_PRESET.map(function(op){
@@ -526,23 +605,23 @@
     }).join('');
 
     return ''+
-    '<div style="max-width:760px;margin:0 auto;height:100%;overflow:auto">'+
+    '<div style="max-width:780px;margin:0 auto;height:100%;overflow:auto">'+
       '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);overflow:hidden">'+
         '<div style="padding:16px 20px;border-bottom:1px solid var(--border-subtle)">'+
           '<div style="font:600 18px/1.2 var(--font-sans);letter-spacing:-.011em;color:var(--text-strong)">Buat job baru</div>'+
-          '<div style="font:400 12.5px/1.5 var(--font-sans);color:var(--text-muted);margin-top:3px">Isi dari sales order. Job tersimpan ke database dan langsung bisa di-scan di menu Scan job.</div>'+
+          '<div style="font:400 12.5px/1.5 var(--font-sans);color:var(--text-muted);margin-top:3px">Nomor job & order dibuat otomatis. Pilih produk & operasi dari daftar. Job tersimpan ke database dan langsung bisa di-scan.</div>'+
         '</div>'+
         '<div style="padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:16px">'+
-          fld('job_id','Nomor job','JOB-2026-0921', true)+
-          fld('order_no','Nomor order','SO-88420', true)+
-          fld('customer','Pelanggan','PT Samakta Mitra', false)+
-          fld('product','Produk','Bracket Assembly A-220', false)+
-          fld('product_type','Jenis produk','Bracket pelat baja', false)+
-          fld('operation_type','Jenis operasi','Welding — MIG', false)+
-          fld('qty_target','Kuantitas target (pcs)','1500', true)+
+          readonlyFld('Nomor job', autoJobNo())+
+          readonlyFld('Nomor order', autoOrderNo())+
+          selectFld('customer','Pelanggan', PELANGGAN_OPTS)+
+          selectFld('product','Produk', PRODUK_OPTS)+
+          selectFld('product_type','Jenis produk', JENIS_PRODUK_OPTS)+
+          selectFld('operation_type','Jenis operasi', JENIS_OPERASI_OPTS)+
+          numFld('qty_target','Kuantitas target (pcs)','1500')+
           '<div></div>'+
           '<div style="grid-column:1/-1">'+
-            '<div style="font:600 11px/1 var(--font-mono);letter-spacing:.08em;color:var(--text-muted);margin-bottom:9px;text-transform:uppercase">Rute operasi</div>'+
+            '<div style="'+LBL+'">Rute operasi</div>'+
             '<div style="display:flex;flex-wrap:wrap;gap:8px">'+routeChips+'</div>'+
           '</div>'+
         '</div>'+
@@ -556,59 +635,98 @@
 
   /* ---------------- PROGRESS ---------------- */
   function screenProgress(){
-    var st = state;
-    var routePct = Math.round((st.currentStep / STEP_DEFS.length) * 100);
-    var curDef = STEP_DEFS[st.currentStep] || STEP_DEFS[STEP_DEFS.length-1];
-    var curAccent = st.running ? 'var(--amber-500)' : 'var(--violet-500)';
+    if (HAS_API && !state.job){
+      return emptyPanel('list-checks', 'Belum ada job aktif', 'Buka menu <b>Scan job</b>, pilih job, lalu tekan <b>Kerjakan job</b>. Langkah operasi & timer muncul di sini.', false);
+    }
+    var jv = curJob();
+    var steps = stepsFor();
+    var idx = curStepIdx(steps);
+    var routeDone = idx >= steps.length;
+    var cur = routeDone ? null : steps[idx];
+    var running = !!cur && cur.status === 'berjalan';
+    var doneCount = steps.filter(function(s){ return s.status === 'selesai'; }).length;
+    var routePct = steps.length ? Math.round(doneCount / steps.length * 100) : 0;
+    var curAccent = running ? 'var(--amber-500)' : (routeDone ? 'var(--green-500)' : 'var(--violet-500)');
 
-    var rows = STEP_DEFS.map(function(s, i){
-      var done = i < st.currentStep;
-      var cur = i === st.currentStep;
-      var running = cur && st.running;
-      var times = done ? s.start+' — '+s.finish : (cur && s.start ? s.start+' — …' : '—');
-      var duration = done ? s.duration : (cur ? hms(st.stepSeconds).slice(0,5) : '—');
-      var status = done ? 'Selesai' : (cur ? (running ? 'Berjalan' : 'Jeda') : 'Menunggu');
-      var bg = done ? 'var(--status-resolved-bg)' : (cur ? (running ? 'var(--status-progress-bg)' : 'var(--status-pending-bg)') : 'var(--status-closed-bg)');
-      var fg = done ? 'var(--status-resolved-fg)' : (cur ? (running ? 'var(--status-progress-fg)' : 'var(--status-pending-fg)') : 'var(--status-closed-fg)');
-      var dot = done ? 'var(--status-resolved-dot)' : (cur ? (running ? 'var(--status-progress-dot)' : 'var(--status-pending-dot)') : 'var(--status-closed-dot)');
-      var rowBg = cur ? (running ? 'var(--amber-50)' : 'var(--violet-50)') : 'var(--surface-card)';
-      var nameFont = cur ? '600 16px/1.2 var(--font-sans)' : '400 15px/1.2 var(--font-sans)';
-      var nameFg = (done || cur) ? 'var(--text-strong)' : 'var(--text-muted)';
-      var durFg = cur ? 'var(--amber-600)' : 'var(--text-muted)';
+    var rows = steps.map(function(s, i){
+      var done = s.status === 'selesai';
+      var isCur = i === idx;
+      var run = s.status === 'berjalan';
+      var times = done ? hm(s.started)+' — '+hm(s.finished) : (s.started ? hm(s.started)+' — …' : '—');
+      var duration = done ? fmtDur(s.started, s.finished) : (run ? hms(stepElapsed(s)).slice(0,5) : '—');
+      var label = done ? 'Selesai' : (run ? 'Berjalan' : (s.status === 'jeda' ? 'Jeda' : 'Menunggu'));
+      var bg = done ? 'var(--status-resolved-bg)' : (run ? 'var(--status-progress-bg)' : (s.status==='jeda' ? 'var(--status-pending-bg)' : 'var(--status-closed-bg)'));
+      var fg = done ? 'var(--status-resolved-fg)' : (run ? 'var(--status-progress-fg)' : (s.status==='jeda' ? 'var(--status-pending-fg)' : 'var(--status-closed-fg)'));
+      var dot = done ? 'var(--status-resolved-dot)' : (run ? 'var(--status-progress-dot)' : (s.status==='jeda' ? 'var(--status-pending-dot)' : 'var(--status-closed-dot)'));
+      var rowBg = isCur ? (run ? 'var(--amber-50)' : 'var(--violet-50)') : 'var(--surface-card)';
+      var nameFont = isCur ? '600 16px/1.2 var(--font-sans)' : '400 15px/1.2 var(--font-sans)';
+      var nameFg = (done || isCur) ? 'var(--text-strong)' : 'var(--text-muted)';
+      var durFg = run ? 'var(--amber-600)' : 'var(--text-muted)';
 
       return '<div style="display:grid;grid-template-columns:52px 1fr 150px 124px 92px 124px;padding:0 18px;min-height:'+STEP_ROW_H+';align-items:center;border-bottom:1px solid var(--border-subtle);background:'+rowBg+'">'+
-        '<div style="font:500 14px/1 var(--font-mono);color:var(--text-subtle)">'+s.seq+'</div>'+
+        '<div style="font:500 14px/1 var(--font-mono);color:var(--text-subtle)">'+pad(i+1)+'</div>'+
         '<div style="display:flex;align-items:center;gap:10px">'+
           '<span style="width:9px;height:9px;border-radius:999px;background:'+dot+';flex:none"></span>'+
-          '<span style="font:'+nameFont+';color:'+nameFg+';letter-spacing:-.006em">'+s.name+'</span>'+
+          '<span style="font:'+nameFont+';color:'+nameFg+';letter-spacing:-.006em">'+esc(s.name)+'</span>'+
         '</div>'+
-        '<div style="font:400 13px/1.3 var(--font-sans);color:var(--text-muted)">'+s.operator+'</div>'+
+        '<div style="font:400 13px/1.3 var(--font-sans);color:var(--text-muted)">'+esc(s.operator || '—')+'</div>'+
         '<div style="font:400 12px/1.5 var(--font-mono);color:var(--text-muted)">'+times+'</div>'+
         '<div style="font:400 13px/1 var(--font-mono);color:'+durFg+'">'+duration+'</div>'+
-        '<div><span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:4px;background:'+bg+';color:'+fg+';font:500 12.5px/1 var(--font-sans)">'+status+'</span></div>'+
+        '<div><span style="display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:4px;background:'+bg+';color:'+fg+';font:500 12.5px/1 var(--font-sans)">'+label+'</span></div>'+
       '</div>';
     }).join('');
 
-    var stepStateLabel = st.running ? 'Berjalan' : 'Jeda';
-    var stepPrimaryLabel = st.running ? 'Selesaikan langkah' : 'Mulai langkah';
-    var stepPrimaryIcon = st.running ? 'square-check-big' : 'play';
-    var stepPrimaryBg = st.running ? 'var(--brand-red-600)' : 'var(--green-500)';
+    // right-hand action panel
+    var panel;
+    if (routeDone){
+      panel = ''+
+        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Rute operasi</div>'+
+        '<div style="font:600 22px/1.2 var(--font-sans);letter-spacing:-.011em;color:var(--green-600);margin-top:7px">Semua langkah selesai</div>'+
+        '<div style="font:400 13px/1.5 var(--font-sans);color:var(--text-muted);margin-top:5px">'+esc(jv.no)+' siap ditutup.</div>'+
+        '<div style="height:1px;background:var(--border-subtle);margin:14px 0"></div>'+
+        '<button class="btn-bright" data-act="jobClose" style="width:100%;height:'+TOUCH_HXL+';border:1px solid transparent;border-radius:6px;background:var(--green-600);color:#fff;font:500 18px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px">'+ic('square-check-big',22)+'Tutup job</button>';
+    } else {
+      var primaryLabel = running ? 'Selesaikan langkah' : (cur.status === 'jeda' ? 'Lanjutkan langkah' : 'Mulai langkah');
+      var primaryIcon = running ? 'square-check-big' : 'play';
+      var primaryBg = running ? 'var(--brand-red-600)' : 'var(--green-500)';
+      panel = ''+
+        '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Operasi saat ini</div>'+
+        '<div style="font:600 24px/1.2 var(--font-sans);letter-spacing:-.011em;color:var(--text-strong);margin-top:7px">'+esc(cur.name)+'</div>'+
+        '<div style="font:400 13px/1.5 var(--font-sans);color:var(--text-muted);margin-top:5px">'+(running ? 'Berjalan' : (cur.status === 'jeda' ? 'Jeda' : 'Belum dimulai'))+' · '+esc(cur.operator || operatorName())+'</div>'+
+        '<div style="height:1px;background:var(--border-subtle);margin:14px 0"></div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+          '<div>'+
+            '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Jam mulai</div>'+
+            '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+hm(cur.started)+'</div>'+
+          '</div>'+
+          '<div>'+
+            '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Qty baik</div>'+
+            '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+jv.done+' pcs</div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="font:400 11.5px/1.5 var(--font-sans);color:var(--text-subtle);margin-top:12px">Jam mulai & selesai ditulis otomatis saat kamu tekan tombol.</div>'+
+        '<div style="height:1px;background:var(--border-subtle);margin:14px 0"></div>'+
+        '<div style="display:flex;flex-direction:column;gap:10px">'+
+          '<button class="btn-bright" data-act="stepPrimary" style="height:'+TOUCH_HXL+';border:1px solid transparent;border-radius:6px;background:'+primaryBg+';color:#fff;font:500 19px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic(primaryIcon,22)+primaryLabel+'</button>'+
+          '<button class="btn-soft2" data-act="stepPause" style="height:'+TOUCH_H+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 15px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;opacity:'+(running?'1':'.45')+';transition:var(--transition-control)">'+ic('pause',18)+'Jeda</button>'+
+        '</div>';
+    }
 
     return ''+
     '<div style="display:flex;flex-direction:column;gap:14px;height:100%">'+
       '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:8px;box-shadow:var(--shadow-sm);padding:13px 18px;display:flex;align-items:center;gap:20px">'+
         '<div>'+
-          '<div style="font:500 19px/1.1 var(--font-mono);color:var(--text-strong)">'+esc(curJob().no)+'</div>'+
-          '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted);margin-top:3px">'+esc(curJob().product)+' · '+esc(curJob().customer)+'</div>'+
+          '<div style="font:500 19px/1.1 var(--font-mono);color:var(--text-strong)">'+esc(jv.no)+'</div>'+
+          '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted);margin-top:3px">'+esc(jv.product)+' · '+esc(jv.customer)+'</div>'+
         '</div>'+
         '<div style="width:1px;height:38px;background:var(--border-subtle)"></div>'+
         '<div>'+
           '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Operasi</div>'+
-          '<div style="font:500 15px/1.2 var(--font-sans);color:var(--text-strong);margin-top:3px">Langkah '+(st.currentStep+1)+' dari '+STEP_DEFS.length+' · '+curDef.name+'</div>'+
+          '<div style="font:500 15px/1.2 var(--font-sans);color:var(--text-strong);margin-top:3px">'+(routeDone ? 'Rute selesai' : ('Langkah '+(idx+1)+' dari '+steps.length+' · '+esc(cur.name)))+'</div>'+
         '</div>'+
         '<div style="margin-left:auto;text-align:right">'+
           '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Timer langkah</div>'+
-          '<div class="js-step-timer" style="font:500 26px/1.1 var(--font-mono);color:'+(st.running?'var(--amber-600)':'var(--text-muted)')+';letter-spacing:.01em;margin-top:2px">'+hms(st.stepSeconds)+'</div>'+
+          '<div style="font:500 26px/1.1 var(--font-mono);color:'+(running?'var(--amber-600)':'var(--text-muted)')+';letter-spacing:.01em;margin-top:2px">'+hms(running ? stepElapsed(cur) : 0)+'</div>'+
         '</div>'+
       '</div>'+
 
@@ -617,8 +735,8 @@
           '<div style="display:grid;grid-template-columns:52px 1fr 150px 124px 92px 124px;padding:0 18px;height:36px;align-items:center;background:var(--neutral-25);border-bottom:1px solid var(--border-subtle);font:500 11px/1 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)">'+
             '<div>No</div><div>Operasi</div><div>Operator</div><div>Mulai / selesai</div><div>Durasi</div><div>Status</div>'+
           '</div>'+
-          rows+
-          '<div style="margin-top:auto;padding:13px 18px;background:var(--neutral-25);border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:14px">'+
+          '<div style="flex:1;min-height:0;overflow:auto">'+rows+'</div>'+
+          '<div style="padding:13px 18px;background:var(--neutral-25);border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:14px">'+
             '<div style="font:400 12.5px/1.4 var(--font-sans);color:var(--text-muted)">Penyelesaian rute</div>'+
             '<div style="flex:1;height:8px;border-radius:999px;background:var(--surface-sunken);overflow:hidden">'+
               '<div style="height:100%;width:'+routePct+'%;background:var(--green-500);border-radius:999px"></div>'+
@@ -627,32 +745,9 @@
           '</div>'+
         '</div>'+
 
-        '<div style="display:flex;flex-direction:column;gap:12px;min-width:0">'+
-          '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-top:3px solid '+curAccent+';border-radius:8px;box-shadow:var(--shadow-sm);padding:16px 18px">'+
-            '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Operasi saat ini</div>'+
-            '<div style="font:600 24px/1.2 var(--font-sans);letter-spacing:-.011em;color:var(--text-strong);margin-top:7px">'+curDef.name+'</div>'+
-            '<div style="font:400 13px/1.5 var(--font-sans);color:var(--text-muted);margin-top:5px">'+stepStateLabel+' · '+operatorName()+'</div>'+
-            '<div style="height:1px;background:var(--border-subtle);margin:14px 0"></div>'+
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
-              '<div>'+
-                '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Jam mulai</div>'+
-                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+(curDef.start ? curDef.start : '—')+'</div>'+
-              '</div>'+
-              '<div>'+
-                '<div style="font:400 11px/1.2 var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--text-subtle)">Qty baik</div>'+
-                '<div style="font:500 14px/1.2 var(--font-mono);color:var(--text-strong);margin-top:5px">'+curJob().done+' pcs</div>'+
-              '</div>'+
-            '</div>'+
-            '<div style="font:400 11.5px/1.5 var(--font-sans);color:var(--text-subtle);margin-top:12px">Jam mulai dan jam selesai ditulis otomatis oleh sistem.</div>'+
-          '</div>'+
-
-          '<div style="margin-top:auto;display:flex;flex-direction:column;gap:10px">'+
-            '<button class="btn-bright" data-act="stepPrimary" style="height:'+TOUCH_HXL+';border:1px solid transparent;border-radius:6px;background:'+stepPrimaryBg+';color:#fff;font:500 19px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:var(--transition-control)">'+ic(stepPrimaryIcon,22)+stepPrimaryLabel+'</button>'+
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-              '<button class="btn-soft2" data-act="stepPause" style="height:'+TOUCH_H+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-body);font:500 15px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;opacity:'+(st.running?'1':'.45')+';transition:var(--transition-control)">'+ic('pause',18)+(st.running?'Jeda':'Dijeda')+'</button>'+
-              '<button class="btn-soft2" data-act="go" data-arg="home" style="height:'+TOUCH_H+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-muted);font:500 15px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:var(--transition-control)">'+ic('log-out',18)+'Tinggalkan stasiun</button>'+
-            '</div>'+
-          '</div>'+
+        '<div style="display:flex;flex-direction:column;min-width:0">'+
+          '<div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-top:3px solid '+curAccent+';border-radius:8px;box-shadow:var(--shadow-sm);padding:16px 18px">'+panel+'</div>'+
+          '<button class="btn-soft2" data-act="go" data-arg="home" style="margin-top:auto;height:'+TOUCH_H+';border:1px solid var(--border-default);border-radius:6px;background:var(--surface-card);color:var(--text-muted);font:500 15px/1 var(--font-sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:var(--transition-control)">'+ic('log-out',18)+'Tinggalkan stasiun</button>'+
         '</div>'+
       '</div>'+
     '</div>';
@@ -861,6 +956,45 @@
     }).then(function(){ state.jobBusy = false; render(); });
   }
 
+  // Persist the current job's step array (+ status) back to the database.
+  function persistSteps(status){
+    if (!state.job) return; // demo mode: client-only
+    post('/api/jobs', { job_id: state.job.job_id, steps: state.job.steps, status: status });
+  }
+  function postEvent(text, qty){
+    post('/api/events', { job_id: (state.job ? state.job.job_id : curJob().no), event: text, operator: operatorName(), qty: (qty == null ? null : qty) });
+  }
+
+  function loadDashboard(){
+    if (!HAS_API || state.dashBusy) return;
+    state.dashBusy = true;
+    Promise.all([
+      apiGet('/api/jobs').catch(function(){ return { data: [] }; }),
+      apiGet('/api/events?limit=8').catch(function(){ return { data: [] }; }),
+      apiGet('/api/issues').catch(function(){ return { data: [] }; })
+    ]).then(function(r){
+      state.dash = {
+        jobs: Array.isArray(r[0].data) ? r[0].data : [],
+        events: Array.isArray(r[1].data) ? r[1].data : [],
+        issues: Array.isArray(r[2].data) ? r[2].data : []
+      };
+    }).then(function(){ state.dashBusy = false; render(); });
+  }
+
+  // Next running number for a prefix, based on jobs already in state.
+  function nextNumber(prefix, list){
+    var yr = new Date().getFullYear();
+    var re = new RegExp('^' + prefix + '-' + yr + '-(\\d+)$');
+    var max = 0;
+    (list || []).forEach(function(v){
+      var m = re.exec(v || '');
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    });
+    var n = String(max + 1);
+    while (n.length < 4) n = '0' + n;
+    return prefix + '-' + yr + '-' + n;
+  }
+
   /* ---------------- actions ---------------- */
   function doScan(which, result){
     var k = which === 'job' ? 'jobScan' : 'matScan';
@@ -876,6 +1010,8 @@
     go: function(arg){
       state.screen = arg;
       if (arg === 'job' && !state.jobList.length && !state.jobBusy) loadJobList();
+      if (arg === 'create' && !state.jobList.length && !state.jobBusy) loadJobList();
+      if (arg === 'home') loadDashboard();
     },
     scanMat: function(arg){ doScan('mat', arg); },
     jobReset: function(){ state.jobScan = 'idle'; state.jobLookup = ''; },
@@ -894,26 +1030,27 @@
       else r.splice(i, 1);
     },
     formReset: function(){
-      state.form = { job_id:'', order_no:'', customer:'', product:'', product_type:'', operation_type:'', qty_target:'', route:ROUTE_PRESET.slice(0,5) };
+      state.form = { job_id:'', order_no:'', customer:'', product:'', product_type:'', operation_type:'', qty_target:'', route:ROUTE_PRESET.slice(0) };
     },
     formSubmit: function(){
       var f = state.form;
-      if (!f.job_id.trim()){ showToast('Nomor job wajib diisi', 'Isi nomor job dulu.', 'triangle-alert', 'var(--amber-500)'); return; }
+      if (!f.product){ showToast('Produk belum dipilih', 'Pilih produk dari daftar.', 'triangle-alert', 'var(--amber-500)'); return; }
       if (state.formBusy) return;
+      var jobNo = autoJobNo(), orderNo = autoOrderNo();
       state.formBusy = true; render();
       apiPost('/api/jobs', {
-        job_id: f.job_id.trim(),
-        order_no: f.order_no.trim() || null,
-        customer: f.customer.trim() || null,
-        product: f.product.trim() || null,
-        product_type: f.product_type.trim() || null,
-        operation_type: f.operation_type.trim() || null,
+        job_id: jobNo,
+        order_no: orderNo,
+        customer: f.customer || null,
+        product: f.product || null,
+        product_type: f.product_type || null,
+        operation_type: f.operation_type || null,
         qty_target: parseInt(f.qty_target, 10) || 0,
         qty_completed: 0,
         route: f.route,
         status: 'READY'
-      }).then(function(){
-        showToast('Job disimpan', f.job_id.trim() + ' tersimpan ke database.', 'circle-check', 'var(--green-500)');
+      }).then(function(res){
+        showToast('Job disimpan', jobNo + ' · ' + orderNo + (res && res.warning ? ' (jalankan migrasi 002 & 003 untuk order/rute)' : ''), 'circle-check', 'var(--green-500)');
         actions.formReset();
         state.jobList = []; state.screen = 'job'; loadJobList();
       }).catch(function(e){
@@ -921,33 +1058,48 @@
       }).then(function(){ state.formBusy = false; render(); });
     },
     stepPrimary: function(){
-      var st = state;
-      var jv = curJob();
-      var curDef = STEP_DEFS[st.currentStep] || STEP_DEFS[STEP_DEFS.length-1];
-      if (st.running){
-        var last = st.currentStep >= STEP_DEFS.length - 1;
-        st.currentStep = Math.min(st.currentStep + 1, STEP_DEFS.length - 1);
-        st.running = false;
-        st.stepSeconds = 0;
-        showToast(
-          last ? 'Rute operasi selesai' : curDef.name + ' selesai',
-          last ? jv.no + ' siap ditutup.' : 'Jam selesai ' + clockStr() + ' ditulis otomatis.'
-        );
-        post('/api/jobs', {
-          job_id:jv.no, customer:jv._raw.customer, product:jv._raw.product,
-          qty_target:jv.targetN, qty_completed:jv.doneN,
-          status: last ? 'ROUTE_DONE' : ('STEP_DONE:' + curDef.name.toUpperCase())
-        });
+      var steps = stepsFor();
+      var i = curStepIdx(steps);
+      if (i >= steps.length){ showToast('Rute sudah selesai', 'Tekan Tutup job.', 'circle-check'); return; }
+      var s = steps[i];
+      if (s.status === 'berjalan'){
+        s.status = 'selesai';
+        s.finished = new Date().toISOString();
+        var last = i === steps.length - 1;
+        showToast(last ? 'Rute operasi selesai' : s.name + ' selesai',
+          last ? curJob().no + ' siap ditutup.' : 'Jam selesai ' + clockStr() + ' tercatat.');
+        postEvent(s.name + ' selesai');
+        persistSteps(last ? 'ROUTE_DONE' : 'RUNNING');
       } else {
-        st.running = true;
-        showToast(curDef.name + ' dimulai', 'Jam mulai ' + clockStr() + ' ditulis otomatis.');
+        var resume = s.status === 'jeda';
+        s.status = 'berjalan';
+        if (!s.started) s.started = new Date().toISOString();
+        s.operator = operatorName();
+        showToast(s.name + (resume ? ' dilanjutkan' : ' dimulai'), 'Jam mulai ' + clockStr() + ' tercatat.');
+        postEvent(s.name + (resume ? ' dilanjutkan' : ' dimulai'));
+        persistSteps('RUNNING');
       }
     },
     stepPause: function(){
-      if (state.running){
-        state.running = false;
+      var steps = stepsFor();
+      var i = curStepIdx(steps);
+      if (i < steps.length && steps[i].status === 'berjalan'){
+        steps[i].status = 'jeda';
         showToast('Operasi dijeda', 'Jeda tercatat ' + clockStr() + '.', 'pause', 'var(--violet-500)');
+        postEvent(steps[i].name + ' dijeda');
+        persistSteps('PAUSED');
       }
+    },
+    jobClose: function(){
+      var jv = curJob();
+      showToast('Job ditutup', jv.no + ' selesai — ' + jv.target + ' pcs.', 'circle-check', 'var(--green-500)');
+      postEvent('Job ditutup — ' + jv.target + ' pcs');
+      if (state.job){
+        state.job.status = 'CLOSED';
+        state.job.qty_completed = jv.targetN;
+        post('/api/jobs', { job_id: state.job.job_id, status: 'CLOSED', qty_completed: jv.targetN, steps: state.job.steps });
+      }
+      state.screen = 'home'; state.job = null; state.jobList = []; loadDashboard();
     },
     matIssue: function(){
       var st = state;
@@ -997,8 +1149,10 @@
 
   function tick(){
     state.now = new Date();
-    if (state.running) state.stepSeconds += 1;
-    if (state.screen === 'progress'){
+    // Progress screen has a live step timer — re-render each second.
+    var steps = state.screen === 'progress' ? stepsFor() : null;
+    var running = steps && steps.some(function(s){ return s.status === 'berjalan'; });
+    if (state.screen === 'progress' && running){
       render();
     } else {
       var c = document.querySelectorAll('.js-clock');
@@ -1021,9 +1175,12 @@
     var f = $('#frame');
     f.addEventListener('click', onClick);
     f.addEventListener('input', onInput);
+    f.addEventListener('change', onInput);
     f.addEventListener('keydown', onKeydown);
     setInterval(tick, 1000);
     if (state.screen === 'job') loadJobList();
+    if (state.screen === 'home') loadDashboard();
+    if (state.screen === 'create') loadJobList(); // for auto-numbering
   });
 })();
 </script>

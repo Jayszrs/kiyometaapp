@@ -1,15 +1,17 @@
-import { createClient } from '../../utils/supabase/api';
+import { createClient, admin } from '../../utils/supabase/api';
+
+const COLUMN_MISSING =
+  /column .* does not exist|Could not find the '.*' column|schema cache/i;
 
 export default async function handler(req, res) {
-  const supabase = createClient(req, res);
-
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await createClient(req, res).auth.getUser();
 
   if (!user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
+  const supabase = admin;
 
   try {
     if (req.method === 'GET') {
@@ -35,47 +37,62 @@ export default async function handler(req, res) {
         product_type,
         operation_type,
         route,
+        steps,
       } = req.body;
 
       if (!job_id) {
         return res.status(400).json({ error: 'job_id is required' });
       }
 
-      // Upsert on job_id so START / CONTINUE / FINISH update the same row.
-      const record = {
-        job_id,
+      // Only write the fields that were actually sent (partial updates must not
+      // null out customer/product/route/etc).
+      const base = { updated_at: new Date().toISOString() };
+      const maybe = {
         customer,
         product,
         qty_target,
-        status: status || 'READY',
-        updated_at: new Date().toISOString(),
+        qty_completed,
+        status,
+        order_no,
+        product_type,
+        operation_type,
+        route,
+        steps,
       };
-      if (qty_completed != null) record.qty_completed = qty_completed;
-      const optional = { order_no, product_type, operation_type, route };
-      for (const [k, v] of Object.entries(optional)) {
-        if (v !== undefined) record[k] = v;
+      for (const [k, v] of Object.entries(maybe)) {
+        if (v !== undefined) base[k] = v;
       }
 
-      let { data, error } = await supabase
+      const { data: existing } = await supabase
         .from('jobs')
-        .upsert([record], { onConflict: 'job_id' })
-        .select();
+        .select('job_id')
+        .eq('job_id', job_id)
+        .maybeSingle();
 
-      // If server/db/002_jobs_columns.sql hasn't been run yet, retry without
-      // the columns that don't exist so the core job still saves.
+      const run = (rec) =>
+        existing
+          ? supabase.from('jobs').update(rec).eq('job_id', job_id).select()
+          : supabase
+              .from('jobs')
+              .insert([{ job_id, status: status || 'READY', ...rec }])
+              .select();
+
+      let { data, error } = await run(base);
+
+      // Retry without columns that don't exist yet (002/003 not run).
       let warning;
-      if (error && /column .* does not exist|Could not find the '.*' column/i.test(error.message || '')) {
-        for (const k of Object.keys(optional)) delete record[k];
+      if (error && COLUMN_MISSING.test(error.message || '')) {
+        const trimmed = { ...base };
+        for (const k of ['order_no', 'product_type', 'operation_type', 'route', 'steps']) {
+          delete trimmed[k];
+        }
         warning =
-          'Kolom order/rute belum ada — jalankan server/db/002_jobs_columns.sql. Job inti tetap tersimpan.';
-        ({ data, error } = await supabase
-          .from('jobs')
-          .upsert([record], { onConflict: 'job_id' })
-          .select());
+          'Sebagian kolom belum ada — jalankan server/db/002_jobs_columns.pgsql & 003_steps_and_events.pgsql. Data inti tetap tersimpan.';
+        ({ data, error } = await run(trimmed));
       }
 
       if (error) throw error;
-      return res.status(201).json({ data, warning });
+      return res.status(existing ? 200 : 201).json({ data, warning });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
