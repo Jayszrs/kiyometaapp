@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Development
+.env.local
+.env.local.backup
+
+# Next.js
+.next/
+out/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

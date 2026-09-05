@@ -1,0 +1,23 @@
+{
+  "name": "factorytrack-mes-server",
+  "version": "1.0.0",
+  "description": "FactoryTrack MES Web Server with Supabase/PostgreSQL",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.0",
+    "dotenv": "^16.3.0",
+    "next": "^16.3.4",
+    "pg": "^8.11.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.50.0",
+    "eslint-config-next": "^14.0.0"
+  }
+}
