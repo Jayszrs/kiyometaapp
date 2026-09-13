@@ -6,7 +6,6 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
@@ -17,6 +16,7 @@
     "jsx": "react-jsx",
     "types": ["node"],
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "vite.config.ts"]
