@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
+import { genUUID } from "./lib/uuid";
 
 // ---- Types ----
 
@@ -1035,7 +1036,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
-  const newId = () => crypto.randomUUID();
+  const newId = () => genUUID();
 
   const blankForm = (): OrderRecord => ({
     id: newId(), orderDate: today, deliveryDate: today,
@@ -2055,7 +2056,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     let updated: Client[];
     let saved: Client;
     if (isNew) {
-      const record = { ...form, id: crypto.randomUUID() };
+      const record = { ...form, id: genUUID() };
       updated = clients.some(c => c.id === record.id) ? clients : [...clients, record];
       setClients(updated);
       setForm(record);
@@ -2275,7 +2276,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const handleSave = async () => {
     const errs = validateProduct(form, products, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const record = isNew ? { ...form, id: crypto.randomUUID() } : form;
+    const record = isNew ? { ...form, id: genUUID() } : form;
     if (isNew) {
       setProducts(prev => prev.some(p => p.id === record.id) ? prev : [...prev, record]);
       setForm(record);
