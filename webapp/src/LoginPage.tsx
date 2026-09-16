@@ -8,12 +8,21 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
+    // Read from the form DOM so OS autofill / WebView keyboards that skip
+    // React onChange still work (button must not be gated on reactive state).
+    const fd = new FormData(e.currentTarget);
+    const submittedEmail = String(fd.get("email") ?? "").trim();
+    const submittedPassword = String(fd.get("password") ?? "");
+    if (!submittedEmail || !submittedPassword) {
+      setError("Email and password are required.");
+      return;
+    }
     setBusy(true);
     try {
-      await signIn(email, password);
+      await signIn(submittedEmail, submittedPassword);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -41,14 +50,14 @@ export default function LoginPage() {
 
         <label className="block mb-4">
           <span className="block text-sm font-600 text-slate-500 mb-1">Email</span>
-          <TextInput type="email" value={email} onChange={setEmail} placeholder="operator@kiyometa.app" />
+          <TextInput name="email" type="email" value={email} onChange={setEmail} placeholder="operator@kiyometa.app" />
         </label>
         <label className="block mb-6">
           <span className="block text-sm font-600 text-slate-500 mb-1">Password</span>
-          <TextInput type="password" value={password} onChange={setPassword} />
+          <TextInput name="password" type="password" value={password} onChange={setPassword} />
         </label>
 
-        <Btn variant="primary" size="lg" className="w-full justify-center" disabled={busy || !email || !password}>
+        <Btn variant="primary" size="lg" className="w-full justify-center" disabled={busy}>
           {busy ? "Signing in..." : "Sign in"}
         </Btn>
       </form>

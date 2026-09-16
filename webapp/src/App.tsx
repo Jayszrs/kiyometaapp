@@ -397,16 +397,16 @@ function FieldBox({ label, error, children, className = "" }: {
   );
 }
 
-export function TextInput({ value, onChange, type = "text", placeholder = "", className = "", readOnly = false, hasError = false, maxLength, step }: {
+export function TextInput({ value, onChange, type = "text", placeholder = "", className = "", readOnly = false, hasError = false, maxLength, step, name }: {
   value: string | number; onChange?: (v: string) => void; type?: string;
   placeholder?: string; className?: string; readOnly?: boolean;
-  hasError?: boolean; maxLength?: number; step?: string;
+  hasError?: boolean; maxLength?: number; step?: string; name?: string;
 }) {
   const border = hasError
     ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
     : "border-slate-300 focus:border-[#1a3458] focus:ring-[#1a3458]/20";
   return (
-    <input type={type} value={value} readOnly={readOnly} placeholder={placeholder}
+    <input type={type} value={value} readOnly={readOnly} placeholder={placeholder} name={name}
       maxLength={maxLength} step={step}
       onChange={e => onChange?.(e.target.value)}
       className={`w-full px-3 py-2 text-base border rounded-sm bg-white focus:outline-none focus:ring-2 transition-colors ${border} ${readOnly ? "bg-slate-50 text-slate-400 cursor-default" : ""} ${className}`} />
@@ -961,15 +961,13 @@ const LABELS = {
   drawingLabel:       { ja: "図面",             en: "Drawing" },
   addImage:           { ja: "クリックして画像を追加", en: "Tap or click to add an image" },
   addDrawingSlots:    { ja: "画像スロットを追加",  en: "Add more drawing slots" },
-  totalRequiredTime:  { ja: "合計必要時間",       en: "Total required time" },
-  minPerUnit:         { ja: "分 / 1個",         en: "min / 1 unit" },
-  totalCalculation:   { ja: "合計計算",          en: "Total calculation" },
-  autoCalculated:     { ja: "自動計算",          en: "Auto-calculated" },
-  autoCalcInfo:       { ja: "合計時間は下のタスクから自動計算されます。", en: "Total time is automatically calculated from the tasks below." },
+  totalRequiredTime:  { ja: "総必要時間",          en: "Total required time" },
+  minPerUnit:         { ja: "分/1個",              en: "min / 1 unit" },
+  totalCalculation:   { ja: "合計計算",            en: "Total Calculation" },
   manufacturingTasks: { ja: "製造タスク (1-54)",  en: "Manufacturing tasks (1-54)" },
-  taskNoHeader:       { ja: "No.",             en: "No." },
-  taskContent:        { ja: "作業内容",          en: "Task content" },
-  taskTime:           { ja: "所要時間 (分/個)",   en: "Time (min / unit)" },
+  taskNoHeader:       { ja: "No.",                 en: "No." },
+  taskContent:        { ja: "作業内容",            en: "Task Content" },
+  taskTime:           { ja: "作業時間（分/1個）",   en: "Task Time (min/unit)" },
   minUnit:            { ja: "分",              en: "min" },
   unitDelivery:       { ja: "納期まで",          en: "Until Delivery" },
   unitRequired:       { ja: "必要工数",          en: "Required Man-hours" },
@@ -2204,7 +2202,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     productNumber: sd && isScanRouted ? sd.productNumber : "",
     unitPrice: sd && isScanRouted ? sd.unitPrice : "",
     tasks: makeTasks(54),
-    drawings: makeDrawings(4),
+    drawings: makeDrawings(7),
   });
 
   const [selectedId, setSelectedId] = useState(isScanRouted ? "" : products[0]?.id ?? "");
@@ -2215,7 +2213,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [search, setSearch] = useState("");
   const [drawingIndex, setDrawingIndex] = useState<number | null>(null);
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
-  const [showCalcInfo, setShowCalcInfo] = useState(false);
+  const [calculatedTotal, setCalculatedTotal] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const taskErrors = Object.entries(errors).filter(([k, v]) => k.startsWith("task_") && v);
@@ -2224,7 +2222,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     if (!q) return true;
     return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q);
   });
-  const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
+
+  const handleCalculateTotal = () => {
+    const total = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
+    setCalculatedTotal(total);
+  };
 
   const sf = (v: keyof Product) => (e: string) => {
     setForm(prev => ({ ...prev, [v]: e }));
@@ -2233,7 +2235,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   const handleNew = () => {
-    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(4) });
+    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(7) });
     setIsNew(true); setSelectedId(""); setErrors({}); setDirty(true);
   };
 
@@ -2398,24 +2400,16 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               </button>
             </div>
 
-            <div className="relative flex items-center gap-3 px-4 py-3 bg-[#f5f6f8] border border-slate-200 rounded-sm">
-              <span className="text-sm font-600 text-slate-600">{t("totalRequiredTime", lang)}</span>
-              <button type="button" onClick={() => setShowCalcInfo(v => !v)}
-                className="text-slate-400 hover:text-[#1a3458] cursor-pointer transition-colors shrink-0"
-                aria-label={t("autoCalcInfo", lang)}>
-                <Icon name="info" size={15} />
+            <div className="flex items-center gap-4 mb-4">
+              <span className="text-sm font-600 text-slate-700 shrink-0">{t("totalRequiredTime", lang)}</span>
+              <div className="flex items-end gap-2 border-b-2 border-slate-300 pb-1 w-32 min-w-32">
+                <span className="font-mono text-xl font-700 text-slate-800 text-right flex-1">{calculatedTotal !== null ? calculatedTotal : ""}</span>
+                <span className="text-sm text-slate-600 mb-0.5 shrink-0">{t("minPerUnit", lang)}</span>
+              </div>
+              <button type="button" onClick={handleCalculateTotal}
+                className="ml-auto inline-flex items-center justify-center px-6 py-1.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-600 shadow-sm cursor-pointer transition-colors shrink-0">
+                {t("totalCalculation", lang)}
               </button>
-              <span className="text-2xl font-700 text-[#1a3458] font-mono">{totalTime.toFixed(1)}</span>
-              <span className="text-sm text-slate-400">({t("autoCalculated", lang)})</span>
-              <span className="text-sm text-slate-500">{t("minPerUnit", lang)}</span>
-              {showCalcInfo && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowCalcInfo(false)} />
-                  <div className="absolute left-3 top-full mt-2 z-50 w-72 bg-white border border-slate-200 rounded-sm shadow-lg px-4 py-3 text-sm text-slate-600">
-                    {t("autoCalcInfo", lang)}
-                  </div>
-                </>
-              )}
             </div>
 
             <div>
@@ -2440,6 +2434,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                               const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x);
                               setForm(prev => ({ ...prev, tasks }));
                               setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" }));
+                              setCalculatedTotal(null);
                               setDirty(true);
                             }}
                             className={`w-full px-2 py-1 text-base border rounded-sm focus:outline-none focus:border-[#1a3458] transition-colors ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />
@@ -2455,6 +2450,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                               const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x);
                               setForm(prev => ({ ...prev, tasks }));
                               setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" }));
+                              setCalculatedTotal(null);
                               setDirty(true);
                             }}
                             className={`w-full px-2 py-1 text-base border rounded-sm text-right font-mono focus:outline-none focus:border-[#1a3458] transition-colors ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />
@@ -2937,7 +2933,12 @@ export default function App() {
         setDataState("ready");
       })
       .catch(err => {
-        setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
+        console.error("fetchAll failed:", err);
+        setDataError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load data from Supabase. (unknown error: " + String(err) + ")"
+        );
         setDataState("error");
       });
   }, []);

@@ -1,2 +1,10 @@
 # Node modules
 node_modules/
+
+# Local env (real values stay out of git; use .env.local.example as template)
+.env.local
+.env.local.*
+!.env.local.example
+
+# Build output
+dist/
