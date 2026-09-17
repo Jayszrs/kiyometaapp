@@ -2053,24 +2053,28 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   const handleSave = async () => {
     const errs = validateClient(form, clients, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    let updated: Client[];
+    const candidate = isNew ? { ...form, id: genUUID() } : form;
     let saved: Client;
-    if (isNew) {
-      const record = { ...form, id: genUUID() };
-      updated = clients.some(c => c.id === record.id) ? clients : [...clients, record];
-      setClients(updated);
-      setForm(record);
-      setSelectedId(record.id);
-      setIsNew(false);
-      saved = record;
-    } else {
-      updated = clients.map(c => c.id === form.id ? form : c);
-      setClients(updated);
-      saved = form;
+
+    try {
+      saved = await upsertClient(candidate);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      alert(`Failed to save client: ${message}`);
+      return;
     }
+
+    setClients(prev => {
+      const exists = prev.some(c => c.id === saved.id);
+      return exists
+        ? prev.map(c => c.id === saved.id ? saved : c)
+        : [...prev, saved];
+    });
+    setForm(saved);
+    setSelectedId(saved.id);
+    setIsNew(false);
     setErrors({});
     setDirty(false);
-    await upsertClient(saved).catch(err => alert(`Failed to save client: ${err.message}`));
 
     // Continue scan routing
     if (isScanRouted && sd) {
@@ -2929,17 +2933,49 @@ export default function App() {
   const [checklistOrderId, setChecklistOrderId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAll()
-      .then(data => {
+    let cancelled = false;
+    let requestInFlight = false;
+    let initialLoadComplete = false;
+
+    const refreshData = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+
+      try {
+        const data = await fetchAll();
+        if (cancelled) return;
         setClients(data.clients);
         setProducts(data.products);
         setOrders(data.orders);
         setDataState("ready");
-      })
-      .catch(err => {
-        setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
-        setDataState("error");
-      });
+        setDataError("");
+        initialLoadComplete = true;
+      } catch (err) {
+        if (!cancelled && !initialLoadComplete) {
+          setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
+          setDataState("error");
+        }
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void refreshData();
+    const refreshTimer = window.setInterval(() => void refreshData(), 3000);
+    const refreshOnFocus = () => void refreshData();
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") void refreshData();
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
+    };
   }, []);
 
   const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
