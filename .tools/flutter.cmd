@@ -26,6 +26,7 @@ echo [4]: Kiyometa Tablet (android emulator)
 :choose_device
 set "DEVICE_CHOICE="
 set /p "DEVICE_CHOICE=Please choose one (or q to quit): "
+if errorlevel 1 exit /b 1
 
 if /i "%DEVICE_CHOICE%"=="q" exit /b 0
 if "%DEVICE_CHOICE%"=="1" (
