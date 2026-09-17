@@ -117,6 +117,53 @@ if (-not $serial) {
 Write-Host "Tablet aktif: $AvdName ($serial)" -ForegroundColor Green
 
 if ($RunApp) {
+    $webAppPath = Join-Path $projectRoot 'webapp'
+    $packageJsonPath = Join-Path $webAppPath 'package.json'
+    if (-not (Test-Path -LiteralPath $packageJsonPath)) {
+        throw "Web application tidak ditemukan di $webAppPath."
+    }
+
+    $nodeModulesPath = Join-Path $webAppPath 'node_modules'
+    if (-not (Test-Path -LiteralPath $nodeModulesPath)) {
+        Write-Host 'Meng-install dependency webapp...' -ForegroundColor Cyan
+        Push-Location $webAppPath
+        try {
+            & npm.cmd install
+            if ($LASTEXITCODE -ne 0) {
+                throw 'npm install gagal.'
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    $viteListener = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue
+    if (-not $viteListener) {
+        Write-Host 'Menyalakan web server Vite...' -ForegroundColor Cyan
+        Start-Process `
+            -FilePath 'npm.cmd' `
+            -ArgumentList @('run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173') `
+            -WorkingDirectory $webAppPath `
+            -WindowStyle Hidden
+
+        $serverDeadline = (Get-Date).AddSeconds(45)
+        do {
+            Start-Sleep -Milliseconds 500
+            $viteListener = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue
+        } until ($viteListener -or (Get-Date) -ge $serverDeadline)
+
+        if (-not $viteListener) {
+            throw 'Vite tidak berhasil membuka port 5173 dalam 45 detik.'
+        }
+    }
+
+    Write-Host 'Menghubungkan web server ke emulator...' -ForegroundColor Cyan
+    & $adbPath -s $serial reverse tcp:5173 tcp:5173
+    if ($LASTEXITCODE -ne 0) {
+        throw 'adb reverse gagal. Restart emulator lalu coba lagi.'
+    }
+
     Push-Location $projectRoot
     try {
         & flutter run -d $serial @FlutterArguments
@@ -128,4 +175,3 @@ if ($RunApp) {
 }
 
 Write-Host 'Sekarang jalankan: flutter run' -ForegroundColor Green
-
