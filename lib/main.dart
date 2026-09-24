@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-// Dev server URL — the Vite dev server (`cd webapp && npm run dev`) with
-// `host: true` set in vite.config.ts, printed as "Network:" in its terminal
-// output. Update this if the PC's LAN IP or the dev server port changes.
-const String kServerUrl = 'http://192.168.1.2:5173';
+// The tablet runner maps this emulator-local port to the Vite server on the
+// development PC with `adb reverse`, so this URL does not depend on Wi-Fi IPs.
+const String kServerUrl = 'http://127.0.0.1:5173';
 
 void main() {
   runApp(const KiyometaApp());
@@ -18,7 +17,10 @@ class KiyometaApp extends StatelessWidget {
     return MaterialApp(
       title: 'Kiyometa Order Management',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: const Color(0xFF1A3458), useMaterial3: true),
+      theme: ThemeData(
+        colorSchemeSeed: const Color(0xFF1A3458),
+        useMaterial3: true,
+      ),
       home: const WebViewHome(),
     );
   }
@@ -43,13 +45,17 @@ class _WebViewHomeState extends State<WebViewHome> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (_) => setState(() { _loading = true; _error = null; }),
+          onPageStarted: (_) => setState(() {
+            _loading = true;
+            _error = null;
+          }),
           onPageFinished: (_) => setState(() => _loading = false),
           onWebResourceError: (error) => setState(() {
             _loading = false;
-            _error = 'Failed to load $kServerUrl\n(${error.description})\n\n'
-                'Make sure the dev server is running (cd webapp && npm run dev) '
-                'and the tablet is on the same Wi-Fi network as the PC.';
+            _error =
+                'Failed to load $kServerUrl\n(${error.description})\n\n'
+                'Run the app through option 4 so the project runner can start '
+                'the web server and connect it to the Android emulator.';
           }),
         ),
       )
@@ -57,7 +63,10 @@ class _WebViewHomeState extends State<WebViewHome> {
   }
 
   Future<void> _reload() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     await _controller.reload();
   }
 
@@ -81,7 +90,10 @@ class _WebViewHomeState extends State<WebViewHome> {
                       const SizedBox(height: 12),
                       Text(_error!, textAlign: TextAlign.center),
                       const SizedBox(height: 16),
-                      FilledButton(onPressed: _reload, child: const Text('Retry')),
+                      FilledButton(
+                        onPressed: _reload,
+                        child: const Text('Retry'),
+                      ),
                     ],
                   ),
                 ),

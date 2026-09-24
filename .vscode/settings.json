@@ -1,4 +1,7 @@
 {
+    "terminal.integrated.env.windows": {
+        "PATH": "${workspaceFolder}\\.tools;${env:PATH}"
+    },
     "chat.agentSkillsLocations": {
         ".agents/skills": true,
         ".github/skills": true,
