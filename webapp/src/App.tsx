@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
+import { runOcr, sendOcrLog } from "./lib/ocrClient";
+import { parseQuotation, normalizeClientName, type ParsedQuotation } from "./lib/parseQuotation";
 
 // ---- Types ----
 
@@ -115,6 +117,9 @@ const PATHS: Record<string, string> = {
   "alert-triangle": "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
   image: "M21 15l-5-5L5 21M3 3h18v18H3zM8.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3z",
   calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
+  upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
+  camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z",
+  loader: "M21 12a9 9 0 11-6.22-8.56",
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
@@ -186,63 +191,6 @@ const ARRANGEMENT_OPTIONS = [
   "Machine scheduling",
   "Labor assignment",
   "No arrangement",
-];
-
-// ---- Scan documents ----
-// Doc 1 & 2: existing clients/products -> direct fill
-// Doc 3: new client + new product -> triggers routing
-
-const SCAN_DOCS: { label: string; fields: { label: string; source: string; target: string; page: string }[]; data: ScanFillData }[] = [
-  {
-    label: "Shinwa Technos",
-    data: { orderDate: "2026-08-17", deliveryDate: "2026-08-20", client: "Shinwa Technos Co., Ltd.", orderNumber: "210266", productName: "Tank", quantity: 3, orderAmount: 15000, clientPhone: "0266-28-0105", clientAddress: "Nagano-ken Suwa-gun Shimosuwa-machi 4611-90", clientPostalCode: "393-0011", productNumber: "NHD-F1772-11", unitPrice: 5000 },
-    fields: [
-      { label: "Order date", source: "2026/08/17", target: "Order entry: order date", page: "P1" },
-      { label: "Delivery date", source: "08/20", target: "Order entry: delivery date", page: "P1" },
-      { label: "Client", source: "Shinwa Technos Co., Ltd.", target: "Order entry: client / Client master: name", page: "P1+P4" },
-      { label: "Order no.", source: "210266", target: "Order entry: order number", page: "P1" },
-      { label: "Drawing no.", source: "NHD-F1772-11", target: "Product master: product number", page: "P5" },
-      { label: "Part name", source: "Tank", target: "Order entry: product name / Product master: name", page: "P1+P5" },
-      { label: "Quantity", source: "3", target: "Order entry: quantity", page: "P1" },
-      { label: "Unit price", source: "¥5,000", target: "Product master: unit price", page: "P5" },
-      { label: "Total", source: "¥15,000", target: "Order entry: order amount", page: "P1" },
-      { label: "Address", source: "Shimosuwa-machi 4611-90", target: "Client master: address", page: "P4" },
-      { label: "Phone", source: "0266-28-0105", target: "Client master: phone number", page: "P4" },
-    ],
-  },
-  {
-    label: "Masuda Corp.",
-    data: { orderDate: "2026-07-27", deliveryDate: "2026-08-03", client: "Masuda Corp. Sheet Metal Dept.", orderNumber: "MS294541", productName: "Tank (TOP)", quantity: 1, orderAmount: 6000, clientPhone: "0265-85-2100", clientAddress: "Nagano-ken Kamiina-gun Miyada-mura 6623-2", clientPostalCode: "399-4301", productNumber: "NSQ-F0124-05", unitPrice: 6000 },
-    fields: [
-      { label: "Order date", source: "26/07/27", target: "Order entry: order date", page: "P1" },
-      { label: "Delivery date", source: "26/08/03", target: "Order entry: delivery date", page: "P1" },
-      { label: "Client", source: "Masuda Corp. Sheet Metal Dept.", target: "Order entry: client / Client master: name", page: "P1+P4" },
-      { label: "Order no.", source: "MS294541", target: "Order entry: order number", page: "P1" },
-      { label: "Item code", source: "NSQ-F0124-05", target: "Product master: product number", page: "P5" },
-      { label: "Item name", source: "Tank (TOP)", target: "Order entry: product name / Product master: name", page: "P1+P5" },
-      { label: "Quantity", source: "1", target: "Order entry: quantity", page: "P1" },
-      { label: "Unit price", source: "¥6,000", target: "Product master: unit price", page: "P5" },
-      { label: "Order amount", source: "¥6,000", target: "Order entry: order amount", page: "P1" },
-      { label: "Postal + address", source: "399-4301 Miyada-mura 6623-2", target: "Client master: postal code + address", page: "P4" },
-    ],
-  },
-  {
-    label: "Nakamura Precision (new)",
-    data: { orderDate: "2026-09-10", deliveryDate: "2026-09-18", client: "Nakamura Precision Works Ltd.", orderNumber: "NKM-00931", productName: "Bracket plate", quantity: 10, orderAmount: 45000, clientPhone: "054-321-7890", clientAddress: "Shizuoka-ken Hamamatsu-shi Naka-ku Takajo 1-5-3", clientPostalCode: "430-0901", productNumber: "NKM-BP-220", unitPrice: 4500 },
-    fields: [
-      { label: "Order date", source: "2026/09/10", target: "Order entry: order date", page: "P1" },
-      { label: "Delivery date", source: "2026/09/18", target: "Order entry: delivery date", page: "P1" },
-      { label: "Client", source: "Nakamura Precision Works Ltd.", target: "Order entry: client / Client master: name", page: "P1+P4" },
-      { label: "Order no.", source: "NKM-00931", target: "Order entry: order number", page: "P1" },
-      { label: "Part code", source: "NKM-BP-220", target: "Product master: product number", page: "P5" },
-      { label: "Part name", source: "Bracket plate", target: "Order entry: product name / Product master: name", page: "P1+P5" },
-      { label: "Quantity", source: "10", target: "Order entry: quantity", page: "P1" },
-      { label: "Unit price", source: "¥4,500", target: "Product master: unit price", page: "P5" },
-      { label: "Total", source: "¥45,000", target: "Order entry: order amount", page: "P1" },
-      { label: "Phone", source: "054-321-7890", target: "Client master: phone number", page: "P4" },
-      { label: "Address", source: "Hamamatsu-shi Naka-ku Takajo 1-5-3", target: "Client master: address", page: "P4" },
-    ],
-  },
 ];
 
 const PAGE_TAG: Record<string, string> = {
@@ -367,6 +315,42 @@ function validateProduct(form: Product, allProducts: Product[], isNew: boolean):
   });
 
   return e;
+}
+
+// ---- Scan routing helpers --------------------------------------------------
+// Shared by the Scan modal and master pages so a scan never opens a needless
+// "new client / new product" form when the record already exists.
+
+function normalizeForMatch(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[／/\s（）()【】\[\]・,，。.\-－ー]/g, "")
+    .replace(/株式会社|（株）|\(株\)|合同会社|有限会社/g, "")
+    .trim();
+}
+
+function normSame(a: string, b: string): boolean {
+  const x = normalizeForMatch(a);
+  const y = normalizeForMatch(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  // OCR may drop characters (伸和 vs 伸和テクノス) — accept stem containment.
+  return (x.includes(y) || y.includes(x)) && Math.min(x.length, y.length) >= 2;
+}
+
+function findClientMatch(clients: Client[], name: string): Client | undefined {
+  const n = normalizeClientName(name);
+  return clients.find((c) =>
+    n === c.name || normSame(c.name, name) || normSame(c.name, n),
+  );
+}
+
+function findProductMatch(products: Product[], client: string, productName: string, productNumber: string): Product | undefined {
+  return products.find(
+    (p) =>
+      normSame(p.clientName, client) &&
+      (p.productName === productName || (productNumber && p.productNumber === productNumber)),
+  );
 }
 
 // ---- UI primitives ----
@@ -577,26 +561,60 @@ function ScanModal({ clients, products, onClose, onApply }: {
   onClose: () => void;
   onApply: (data: ScanFillData, clientExists: boolean, productExists: boolean) => void;
 }) {
-  const [docIdx, setDocIdx] = useState(0);
-  const [editedData, setEditedData] = useState<ScanFillData>({ ...SCAN_DOCS[0].data });
+  const [custom, setCustom] = useState<ParsedQuotation | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editedData, setEditedData] = useState<ScanFillData | null>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setEditedData({ ...SCAN_DOCS[docIdx].data });
-  }, [docIdx]);
-
-  const doc = SCAN_DOCS[docIdx];
-
-  const setField = (key: keyof ScanFillData, val: string) => {
-    setEditedData(prev => ({
-      ...prev,
-      [key]: (key === "quantity" || key === "orderAmount") ? (parseInt(val.replace(/[^0-9]/g, ""), 10) || 0) : val,
-    }));
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const lines = await runOcr(file);
+      const parsed = parseQuotation(lines, { knownProductNames: products.map(p => p.productName) });
+      void sendOcrLog(`--- quotation: ${file.name} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
+      if (!parsed.fields.length) {
+        setError("Could not extract any fields from the document. Try a higher-resolution image.");
+        return;
+      }
+      setCustom(parsed);
+      setEditedData({
+        ...parsed.data,
+        // Prefer the master-stored name when OCR leaves the part-name blank.
+        productName: findProductMatch(products, parsed.data.client, parsed.data.productName, parsed.data.productNumber)?.productName ?? parsed.data.productName,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "OCR failed. Is the recognition service reachable?");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const clientExists = clients.some(c => c.name === editedData.client);
-  const productExists = products.some(
-    p => p.productName === editedData.productName && p.clientName === editedData.client
-  );
+  const clearCustom = () => {
+    setCustom(null);
+    setError(null);
+    setEditedData(null);
+  };
+
+  const setField = (key: keyof ScanFillData, val: string) => {
+    setEditedData(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [key]: (key === "quantity" || key === "orderAmount" || key === "unitPrice") ? (parseInt(val.replace(/[^0-9]/g, ""), 10) || 0) : val,
+      };
+    });
+  };
+
+  const clientExists = editedData ? !!findClientMatch(clients, editedData.client) : false;
+  const productExists = editedData
+    ? !!findProductMatch(products, editedData.client, editedData.productName, editedData.productNumber)
+    : false;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -612,16 +630,43 @@ function ScanModal({ clients, products, onClose, onApply }: {
           </button>
         </div>
 
-        {/* Equal-width document tabs */}
-        <div className="flex border-b border-slate-200">
-          {SCAN_DOCS.map((d, i) => (
-            <button key={i} onClick={() => setDocIdx(i)}
-              className={`flex-1 h-10 px-3 text-sm font-600 border-r border-slate-200 last:border-r-0 transition-colors cursor-pointer whitespace-nowrap ${i === docIdx ? "bg-[#1a3458] text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
-              {d.label}
-            </button>
-          ))}
+        {/* Capture: camera or file upload -> server OCR -> parse */}
+        <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 space-y-2.5">
+          <div className="flex items-center gap-2">
+            {busy && <Icon name="loader" size={14} className="text-[#1a3458] animate-spin" />}
+            <p className="text-sm font-600 text-slate-600">
+              {busy ? "Recognizing document…" : "Capture a quotation"}
+            </p>
+          </div>
+          <input hidden type="file" ref={uploadRef} accept="image/*,.pdf" onChange={handleFile} />
+          <input hidden type="file" ref={cameraRef} accept="image/*" capture="environment" onChange={handleFile} />
+          <div className="grid grid-cols-2 gap-2">
+            <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy}>
+              <Icon name="upload" size={15} /> Upload document
+            </Btn>
+            <Btn variant="outline" onClick={() => cameraRef.current?.click()} disabled={busy}>
+              <Icon name="camera" size={15} /> Take photo
+            </Btn>
+          </div>
+          {error && (
+            <p className="flex items-center gap-1.5 text-sm text-red-700">
+              <Icon name="alert-triangle" size={14} /> {error}
+            </p>
+          )}
+          {custom && (
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm text-slate-600 min-w-0">
+                Parsed as <span className="font-600 text-[#1a3458]">{custom.title}</span>. Review the values below, then apply.
+              </p>
+              <button onClick={clearCustom} className="text-sm font-600 text-[#0d7377] hover:text-[#0a5a5e] cursor-pointer transition-colors shrink-0">
+                Discard
+              </button>
+            </div>
+          )}
         </div>
 
+        {custom && (
+          <>
         {/* Routing status */}
         <div className="flex gap-4 px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-sm">
           <span className={`flex items-center gap-1.5 ${clientExists ? "text-green-700" : "text-amber-700"}`}>
@@ -644,9 +689,9 @@ function ScanModal({ clients, products, onClose, onApply }: {
               </tr>
             </thead>
             <tbody>
-              {doc.fields.map((f, i) => {
+              {custom.fields.map((f, i) => {
                 const dataKey = targetToDataKey(f.target);
-                const val = dataKey ? String(editedData[dataKey] ?? f.source) : f.source;
+                const val = dataKey && editedData ? String(editedData[dataKey] ?? f.source) : f.source;
                 return (
                   <tr key={i} className="border-b border-slate-100">
                     <td className="px-4 py-2 text-sm text-slate-500 align-middle">{f.label}</td>
@@ -668,14 +713,27 @@ function ScanModal({ clients, products, onClose, onApply }: {
             </tbody>
           </table>
         </div>
+          </>
+        )}
+
+        {!custom && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <Icon name="scan" size={40} className="text-slate-200" />
+            <p className="text-sm text-slate-500">
+              No document captured yet. Upload a scanned PDF or image, or take a photo of the quotation above.
+            </p>
+          </div>
+        )}
 
         <div className="flex items-center gap-3 px-5 py-4 border-t border-slate-200">
           <Btn variant="outline" onClick={onClose}>Cancel</Btn>
           <div className="flex-1" />
-          <Btn variant="primary" size="lg" onClick={() => onApply(editedData, clientExists, productExists)}>
-            <Icon name="check" size={16} />
-            {clientExists && productExists ? "Apply to form" : "Begin guided import"}
-          </Btn>
+          {custom && (
+            <Btn variant="primary" size="lg" onClick={() => editedData && onApply(editedData, clientExists, productExists)}>
+              <Icon name="check" size={16} />
+              {clientExists && productExists ? "Apply to form" : "Begin guided import"}
+            </Btn>
+          )}
         </div>
       </div>
     </div>
@@ -684,7 +742,7 @@ function ScanModal({ clients, products, onClose, onApply }: {
 
 // ---- Page: Home ----
 
-function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void }) {
+function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; onOpenScan: () => void; lang: Lang; setLang: (l: Lang) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const dateStr = new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const inProd = orders.filter(o => o.progress === "In production").length;
@@ -743,7 +801,7 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
               <Icon name="plus" size={20} className="text-blue-200 shrink-0" />
               <span className="font-700 text-base">{t("newOrder", lang)}</span>
             </button>
-            <button onClick={() => onNavigate("order-entry")}
+            <button onClick={onOpenScan}
               className="flex items-center gap-3 px-5 py-4 bg-white border border-slate-200 rounded-sm hover:border-[#1a3458] transition-colors cursor-pointer group">
               <Icon name="scan" size={20} className="text-slate-400 group-hover:text-[#1a3458] transition-colors shrink-0" />
               <span className="font-700 text-base text-slate-800">{t("scanButton", lang)}</span>
@@ -1027,11 +1085,12 @@ function TimeStack({ titleJa, titleEn, values, lang }: {
   );
 }
 
-function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, setScanRouting, onNavigate, lang, setLang }: {
+function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, setScanRouting, onNavigate, onOpenScan, lang, setLang }: {
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   clients: Client[]; products: Product[];
   scanRouting: ScanRouting; setScanRouting: (s: ScanRouting) => void;
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+  onOpenScan: () => void;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
   const newId = () => genUUID();
@@ -1046,17 +1105,14 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
   const isFilling = scanRouting.stage === "filling" && scanRouting.data !== null;
 
-  const [selectedId, setSelectedId] = useState(isFilling ? "" : (orders[0]?.id ?? ""));
-  const [form, setForm] = useState<OrderRecord>(() => {
-    if (isFilling && scanRouting.data) {
-      const d = scanRouting.data;
-      return { ...blankForm(), orderDate: d.orderDate, deliveryDate: d.deliveryDate, client: d.client, orderNumber: d.orderNumber, productName: d.productName, quantity: d.quantity, orderAmount: d.orderAmount };
-    }
-    return orders[0] ?? blankForm();
-  });
-  const [isNew, setIsNew] = useState(isFilling);
+  // The order entry page always opens on a blank new order; it is only filled
+  // when a scanned quotation is applied (or after a guided master import).
+  const [selectedId, setSelectedId] = useState("");
+  const [form, setForm] = useState<OrderRecord>(() => (isFilling && scanRouting.data
+    ? { ...blankForm(), orderDate: scanRouting.data.orderDate, deliveryDate: scanRouting.data.deliveryDate, client: scanRouting.data.client, orderNumber: scanRouting.data.orderNumber, productName: scanRouting.data.productName, quantity: scanRouting.data.quantity, orderAmount: scanRouting.data.orderAmount }
+    : blankForm()));
+  const [isNew, setIsNew] = useState(true);
   const [errors, setErrors] = useState<FormErrors>({});
-  const [scanOpen, setScanOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [sortBy, setSortBy] = useState<"delivery" | "order">("delivery");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1069,8 +1125,15 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const [arrangement, setArrangement] = useState("");
 
   useEffect(() => {
-    if (isFilling) setScanRouting({ stage: "idle", data: null });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Fills the blank form when a scan is applied while this page is already
+    // mounted (the mount-time prefill above covers fresh navigations).
+    if (scanRouting.stage === "filling" && scanRouting.data) {
+      const d = scanRouting.data;
+      setForm(prev => ({ ...prev, id: `o${Date.now()}`, orderDate: d.orderDate, deliveryDate: d.deliveryDate, client: d.client, orderNumber: d.orderNumber, productName: d.productName, quantity: d.quantity, orderAmount: d.orderAmount }));
+      setIsNew(true); setSelectedId(""); setErrors({});
+      setScanRouting({ stage: "idle", data: null });
+    }
+  }, [scanRouting]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ARRANGEMENT_JA: Record<string, string> = {
     "Material procurement": "材料手配",
@@ -1134,14 +1197,6 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     await deleteOrder(deletedId).catch(err => alert(`Failed to delete order: ${err.message}`));
   };
 
-  const handleScanApply = (data: ScanFillData, clientExists: boolean, productExists: boolean) => {
-    setScanOpen(false);
-    if (!clientExists) { setScanRouting({ stage: "need-client", data }); onNavigate("client-master"); return; }
-    if (!productExists) { setScanRouting({ stage: "need-product", data }); onNavigate("product-master"); return; }
-    setForm(prev => ({ ...prev, id: `o${Date.now()}`, orderDate: data.orderDate, deliveryDate: data.deliveryDate, client: data.client, orderNumber: data.orderNumber, productName: data.productName, quantity: data.quantity, orderAmount: data.orderAmount }));
-    setIsNew(true); setSelectedId(""); setErrors({});
-  };
-
   const remaining = (form.requiredManhours || 0) - (form.workedManhours || 0);
   const MINUTES_PER_DAY = 480;
   const calcDHM = (totalMins: number) => ({
@@ -1175,7 +1230,6 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
   return (
     <AppShell onNavigate={onNavigate} title="Kiyometa Order Management V2" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
-      {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} />}
 
       <div className="flex flex-1 overflow-hidden min-h-0">
 
@@ -1293,7 +1347,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <Icon name="scan" size={16} />
               <span className="text-sm">{L("scanHint")}</span>
             </div>
-            <Btn variant="outline" size="sm" onClick={() => setScanOpen(true)}>
+            <Btn variant="outline" size="sm" onClick={onOpenScan}>
               <Icon name="scan" size={15} />{L("scanButton")}
             </Btn>
           </div>
@@ -2076,7 +2130,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
 
     // Continue scan routing
     if (isScanRouted && sd) {
-      const productExists = products.some(p => p.productName === sd.productName && p.clientName === sd.client);
+      const productExists = !!findProductMatch(products, sd.client, sd.productName, sd.productNumber);
       if (!productExists) {
         setScanRouting({ stage: "need-product", data: sd });
         onNavigate("product-master");
@@ -2925,6 +2979,7 @@ export default function App() {
   const [dataState, setDataState] = useState<"loading" | "ready" | "error">("loading");
   const [dataError, setDataError] = useState("");
   const [scanRouting, setScanRouting] = useState<ScanRouting>({ stage: "idle", data: null });
+  const [scanOpen, setScanOpen] = useState(false);
   const [lang, setLang] = useState<"ja" | "en">("ja");
   const [checklistOrderId, setChecklistOrderId] = useState<string | null>(null);
 
@@ -2980,6 +3035,20 @@ export default function App() {
     setPage(p);
   };
 
+  const openScan = () => setScanOpen(true);
+
+  const handleScanApply = (data: ScanFillData, clientExists: boolean, productExists: boolean) => {
+    setScanOpen(false);
+    // Use the exact master names so the order always links to existing records
+    // even when the scan only matched them fuzzily (e.g. 伸和／株式会社).
+    const client = findClientMatch(clients, data.client)?.name ?? data.client;
+    if (!clientExists) { setScanRouting({ stage: "need-client", data: { ...data, client } }); navigate("client-master"); return; }
+    if (!productExists) { setScanRouting({ stage: "need-product", data: { ...data, client } }); navigate("product-master"); return; }
+    const masterProduct = findProductMatch(products, client, data.productName, data.productNumber);
+    setScanRouting({ stage: "filling", data: { ...data, client, productName: masterProduct?.productName ?? data.productName } });
+    navigate("order-entry");
+  };
+
   const sharedScan = { scanRouting, setScanRouting };
   // Deduplicate by id to guard against React Strict Mode double-updater runs
   const dedupedOrders = useMemo(() => {
@@ -3008,8 +3077,8 @@ export default function App() {
 
   return (
     <div className="h-full overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
-      {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} lang={lang} setLang={setLang} />}
-      {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} lang={lang} setLang={setLang} {...sharedScan} />}
+      {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
+      {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
       {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "client-master"  && <ClientMasterPage clients={clients} setClients={setClients} products={products} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
@@ -3017,6 +3086,8 @@ export default function App() {
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setLang={setLang} setOrders={setOrders} />}
+
+      {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} />}
     </div>
   );
 }
