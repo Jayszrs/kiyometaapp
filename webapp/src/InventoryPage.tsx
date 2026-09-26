@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Product } from "./App";
 import { genUUID } from "./lib/uuid";
 import { useAuth } from "./lib/auth";
+import { getOperationsBackendStatus, OPERATIONS_SETUP_MESSAGE } from "./lib/backendStatus";
 import {
   addStockMovement,
   deleteBomItem,
@@ -100,6 +101,10 @@ export default function InventoryPage({ products, onBack }: Props) {
 
   const load = useCallback(async () => {
     setError("");
+    if (getOperationsBackendStatus() === "migration-required") {
+      setError(OPERATIONS_SETUP_MESSAGE);
+      return;
+    }
     try {
       const data = await fetchInventoryData();
       setItems(data.items);
@@ -107,7 +112,7 @@ export default function InventoryPage({ products, onBack }: Props) {
       setMovements(data.movements);
       setBom(data.bom);
     } catch (err) {
-      setError(`${errorMessage(err)}. Run migration 002_roles_inventory_audit.sql first.`);
+      setError(`${errorMessage(err)}. ${OPERATIONS_SETUP_MESSAGE}`);
     }
   }, []);
 

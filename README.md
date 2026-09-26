@@ -1,13 +1,14 @@
 # Kiyometa Order Management
 
-The application UI lives in `webapp/` and is built with React, TypeScript, and
-Vite. Flutter provides a thin WebView wrapper so the same UI can run on the
-shared Android tablet emulator, Windows, Chrome, and Edge.
+The frontend UI lives in `webapp/` and is built with React, TypeScript, and
+Vite. The backend definition lives separately in `backend/supabase/`. Flutter
+provides a thin WebView wrapper so the same frontend can run on the shared
+Android tablet emulator, Windows, Chrome, and Edge.
 
 ## Project structure
 
-- `webapp/src/` - application source and Supabase integration.
-- `webapp/supabase/migrations/` - database schema required by the application.
+- `webapp/` - React/Vite frontend and its local environment configuration.
+- `backend/supabase/` - database migrations and protected Edge Functions.
 - `lib/`, `android/`, `windows/`, and `web/` - supported Flutter wrapper targets.
 - `tool/`, `.tools/`, and `.vscode/` - shared tablet runner and VS Code setup.
 
@@ -29,14 +30,14 @@ flutter pub get
 Run these migrations in order from the Supabase SQL Editor when preparing a
 new Supabase project:
 
-1. `webapp/supabase/migrations/001_order_management.sql`
-2. `webapp/supabase/migrations/002_roles_inventory_audit.sql`
+1. `backend/supabase/migrations/001_order_management.sql`
+2. `backend/supabase/migrations/002_roles_inventory_audit.sql`
 
 Then link the Supabase CLI to the project and deploy the protected user
 management function:
 
 ```powershell
-cd webapp
+cd backend
 npx supabase login
 npx supabase functions deploy manage-users --project-ref YOUR_PROJECT_REF
 cd ..
@@ -62,6 +63,19 @@ Dashboard -> Authentication -> Users before using the in-app controls.
   reconciles the deducted stock.
 - The supplied Excel workbooks were used as the field and workflow reference;
   they are not runtime dependencies and are not copied into the repository.
+
+## Backend troubleshooting
+
+- `404` for `profiles`, `purchases`, or `inventory_balances` means migration
+  `002_roles_inventory_audit.sql` has not been run on that Supabase project.
+- A CORS/preflight failure for `manage-users` normally means the Edge Function
+  has not been deployed. The function already handles browser `OPTIONS`
+  requests after it exists on Supabase.
+- `401` for `orders` means the cached login session is invalid or expired. Use
+  the **Sign out** button, sign in again, and verify that the frontend points to
+  the same Supabase project where migrations were installed.
+- The React DevTools console line is an informational development message, not
+  an application error.
 
 ## Run on the project tablet
 

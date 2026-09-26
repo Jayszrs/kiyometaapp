@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
+import { getOperationsBackendStatus, OPERATIONS_SETUP_MESSAGE } from "./lib/backendStatus";
 import {
   createManagedUser,
   fetchAuditLogs,
@@ -49,12 +50,16 @@ export default function ManagementPage({ onBack }: Props) {
 
   const load = useCallback(async () => {
     setError("");
+    if (getOperationsBackendStatus() === "migration-required") {
+      setError(OPERATIONS_SETUP_MESSAGE);
+      return;
+    }
     try {
       const nextUsers = await listManagedUsers();
       setUsers(nextUsers);
       if (profile.role === "administrator") setLogs(await fetchAuditLogs());
     } catch (err) {
-      setError(`${messageOf(err)}. Run migration 002 and deploy the manage-users Edge Function.`);
+      setError(`${messageOf(err)}. ${OPERATIONS_SETUP_MESSAGE}`);
     }
   }, [profile.role]);
 

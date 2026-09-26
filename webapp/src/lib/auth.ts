@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
+import {
+  getOperationsBackendStatus,
+  isMissingOperationsSchema,
+  markOperationsBackendReady,
+  markOperationsMigrationRequired,
+} from "./backendStatus";
 
 export type UserRole = "administrator" | "operator";
 
@@ -62,11 +68,20 @@ export function useSession() {
           ? "administrator"
           : "operator";
 
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, role, active")
-        .eq("id", nextSession.user.id)
-        .maybeSingle();
+      let data: { id: string; username: string; display_name: string; role: string; active: boolean } | null = null;
+      if (getOperationsBackendStatus() !== "migration-required") {
+        const result = await supabase
+          .from("profiles")
+          .select("id, username, display_name, role, active")
+          .eq("id", nextSession.user.id)
+          .maybeSingle();
+        data = result.data;
+        if (result.error && isMissingOperationsSchema(result.error)) {
+          markOperationsMigrationRequired();
+        } else if (!result.error) {
+          markOperationsBackendReady();
+        }
+      }
 
       if (!cancelled) {
         setProfile(data ? {
@@ -86,10 +101,22 @@ export function useSession() {
       }
     };
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return;
-      setSession(data.session);
-      void loadProfile(data.session);
+      let nextSession = data.session;
+      if (nextSession) {
+        const { error } = await supabase.auth.getUser();
+        const invalidSession = error && (
+          error.status === 401 || /invalid|expired|jwt|refresh token/i.test(error.message)
+        );
+        if (invalidSession) {
+          await supabase.auth.signOut({ scope: "local" });
+          nextSession = null;
+        }
+      }
+      if (cancelled) return;
+      setSession(nextSession);
+      void loadProfile(nextSession);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
@@ -117,26 +144,30 @@ export async function signIn(identity: string, password: string) {
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
 
-  try {
-    await supabase.rpc("record_audit_event", {
-      p_action: "login",
-      p_entity: "session",
-      p_metadata: { source: "webapp" },
-    });
-  } catch {
-    // Login still succeeds before the audit migration is deployed.
+  if (getOperationsBackendStatus() === "ready") {
+    try {
+      await supabase.rpc("record_audit_event", {
+        p_action: "login",
+        p_entity: "session",
+        p_metadata: { source: "webapp" },
+      });
+    } catch {
+      // Login must not fail if audit logging is temporarily unavailable.
+    }
   }
 }
 
 export async function signOut() {
-  try {
-    await supabase.rpc("record_audit_event", {
-      p_action: "logout",
-      p_entity: "session",
-      p_metadata: { source: "webapp" },
-    });
-  } catch {
-    // Sign-out must not be blocked by audit availability.
+  if (getOperationsBackendStatus() === "ready") {
+    try {
+      await supabase.rpc("record_audit_event", {
+        p_action: "logout",
+        p_entity: "session",
+        p_metadata: { source: "webapp" },
+      });
+    } catch {
+      // Sign-out must not be blocked by audit availability.
+    }
   }
   await supabase.auth.signOut();
 }

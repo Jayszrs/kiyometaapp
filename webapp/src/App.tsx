@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
-import InventoryPage from "./InventoryPage";
-import ManagementPage from "./ManagementPage";
+
+const InventoryPage = lazy(() => import("./InventoryPage"));
+const ManagementPage = lazy(() => import("./ManagementPage"));
 
 // ---- Types ----
 
@@ -110,6 +111,7 @@ const PATHS: Record<string, string> = {
   scan: "M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 12h10",
   users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   package: "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 001 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12",
+  "arrow-left": "M19 12H5M12 19l-7-7 7-7",
   "arrow-right": "M5 12h14M12 5l7 7-7 7",
   check: "M20 6L9 17l-5-5",
   share: "M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zM21 19a3 3 0 11-6 0 3 3 0 016 0z",
@@ -164,17 +166,6 @@ const PROGRESS_JA: Record<string, string> = {
   "Shipped": "出荷済み",
   "Contact": "要連絡",
 };
-
-const SCHEDULE_STATUSES = [
-  "Order request",
-  "Receipt",
-  "In preparation",
-  "Preparation complete",
-  "In production",
-  "Complete",
-  "Shipped",
-  "Contact",
-];
 
 const SCHEDULE_STATUS_COLORS: Record<string, string> = {
   "Order request": "bg-pink-500 text-white border-pink-600",
@@ -251,14 +242,6 @@ const SCAN_DOCS: { label: string; fields: { label: string; source: string; targe
     ],
   },
 ];
-
-const PAGE_TAG: Record<string, string> = {
-  P1: "bg-blue-700 text-white",
-  "P1+P4": "bg-violet-700 text-white",
-  "P1+P5": "bg-teal-700 text-white",
-  P4: "bg-orange-600 text-white",
-  P5: "bg-green-700 text-white",
-};
 
 // ---- Validation ----
 
@@ -487,10 +470,17 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
       <header className="flex items-center gap-2 px-4 py-3 bg-[#1a3458] text-white shrink-0">
-        <button onClick={() => setMenuOpen(true)}
-          className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
-          <Icon name="menu" size={20} />
-        </button>
+        {showBack ? (
+          <button onClick={() => onNavigate(backTarget)} title={backLabel}
+            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label={backLabel}>
+            <Icon name="arrow-left" size={20} />
+          </button>
+        ) : (
+          <button onClick={() => setMenuOpen(true)}
+            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
+            <Icon name="menu" size={20} />
+          </button>
+        )}
         <span className="text-base font-600 flex-1">{title ?? "Kiyometa Order Management"}</span>
         {lang !== undefined && setLang && (
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
@@ -2830,9 +2820,9 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
 
 // ---- Page 8: Task checklist ----
 
-function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang, setLang }: {
+function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang }: {
   orderId: string | null; orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
-  products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
+  products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang;
 }) {
   const order = orders.find(o => o.id === orderId);
   const product = products.find(p => p.clientName === order?.client && p.productName === order?.productName);
@@ -2932,6 +2922,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang,
 // ---- Root ----
 
 export default function App() {
+  const { signOut } = useAuth();
   const [page, setPage] = useState<Page>("home");
   const [deliveryMode, setDeliveryMode] = useState<DeliverySlipMode>("single");
   const [clients, setClients] = useState<Client[]>([]);
@@ -2947,9 +2938,10 @@ export default function App() {
     let cancelled = false;
     let requestInFlight = false;
     let initialLoadComplete = false;
+    let refreshPaused = false;
 
     const refreshData = async () => {
-      if (requestInFlight) return;
+      if (requestInFlight || refreshPaused) return;
       requestInFlight = true;
 
       try {
@@ -2965,6 +2957,7 @@ export default function App() {
         if (!cancelled && !initialLoadComplete) {
           setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
           setDataState("error");
+          refreshPaused = true;
         }
       } finally {
         requestInFlight = false;
@@ -3013,9 +3006,19 @@ export default function App() {
   if (dataState === "error") {
     return (
       <div className="flex items-center justify-center h-full bg-[#f5f6f8] p-8" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-        <div className="max-w-md flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-sm">
-          <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
-          <p className="text-sm text-red-700">{dataError}</p>
+        <div className="w-full max-w-lg rounded-lg border border-red-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start gap-3">
+            <Icon name="alert-triangle" size={20} className="mt-0.5 shrink-0 text-red-600" />
+            <div>
+              <h1 className="font-700 text-slate-800">Data could not be loaded</h1>
+              <p className="mt-1 text-sm leading-6 text-red-700">{dataError}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">If the console shows 401, sign out and log in again. If it shows 404 for profiles or inventory tables, deploy backend migration 002 first.</p>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button onClick={() => void signOut()} className="rounded border border-slate-300 px-4 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50">Sign out</button>
+            <button onClick={() => window.location.reload()} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">Retry</button>
+          </div>
         </div>
       </div>
     );
@@ -3031,9 +3034,13 @@ export default function App() {
       {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-      {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setLang={setLang} setOrders={setOrders} />}
-      {page === "inventory"      && <InventoryPage products={products} onBack={() => navigate("home")} />}
-      {page === "management"     && <ManagementPage onBack={() => navigate("home")} />}
+      {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
+      {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onBack={() => navigate("home")} /></Suspense>}
+      {page === "management"     && <Suspense fallback={<PageLoading />}><ManagementPage onBack={() => navigate("home")} /></Suspense>}
     </div>
   );
+}
+
+function PageLoading() {
+  return <div className="flex h-full items-center justify-center bg-[#f5f6f8] text-sm text-slate-500">Loading module...</div>;
 }
