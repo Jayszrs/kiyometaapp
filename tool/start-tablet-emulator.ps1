@@ -59,6 +59,76 @@ function Get-RunningAvdSerial {
     return $null
 }
 
+function Set-AvdPerformanceConfig {
+    param([string]$Name)
+
+    $configPath = Join-Path $env:USERPROFILE ".android\avd\$Name.avd\config.ini"
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        return
+    }
+
+    $settings = [ordered]@{
+        'hw.gpu.enabled'                    = 'yes'
+        'hw.gpu.mode'                       = 'auto'
+        'hw.lcd.width'                      = '1920'
+        'hw.lcd.height'                     = '1200'
+        'hw.lcd.density'                    = '240'
+        'hw.ramSize'                        = '2048'
+        'vm.heapSize'                       = '256M'
+        'fastboot.forceColdBoot'            = 'yes'
+        'fastboot.forceFastBoot'            = 'no'
+        'firstboot.bootFromDownloadableSnapshot' = 'no'
+        'firstboot.bootFromLocalSnapshot'   = 'no'
+        'firstboot.saveToLocalSnapshot'     = 'no'
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    Get-Content -LiteralPath $configPath | ForEach-Object { [void]$lines.Add($_) }
+
+    foreach ($entry in $settings.GetEnumerator()) {
+        $prefix = "$($entry.Key)="
+        $index = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $index = $i
+                break
+            }
+        }
+
+        $newLine = "$($entry.Key)=$($entry.Value)"
+        if ($index -ge 0) {
+            $lines[$index] = $newLine
+        }
+        else {
+            [void]$lines.Add($newLine)
+        }
+    }
+
+    [System.IO.File]::WriteAllLines($configPath, $lines)
+}
+
+function Wait-AndroidBoot {
+    param(
+        [string]$AdbPath,
+        [string]$Serial,
+        [int]$TimeoutMinutes = 5
+    )
+
+    Write-Host 'Menunggu Android selesai boot...' -ForegroundColor Cyan
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    do {
+        Start-Sleep -Seconds 2
+        $bootCompleted = (& $AdbPath -s $Serial shell getprop sys.boot_completed 2>$null | Select-Object -First 1).Trim()
+    } until ($bootCompleted -eq '1' -or (Get-Date) -ge $deadline)
+
+    if ($bootCompleted -ne '1') {
+        throw "Android pada $Serial belum selesai boot setelah $TimeoutMinutes menit."
+    }
+
+    & $AdbPath -s $Serial shell input keyevent 82 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+}
+
 $sdkPath = Get-AndroidSdkPath
 $emulatorPath = Join-Path $sdkPath 'emulator\emulator.exe'
 $adbPath = Join-Path $sdkPath 'platform-tools\adb.exe'
@@ -96,12 +166,19 @@ if ($installedAvds -notcontains $AvdName) {
     }
 }
 
+Set-AvdPerformanceConfig -Name $AvdName
+
 & $adbPath start-server | Out-Null
 $serial = Get-RunningAvdSerial -AdbPath $adbPath -Name $AvdName
 
 if (-not $serial) {
     Write-Host "Menyalakan $AvdName..." -ForegroundColor Cyan
-    Start-Process -FilePath $emulatorPath -ArgumentList @('-avd', $AvdName)
+    Start-Process -FilePath $emulatorPath -ArgumentList @(
+        '-avd', $AvdName,
+        '-gpu', 'auto',
+        '-no-snapshot-load',
+        '-no-boot-anim'
+    )
 
     $deadline = (Get-Date).AddMinutes(3)
     do {
@@ -113,6 +190,8 @@ if (-not $serial) {
         throw "Emulator $AvdName tidak terdeteksi setelah 3 menit. Buka Android Studio Device Manager untuk melihat errornya."
     }
 }
+
+Wait-AndroidBoot -AdbPath $adbPath -Serial $serial
 
 Write-Host "Tablet aktif: $AvdName ($serial)" -ForegroundColor Green
 
