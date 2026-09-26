@@ -2,10 +2,33 @@ import { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
 
-// Exposes the signed-in user's email + sign-out action to any component
-// (AppShell, HomePage headers) without threading props through every page.
-export const AuthContext = createContext<{ email: string; signOut: () => void }>({
+export type UserRole = "administrator" | "operator";
+
+export interface UserProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  active: boolean;
+}
+
+interface AuthValue {
+  email: string;
+  profile: UserProfile;
+  signOut: () => void;
+}
+
+const emptyProfile: UserProfile = {
+  id: "",
+  username: "",
+  displayName: "",
+  role: "operator",
+  active: true,
+};
+
+export const AuthContext = createContext<AuthValue>({
   email: "",
+  profile: emptyProfile,
   signOut: () => {},
 });
 
@@ -15,27 +38,105 @@ export function useAuth() {
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<UserProfile>(emptyProfile);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadProfile = async (nextSession: Session | null) => {
+      if (!nextSession) {
+        if (!cancelled) {
+          setProfile(emptyProfile);
+          setLoading(false);
+        }
+        return;
+      }
+
+      const fallbackUsername =
+        String(nextSession.user.user_metadata?.username ?? "").trim() ||
+        (nextSession.user.email?.split("@")[0] ?? "operator");
+      const fallbackRole: UserRole =
+        nextSession.user.email === "operator@kiyometa.app" ||
+        nextSession.user.user_metadata?.role === "administrator"
+          ? "administrator"
+          : "operator";
+
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, role, active")
+        .eq("id", nextSession.user.id)
+        .maybeSingle();
+
+      if (!cancelled) {
+        setProfile(data ? {
+          id: data.id,
+          username: data.username,
+          displayName: data.display_name || data.username,
+          role: data.role as UserRole,
+          active: data.active,
+        } : {
+          id: nextSession.user.id,
+          username: fallbackUsername,
+          displayName: fallbackUsername,
+          role: fallbackRole,
+          active: true,
+        });
+        setLoading(false);
+      }
+    };
+
     supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
       setSession(data.session);
-      setLoading(false);
+      void loadProfile(data.session);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
+      void loadProfile(s);
     });
-    return () => sub.subscription.unsubscribe();
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
-  return { session, loading };
+  return { session, profile, loading };
 }
 
-export async function signIn(email: string, password: string) {
+export async function signIn(identity: string, password: string) {
+  const normalized = identity.trim().toLowerCase();
+  let email = normalized;
+
+  if (!normalized.includes("@")) {
+    const { data } = await supabase.rpc("resolve_login_email", { p_username: normalized });
+    email = typeof data === "string" && data ? data : `${normalized}@kiyometa.app`;
+  }
+
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
+
+  try {
+    await supabase.rpc("record_audit_event", {
+      p_action: "login",
+      p_entity: "session",
+      p_metadata: { source: "webapp" },
+    });
+  } catch {
+    // Login still succeeds before the audit migration is deployed.
+  }
 }
 
 export async function signOut() {
+  try {
+    await supabase.rpc("record_audit_event", {
+      p_action: "logout",
+      p_entity: "session",
+      p_metadata: { source: "webapp" },
+    });
+  } catch {
+    // Sign-out must not be blocked by audit availability.
+  }
   await supabase.auth.signOut();
 }

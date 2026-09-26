@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
+import InventoryPage from "./InventoryPage";
+import ManagementPage from "./ManagementPage";
 
 // ---- Types ----
 
@@ -14,7 +16,9 @@ type Page =
   | "product-master"
   | "delivery-slip"
   | "schedule"
-  | "checklist";
+  | "checklist"
+  | "inventory"
+  | "management";
 
 type DeliverySlipMode = "single" | "multiple";
 
@@ -115,6 +119,9 @@ const PATHS: Record<string, string> = {
   "alert-triangle": "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
   image: "M21 15l-5-5L5 21M3 3h18v18H3zM8.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3z",
   calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
+  user: "M20 21a8 8 0 00-16 0M12 13a5 5 0 100-10 5 5 0 000 10z",
+  database: "M20 6c0 1.66-3.58 3-8 3S4 7.66 4 6s3.58-3 8-3 8 1.34 8 3zM4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6",
+  shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4",
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
@@ -506,12 +513,12 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
 }
 
 function UserMenuButton() {
-  const { email, signOut } = useAuth();
+  const { profile, signOut } = useAuth();
   return (
     <button onClick={signOut} title="Sign out"
       className="flex items-center gap-1.5 text-sm text-blue-200 hover:text-white transition-colors cursor-pointer shrink-0">
       <Icon name="user" size={15} className="shrink-0" />
-      <span className="max-w-[180px] truncate">{email}</span>
+      <span className="max-w-[180px] truncate">@{profile.username}</span>
     </button>
   );
 }
@@ -525,6 +532,8 @@ function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () =
     { label: "Client master", page: "client-master" as Page, icon: "users", desc: "Manage client records" },
     { label: "Product master", page: "product-master" as Page, icon: "package", desc: "Manage product specifications" },
     { label: "Schedule", page: "schedule" as Page, icon: "calendar", desc: "Production schedule & capacity" },
+    { label: "Inventory", page: "inventory" as Page, icon: "database", desc: "Purchasing and stock mutations" },
+    { label: "Role management", page: "management" as Page, icon: "shield", desc: "Employees, passwords, and audit" },
   ];
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -695,6 +704,8 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
     { label: t("searchBilling", lang), desc: "Search orders, print invoices and delivery slips", page: "search-billing" as Page, icon: "search" },
     { label: t("clientMaster", lang), desc: "View and edit client information", page: "client-master" as Page, icon: "users" },
     { label: t("productMaster", lang), desc: "View and edit product specifications", page: "product-master" as Page, icon: "package" },
+    { label: "Inventory", desc: "Materials, purchasing, and stock mutations", page: "inventory" as Page, icon: "database" },
+    { label: "Role & Audit", desc: "Employee access and activity history", page: "management" as Page, icon: "shield" },
   ];
 
   return (
@@ -753,7 +764,7 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
           {/* Row 2: Sections */}
           <div>
             <p className="text-xs font-700 text-slate-400 mb-2">{t("sectionsHeader", lang)}</p>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
               {quickNav.map(item => (
                 <button key={item.label} onClick={() => onNavigate(item.page)}
                   className="flex flex-col items-center gap-2 px-4 py-4 bg-white border border-slate-200 rounded-sm hover:border-[#1a3458] hover:bg-slate-50 cursor-pointer transition-colors text-center">
@@ -3021,6 +3032,8 @@ export default function App() {
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setLang={setLang} setOrders={setOrders} />}
+      {page === "inventory"      && <InventoryPage products={products} onBack={() => navigate("home")} />}
+      {page === "management"     && <ManagementPage onBack={() => navigate("home")} />}
     </div>
   );
 }

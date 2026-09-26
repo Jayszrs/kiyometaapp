@@ -26,8 +26,42 @@ cd ..
 flutter pub get
 ```
 
-Run `webapp/supabase/migrations/001_order_management.sql` once in the Supabase
-SQL Editor when preparing a new Supabase project.
+Run these migrations in order from the Supabase SQL Editor when preparing a
+new Supabase project:
+
+1. `webapp/supabase/migrations/001_order_management.sql`
+2. `webapp/supabase/migrations/002_roles_inventory_audit.sql`
+
+Then link the Supabase CLI to the project and deploy the protected user
+management function:
+
+```powershell
+cd webapp
+npx supabase login
+npx supabase functions deploy manage-users --project-ref YOUR_PROJECT_REF
+cd ..
+```
+
+The second migration promotes the existing `operator@kiyometa.app` account to
+the initial administrator. Sign in with username `operator`; email addresses
+are no longer entered in the application. In **Role management**, reset that
+account to `operator1234` and create additional username-only employee
+accounts. If the current password is unknown, reset it once from Supabase
+Dashboard -> Authentication -> Users before using the in-app controls.
+
+## Roles, audit, and inventory
+
+- Administrators can create/deactivate accounts, assign roles, inspect the
+  activity trail, and undo supported data changes.
+- Operators can use operational screens and reset other operator passwords,
+  but cannot create accounts, change roles, or open the audit trail.
+- Inventory master data, purchases, printable purchase receipts, and stock
+  mutations are stored in Supabase.
+- Product material requirements (BOM) drive automatic stock deductions when
+  an order reaches `Complete` or `Shipped`. Reopening/deleting the order safely
+  reconciles the deducted stock.
+- The supplied Excel workbooks were used as the field and workflow reference;
+  they are not runtime dependencies and are not copied into the repository.
 
 ## Run on the project tablet
 

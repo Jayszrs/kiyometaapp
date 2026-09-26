@@ -3,7 +3,7 @@ import { Icon, Btn, TextInput } from "./App";
 import { signIn } from "./lib/auth";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -13,7 +13,7 @@ export default function LoginPage() {
     setError("");
     setBusy(true);
     try {
-      await signIn(email, password);
+      await signIn(username, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -40,15 +40,15 @@ export default function LoginPage() {
         )}
 
         <label className="block mb-4">
-          <span className="block text-sm font-600 text-slate-500 mb-1">Email</span>
-          <TextInput type="email" value={email} onChange={setEmail} placeholder="operator@kiyometa.app" />
+          <span className="block text-sm font-600 text-slate-500 mb-1">Username</span>
+          <TextInput value={username} onChange={setUsername} placeholder="operator" />
         </label>
         <label className="block mb-6">
           <span className="block text-sm font-600 text-slate-500 mb-1">Password</span>
           <TextInput type="password" value={password} onChange={setPassword} />
         </label>
 
-        <Btn variant="primary" size="lg" className="w-full justify-center" disabled={busy || !email || !password}>
+        <Btn variant="primary" size="lg" className="w-full justify-center" disabled={busy || !username || !password}>
           {busy ? "Signing in..." : "Sign in"}
         </Btn>
       </form>
