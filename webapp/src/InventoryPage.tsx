@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Product } from "./App";
 import { genUUID } from "./lib/uuid";
 import { useAuth } from "./lib/auth";
-import { getOperationsBackendStatus, OPERATIONS_SETUP_MESSAGE } from "./lib/backendStatus";
+import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import {
   addStockMovement,
   deleteBomItem,
@@ -101,18 +101,21 @@ export default function InventoryPage({ products, onBack }: Props) {
 
   const load = useCallback(async () => {
     setError("");
-    if (getOperationsBackendStatus() === "migration-required") {
-      setError(OPERATIONS_SETUP_MESSAGE);
-      return;
-    }
+    setBusy(true);
     try {
+      if (!await probeOperationsBackend(true)) {
+        setError(MIGRATION_REQUIRED_MESSAGE);
+        return;
+      }
       const data = await fetchInventoryData();
       setItems(data.items);
       setPurchases(data.purchases);
       setMovements(data.movements);
       setBom(data.bom);
     } catch (err) {
-      setError(`${errorMessage(err)}. ${OPERATIONS_SETUP_MESSAGE}`);
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
     }
   }, []);
 
@@ -193,7 +196,7 @@ export default function InventoryPage({ products, onBack }: Props) {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[{ label: "Master items", value: summary.itemCount.toLocaleString() }, { label: "Stock value", value: money(summary.stockValue) }, { label: "Need purchase", value: summary.reorderCount.toLocaleString() }, { label: "Materials issued", value: summary.outgoing.toLocaleString() }].map(card => <div key={card.label} className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200"><p className="text-xs font-700 uppercase tracking-wide text-slate-500">{card.label}</p><p className="mt-2 text-xl font-700 text-[#1a3458] sm:text-2xl">{card.value}</p></div>)}
           </div>
-          {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+          {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load()} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? "Checking..." : "Check again"}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
           {tab === "inventory" && <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">

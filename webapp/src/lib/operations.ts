@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import type { UserRole } from "./auth";
+import { EDGE_FUNCTION_REQUIRED_MESSAGE } from "./backendStatus";
 
 export interface ManagedUser {
   id: string;
@@ -98,7 +99,15 @@ function functionError(data: unknown, fallback: string): Error {
 
 async function invokeUsers(body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke("manage-users", { body });
-  if (error) throw error;
+  if (error) {
+    const candidate = error as Error & { context?: Response };
+    const status = candidate.context instanceof Response ? candidate.context.status : 0;
+    const text = `${candidate.name} ${candidate.message}`.toLowerCase();
+    if (status === 404 || /fetch|cors|failed to send|relay/.test(text)) {
+      throw new Error(EDGE_FUNCTION_REQUIRED_MESSAGE);
+    }
+    throw error;
+  }
   if (data?.error) throw functionError(data, "User management failed");
   return data;
 }

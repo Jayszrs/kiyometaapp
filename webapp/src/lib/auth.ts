@@ -69,18 +69,16 @@ export function useSession() {
           : "operator";
 
       let data: { id: string; username: string; display_name: string; role: string; active: boolean } | null = null;
-      if (getOperationsBackendStatus() !== "migration-required") {
-        const result = await supabase
-          .from("profiles")
-          .select("id, username, display_name, role, active")
-          .eq("id", nextSession.user.id)
-          .maybeSingle();
-        data = result.data;
-        if (result.error && isMissingOperationsSchema(result.error)) {
-          markOperationsMigrationRequired();
-        } else if (!result.error) {
-          markOperationsBackendReady();
-        }
+      const result = await supabase
+        .from("profiles")
+        .select("id, username, display_name, role, active")
+        .eq("id", nextSession.user.id)
+        .maybeSingle();
+      data = result.data;
+      if (result.error && isMissingOperationsSchema(result.error)) {
+        markOperationsMigrationRequired();
+      } else if (!result.error) {
+        markOperationsBackendReady();
       }
 
       if (!cancelled) {

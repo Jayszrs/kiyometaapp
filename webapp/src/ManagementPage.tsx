@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
-import { getOperationsBackendStatus, OPERATIONS_SETUP_MESSAGE } from "./lib/backendStatus";
+import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import {
   createManagedUser,
   fetchAuditLogs,
@@ -50,16 +50,19 @@ export default function ManagementPage({ onBack }: Props) {
 
   const load = useCallback(async () => {
     setError("");
-    if (getOperationsBackendStatus() === "migration-required") {
-      setError(OPERATIONS_SETUP_MESSAGE);
-      return;
-    }
+    setBusy(true);
     try {
+      if (!await probeOperationsBackend(true)) {
+        setError(MIGRATION_REQUIRED_MESSAGE);
+        return;
+      }
       const nextUsers = await listManagedUsers();
       setUsers(nextUsers);
       if (profile.role === "administrator") setLogs(await fetchAuditLogs());
     } catch (err) {
-      setError(`${messageOf(err)}. ${OPERATIONS_SETUP_MESSAGE}`);
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
     }
   }, [profile.role]);
 
@@ -125,7 +128,7 @@ export default function ManagementPage({ onBack }: Props) {
 
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-4">
-          {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+          {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load()} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? "Checking..." : "Check again"}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
           {tab === "users" && (
