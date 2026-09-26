@@ -1,60 +1,58 @@
-# Kiyometa App
+# Kiyometa Order Management
 
-Flutter application for Kiyometa.
+The application UI lives in `webapp/` and is built with React, TypeScript, and
+Vite. Flutter provides a thin WebView wrapper so the same UI can run on the
+shared Android tablet emulator, Windows, Chrome, and Edge.
+
+## Project structure
+
+- `webapp/src/` - application source and Supabase integration.
+- `webapp/supabase/migrations/` - database schema required by the application.
+- `lib/`, `android/`, `windows/`, and `web/` - supported Flutter wrapper targets.
+- `tool/`, `.tools/`, and `.vscode/` - shared tablet runner and VS Code setup.
+
+Generated dependencies and build output are intentionally not stored in Git:
+`node_modules/`, `dist/`, `.dart_tool/`, and `build/`. Local environment values
+in `webapp/.env.local` are also ignored.
+
+## First setup
+
+Create `webapp/.env.local` from `webapp/.env.local.example`, then run:
+
+```powershell
+cd webapp
+npm ci
+cd ..
+flutter pub get
+```
+
+Run `webapp/supabase/migrations/001_order_management.sql` once in the Supabase
+SQL Editor when preparing a new Supabase project.
 
 ## Run on the project tablet
 
-The repository includes a setup script for a shared Android tablet profile named
-`Kiyometa_Tablet` (Pixel Tablet, Android API 34). The Android SDK and emulator
-remain local to each developer and are not committed to Git.
-
-On Windows, run this once after cloning to create and start the tablet:
-
-```powershell
-.\start-tablet.cmd
-```
-
-When the project is opened in VS Code, the repository also starts this task
-automatically. On the first clone, choose **Allow Automatic Tasks in Folder** if
-VS Code asks for confirmation.
-
-After the tablet finishes booting, the normal command lists four connected
-targets (Android tablet, Windows, Chrome, and Edge):
+From the repository root:
 
 ```powershell
 flutter run
 ```
 
-Inside the VS Code integrated terminal, this repository keeps the familiar
-desktop/web order and adds the project tablet as option **4**. Enter `4` to
-create/start the tablet when needed and run the app on it. The repository-local
-wrapper only customizes the argument-free `flutter run`; all other Flutter
-commands are passed through unchanged.
+Choose option `4` for **Kiyometa Tablet**. The runner creates or starts the
+Android tablet, waits until Android has finished booting, starts Vite, connects
+port 5173 to the emulator, and launches the Flutter wrapper.
 
-To skip the selection menu, use:
+To launch the tablet directly, use:
 
 ```powershell
 .\run-tablet.cmd
 ```
 
-This command creates the tablet when needed, starts it, waits until it is
-detected, and runs the app directly on that tablet. In VS Code, the same actions
-are available from **Terminal > Run Task**.
+## Run only the web application
 
-Requirements: Flutter, Android Studio, Android SDK Command-line Tools, Android
-Emulator, and hardware virtualization. If Android licenses have not been
-accepted, run `flutter doctor --android-licenses` first.
+```powershell
+cd webapp
+npm run dev
+```
 
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+For a production bundle, run `npm run build`. The generated `webapp/dist/`
+directory can always be rebuilt and should not be committed.

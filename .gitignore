@@ -33,6 +33,12 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Vite web application: dependencies, generated bundle, and local config
+/webapp/node_modules/
+/webapp/dist/
+/webapp/.env.local
+/webapp/.env.*.local
+
 # Symbolication related
 app.*.symbols
 
