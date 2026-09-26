@@ -25,7 +25,7 @@ export default function LoginPage() {
     <div className="flex items-center justify-center h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-slate-200 rounded-sm shadow-sm p-8">
         <div className="flex items-center gap-2.5 mb-6">
-          <span className="flex items-center justify-center w-9 h-9 rounded bg-[#0d7377] text-white text-base font-700 shrink-0">K</span>
+          <img src="/app-logo.png" alt="Kiyometa" className="h-10 w-10 shrink-0 rounded object-cover shadow-sm" />
           <div>
             <p className="text-lg font-700 text-[#1a3458] leading-tight">Kiyometa</p>
             <p className="text-sm text-slate-500 leading-tight">Order Management</p>

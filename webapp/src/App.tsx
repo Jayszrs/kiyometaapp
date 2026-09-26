@@ -481,7 +481,10 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
             <Icon name="menu" size={20} />
           </button>
         )}
-        <span className="text-base font-600 flex-1">{title ?? "Kiyometa Order Management"}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
+          <span className="truncate text-base font-600">{title ?? "Kiyometa Order Management"}</span>
+        </div>
         {lang !== undefined && setLang && (
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
             <ToggleSwitch
@@ -706,7 +709,7 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
           <Icon name="menu" size={20} />
         </button>
         <div className="flex items-center gap-2.5 flex-1">
-          <span className="flex items-center justify-center w-7 h-7 rounded bg-[#0d7377] text-white text-sm font-700 shrink-0">K</span>
+          <img src="/app-logo.png" alt="Kiyometa" className="h-8 w-8 shrink-0 rounded object-cover" />
           <span className="text-base font-600">{t("appTitle", lang)}</span>
         </div>
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">

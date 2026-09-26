@@ -70,6 +70,7 @@ export interface Purchase {
 
 export interface StockMovement {
   id: string;
+  movementNo: string;
   movementDate: string;
   movementType: string;
   referenceType: string;
@@ -84,6 +85,7 @@ export interface StockMovement {
 
 export interface BomItem {
   id: string;
+  bomNo: string;
   productId: string;
   inventoryItemId: string;
   quantityPerUnit: number;
@@ -227,6 +229,7 @@ export async function fetchInventoryData() {
     purchases: (purchasesResult.data ?? []).map(purchaseFromRow),
     movements: (movementsResult.data ?? []).map(row => ({
       id: row.id,
+      movementNo: row.movement_no ?? "",
       movementDate: row.movement_date,
       movementType: row.movement_type,
       referenceType: row.reference_type,
@@ -240,6 +243,7 @@ export async function fetchInventoryData() {
     })) as StockMovement[],
     bom: (bomResult.data ?? []).map(row => ({
       id: row.id,
+      bomNo: row.bom_no ?? "",
       productId: row.product_id,
       inventoryItemId: row.inventory_item_id,
       quantityPerUnit: Number(row.quantity_per_unit),
@@ -251,7 +255,6 @@ export async function fetchInventoryData() {
 export async function saveInventoryItem(item: Omit<InventoryItem, "availableQty" | "suggestedPurchaseQty" | "needsReorder" | "stockValue">) {
   const row = {
     id: item.id,
-    item_code: item.itemCode.trim(),
     item_name: item.itemName.trim(),
     category: item.category,
     procurement_type: item.procurementType,
@@ -264,14 +267,25 @@ export async function saveInventoryItem(item: Omit<InventoryItem, "availableQty"
     active: item.active,
     updated_at: new Date().toISOString(),
   };
-  const { error } = await supabase.from("inventory_items").upsert(row);
+  const result = item.itemCode
+    ? await supabase.from("inventory_items").update(row).eq("id", item.id)
+    : await supabase.from("inventory_items").insert(row);
+  const { error } = result;
   if (error) throw error;
 }
 
+export async function deleteInventoryItem(id: string): Promise<void> {
+  const { error } = await supabase.from("inventory_items").delete().eq("id", id);
+  if (!error) return;
+  if (error.code === "23503") {
+    throw new Error("Item cannot be deleted because it is already used by a purchase, movement, or BOM. Remove those references first.");
+  }
+  throw error;
+}
+
 export async function savePurchase(purchase: Purchase) {
-  const { error } = await supabase.from("purchases").upsert({
+  const row = {
     id: purchase.id,
-    purchase_no: purchase.purchaseNo.trim(),
     purchase_date: purchase.purchaseDate,
     supplier_name: purchase.supplierName.trim(),
     item_id: purchase.itemId,
@@ -283,11 +297,20 @@ export async function savePurchase(purchase: Purchase) {
     pic: purchase.pic.trim(),
     notes: purchase.notes.trim(),
     updated_at: new Date().toISOString(),
-  });
+  };
+  const result = purchase.purchaseNo
+    ? await supabase.from("purchases").update(row).eq("id", purchase.id)
+    : await supabase.from("purchases").insert(row);
+  const { error } = result;
   if (error) throw error;
 }
 
-export async function addStockMovement(input: Omit<StockMovement, "id" | "createdAt">) {
+export async function deletePurchase(id: string): Promise<void> {
+  const { error } = await supabase.from("purchases").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function addStockMovement(input: Omit<StockMovement, "id" | "movementNo" | "createdAt">) {
   const { error } = await supabase.from("stock_movements").insert({
     movement_date: input.movementDate,
     movement_type: input.movementType,
@@ -302,14 +325,26 @@ export async function addStockMovement(input: Omit<StockMovement, "id" | "create
   if (error) throw error;
 }
 
+export async function deleteStockMovement(movement: StockMovement): Promise<void> {
+  if (movement.referenceType !== "manual") {
+    throw new Error("Automatic movements must be removed through their related purchase or order.");
+  }
+  const { error } = await supabase.from("stock_movements").delete().eq("id", movement.id);
+  if (error) throw error;
+}
+
 export async function saveBomItem(item: BomItem) {
-  const { error } = await supabase.from("product_materials").upsert({
+  const row = {
     id: item.id,
     product_id: item.productId,
     inventory_item_id: item.inventoryItemId,
     quantity_per_unit: item.quantityPerUnit,
     notes: item.notes.trim(),
-  });
+  };
+  const result = item.bomNo
+    ? await supabase.from("product_materials").update(row).eq("id", item.id)
+    : await supabase.from("product_materials").insert(row);
+  const { error } = result;
   if (error) throw error;
 }
 
