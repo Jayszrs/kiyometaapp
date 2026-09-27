@@ -3,7 +3,8 @@ import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import { runOcr, sendOcrLog } from "./lib/ocrClient";
-import { parseQuotation, normalizeClientName, type ParsedQuotation } from "./lib/parseQuotation";
+import { parseQuotation, type ParsedQuotation, type ScanFillData } from "./lib/parseQuotation";
+import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 
 // ---- Types ----
 
@@ -21,24 +22,6 @@ type Page =
 type DeliverySlipMode = "single" | "multiple";
 
 type ScanStage = "idle" | "need-client" | "need-product" | "filling";
-
-interface ScanFillData {
-  // Order form
-  orderDate: string;
-  deliveryDate: string;
-  client: string;
-  orderNumber: string;
-  productName: string;
-  quantity: number;
-  orderAmount: number;
-  // Client master (for routing)
-  clientPhone: string;
-  clientAddress: string;
-  clientPostalCode: string;
-  // Product master (for routing)
-  productNumber: string;
-  unitPrice: number;
-}
 
 interface ScanRouting {
   stage: ScanStage;
@@ -317,42 +300,6 @@ function validateProduct(form: Product, allProducts: Product[], isNew: boolean):
   return e;
 }
 
-// ---- Scan routing helpers --------------------------------------------------
-// Shared by the Scan modal and master pages so a scan never opens a needless
-// "new client / new product" form when the record already exists.
-
-function normalizeForMatch(s: string): string {
-  return (s || "")
-    .toLowerCase()
-    .replace(/[／/\s（）()【】\[\]・,，。.\-－ー]/g, "")
-    .replace(/株式会社|（株）|\(株\)|合同会社|有限会社/g, "")
-    .trim();
-}
-
-function normSame(a: string, b: string): boolean {
-  const x = normalizeForMatch(a);
-  const y = normalizeForMatch(b);
-  if (!x || !y) return false;
-  if (x === y) return true;
-  // OCR may drop characters (伸和 vs 伸和テクノス) — accept stem containment.
-  return (x.includes(y) || y.includes(x)) && Math.min(x.length, y.length) >= 2;
-}
-
-function findClientMatch(clients: Client[], name: string): Client | undefined {
-  const n = normalizeClientName(name);
-  return clients.find((c) =>
-    n === c.name || normSame(c.name, name) || normSame(c.name, n),
-  );
-}
-
-function findProductMatch(products: Product[], client: string, productName: string, productNumber: string): Product | undefined {
-  return products.find(
-    (p) =>
-      normSame(p.clientName, client) &&
-      (p.productName === productName || (productNumber && p.productNumber === productNumber)),
-  );
-}
-
 // ---- UI primitives ----
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -462,7 +409,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
+      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
       <header className="flex items-center gap-2 px-4 py-3 bg-[#1a3458] text-white shrink-0">
         <button onClick={() => setMenuOpen(true)}
           className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
@@ -500,34 +447,34 @@ function UserMenuButton() {
   );
 }
 
-function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void }) {
+function NavDrawer({ open, onClose, onNavigate, lang = "en" }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang?: Lang }) {
   if (!open) return null;
   const items = [
-    { label: "Home", page: "home" as Page, icon: "home", desc: "Dashboard overview" },
-    { label: "Order entry", page: "order-entry" as Page, icon: "file-text", desc: "Create and manage orders" },
-    { label: "Search & billing", page: "search-billing" as Page, icon: "search", desc: "Search orders and print invoices" },
-    { label: "Client master", page: "client-master" as Page, icon: "users", desc: "Manage client records" },
-    { label: "Product master", page: "product-master" as Page, icon: "package", desc: "Manage product specifications" },
-    { label: "Schedule", page: "schedule" as Page, icon: "calendar", desc: "Production schedule & capacity" },
+    { key: "navHome" as const, page: "home" as Page, icon: "home" },
+    { key: "navOrderEntry" as const, page: "order-entry" as Page, icon: "file-text" },
+    { key: "navSearchBilling" as const, page: "search-billing" as Page, icon: "search" },
+    { key: "navClientMaster" as const, page: "client-master" as Page, icon: "users" },
+    { key: "navProductMaster" as const, page: "product-master" as Page, icon: "package" },
+    { key: "navSchedule" as const, page: "schedule" as Page, icon: "calendar" },
   ];
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <nav className="relative w-72 bg-white h-full flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
-          <span className="font-600 text-base">Navigation</span>
+          <span className="font-600 text-base">{t("navTitle", lang)}</span>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label="Close">
             <Icon name="close" size={18} />
           </button>
         </div>
         <div className="flex-1 py-2">
           {items.map(item => (
-            <button key={item.label} onClick={() => { onNavigate(item.page); onClose(); }}
+            <button key={item.key} onClick={() => { onNavigate(item.page); onClose(); }}
               className="w-full flex items-center gap-4 px-5 py-3 text-left hover:bg-slate-50 border-b border-slate-100 cursor-pointer transition-colors">
               <span className="flex items-center justify-center w-9 h-9 rounded bg-[#1a3458] text-white shrink-0">
                 <Icon name={item.icon} size={16} />
               </span>
-              <span className="text-base font-600 text-slate-800">{item.label}</span>
+              <span className="text-base font-600 text-slate-800">{t(item.key, lang)}</span>
             </button>
           ))}
         </div>
@@ -538,28 +485,30 @@ function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () =
 
 // ---- Scan modal ----
 
-function targetToDataKey(target: string): keyof ScanFillData | null {
-  const t = target.toLowerCase();
-  if (t.includes("order date")) return "orderDate";
-  if (t.includes("delivery date")) return "deliveryDate";
-  if (t.includes("order number")) return "orderNumber";
-  if (t.includes("order amount")) return "orderAmount";
-  if (t.includes("unit price")) return "unitPrice";
-  if (t.includes("product number")) return "productNumber";
-  if (t.includes("product name")) return "productName";
-  if (t.includes("quantity")) return "quantity";
-  if (t.includes("phone")) return "clientPhone";
-  if (t.includes("postal code")) return "clientPostalCode";
-  if (t.includes("address")) return "clientAddress";
-  if (t.includes("entry: client")) return "client";
-  return null;
-}
+const LOADING_STEP_KEYS = ["scanStepScanning", "scanStepRetrieving", "scanStepCleaning", "scanStepMaster"] as const;
 
-function ScanModal({ clients, products, onClose, onApply }: {
+const SCAN_FIELD_LABEL: Record<string, keyof typeof LABELS> = {
+  orderDate: "scanFldOrderDate",
+  deliveryDate: "scanFldDeliveryDate",
+  client: "scanFldClient",
+  orderNumber: "scanFldOrderNumber",
+  productNumber: "scanFldProductNo",
+  productName: "scanFldProductName",
+  quantity: "scanFldQuantity",
+  unitPrice: "scanFldUnitPrice",
+  orderAmount: "scanFldAmount",
+  processName: "scanFldProcess",
+  clientPostalCode: "scanFldPostal",
+  clientAddress: "scanFldAddress",
+  clientPhone: "scanFldPhone",
+};
+
+function ScanModal({ clients, products, onClose, onApply, lang }: {
   clients: Client[];
   products: Product[];
   onClose: () => void;
   onApply: (data: ScanFillData, clientExists: boolean, productExists: boolean) => void;
+  lang: Lang;
 }) {
   const [custom, setCustom] = useState<ParsedQuotation | null>(null);
   const [busy, setBusy] = useState(false);
@@ -568,28 +517,44 @@ function ScanModal({ clients, products, onClose, onApply }: {
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
+  const [loadingStep, setLoadingStep] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    setLoadingStep(0);
+    const interval = setInterval(() => {
+      setLoadingStep(s => Math.min(s + 1, LOADING_STEP_KEYS.length - 1));
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [busy]);
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setBusy(true);
     setError(null);
+    setCustom(null);
+    setEditedData(null);
     try {
       const lines = await runOcr(file);
-      const parsed = parseQuotation(lines, { knownProductNames: products.map(p => p.productName) });
+      const parsed = parseQuotation(lines, lang);
       void sendOcrLog(`--- quotation: ${file.name} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
-      if (!parsed.fields.length) {
-        setError("Could not extract any fields from the document. Try a higher-resolution image.");
+      if (!parsed.fields.some(f => f.status !== "missing")) {
+        setError(t("scanErrNoFields", lang));
         return;
       }
       setCustom(parsed);
+      const matchedClient = findClientMatch(clients, parsed.data.client);
+      const client = matchedClient?.name ?? parsed.data.client;
+      const matchedProduct = findProductMatch(products, client, parsed.data.productName, parsed.data.productNumber);
       setEditedData({
         ...parsed.data,
+        client,
         // Prefer the master-stored name when OCR leaves the part-name blank.
-        productName: findProductMatch(products, parsed.data.client, parsed.data.productName, parsed.data.productNumber)?.productName ?? parsed.data.productName,
+        productName: parsed.data.productName || matchedProduct?.productName || "",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "OCR failed. Is the recognition service reachable?");
+      setError(err instanceof Error ? err.message : t("scanErrUnreachable", lang));
     } finally {
       setBusy(false);
     }
@@ -606,124 +571,168 @@ function ScanModal({ clients, products, onClose, onApply }: {
       if (!prev) return prev;
       return {
         ...prev,
-        [key]: (key === "quantity" || key === "orderAmount" || key === "unitPrice") ? (parseInt(val.replace(/[^0-9]/g, ""), 10) || 0) : val,
+        [key]: (key === "quantity" || key === "orderAmount" || key === "unitPrice") ? (Number(val.normalize("NFKC").replace(/[,¥￥\s]/g, "")) || 0) : val,
       };
     });
   };
 
-  const clientExists = editedData ? !!findClientMatch(clients, editedData.client) : false;
+  const matchedClient = editedData ? findClientMatch(clients, editedData.client) : undefined;
+  const clientExists = !!matchedClient;
   const productExists = editedData
-    ? !!findProductMatch(products, editedData.client, editedData.productName, editedData.productNumber)
+    ? !!findProductMatch(products, matchedClient?.name ?? editedData.client, editedData.productName, editedData.productNumber)
     : false;
 
-  return (
+return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full max-w-xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
+      <div className="relative w-full max-w-4xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
             <Icon name="scan" size={20} className="text-[#1a3458]" />
-            <h2 className="text-lg font-700 text-slate-800">Scan quotation</h2>
+            <h2 className="text-lg font-700 text-slate-800">{t("scanModalTitle", lang)}</h2>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-100 cursor-pointer transition-colors">
             <Icon name="close" size={18} className="text-slate-500" />
           </button>
         </div>
 
-        {/* Capture: camera or file upload -> server OCR -> parse */}
-        <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 space-y-2.5">
-          <div className="flex items-center gap-2">
-            {busy && <Icon name="loader" size={14} className="text-[#1a3458] animate-spin" />}
-            <p className="text-sm font-600 text-slate-600">
-              {busy ? "Recognizing document…" : "Capture a quotation"}
-            </p>
-          </div>
-          <input hidden type="file" ref={uploadRef} accept="image/*,.pdf" onChange={handleFile} />
-          <input hidden type="file" ref={cameraRef} accept="image/*" capture="environment" onChange={handleFile} />
-          <div className="grid grid-cols-2 gap-2">
-            <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy}>
-              <Icon name="upload" size={15} /> Upload document
-            </Btn>
-            <Btn variant="outline" onClick={() => cameraRef.current?.click()} disabled={busy}>
-              <Icon name="camera" size={15} /> Take photo
-            </Btn>
-          </div>
-          {error && (
-            <p className="flex items-center gap-1.5 text-sm text-red-700">
-              <Icon name="alert-triangle" size={14} /> {error}
-            </p>
-          )}
-          {custom && (
-            <div className="flex items-start justify-between gap-3">
-              <p className="text-sm text-slate-600 min-w-0">
-                Parsed as <span className="font-600 text-[#1a3458]">{custom.title}</span>. Review the values below, then apply.
-              </p>
-              <button onClick={clearCustom} className="text-sm font-600 text-[#0d7377] hover:text-[#0a5a5e] cursor-pointer transition-colors shrink-0">
-                Discard
-              </button>
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-72 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col">
+            <div className="px-4 py-4 space-y-3">
+              <div className="flex items-center gap-2">
+                {busy && <Icon name="loader" size={14} className="text-[#1a3458] animate-spin" />}
+                <p className="text-sm font-600 text-slate-600">
+                  {busy ? t("workingOnDoc", lang) : t("captureHeading", lang)}
+                </p>
+              </div>
+              <input hidden type="file" ref={uploadRef} accept="image/*,.pdf" onChange={handleFile} />
+              <input hidden type="file" ref={cameraRef} accept="image/*" capture="environment" onChange={handleFile} />
+              <div className="grid grid-cols-1 gap-2">
+                <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy}>
+                  <Icon name="upload" size={15} /> {t("scanUploadDoc", lang)}
+                </Btn>
+                <Btn variant="outline" onClick={() => cameraRef.current?.click()} disabled={busy}>
+                  <Icon name="camera" size={15} /> {t("scanTakePhoto", lang)}
+                </Btn>
+              </div>
+              {error && (
+                <p className="flex items-start gap-1.5 text-sm text-red-700">
+                  <Icon name="alert-triangle" size={14} className="mt-0.5 shrink-0" /> {error}
+                </p>
+              )}
+              {busy && (
+                <div className="pt-1 space-y-1.5">
+                  {LOADING_STEP_KEYS.map((key, i) => (
+                    <div key={key} className={`flex items-center gap-2 text-sm ${i <= loadingStep ? "text-slate-700" : "text-slate-400"}`}>
+                      {i < loadingStep ? (
+                        <Icon name="check" size={14} className="text-green-600 shrink-0" />
+                      ) : i === loadingStep ? (
+                        <Icon name="loader" size={14} className="text-[#1a3458] animate-spin shrink-0" />
+                      ) : (
+                        <span className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0" />
+                      )}
+                      <span className={i === loadingStep ? "font-600" : ""}>{t(key, lang)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {custom && (
-          <>
-        {/* Routing status */}
-        <div className="flex gap-4 px-5 py-2.5 bg-slate-50 border-b border-slate-100 text-sm">
-          <span className={`flex items-center gap-1.5 ${clientExists ? "text-green-700" : "text-amber-700"}`}>
-            <Icon name={clientExists ? "check" : "alert-triangle"} size={14} />
-            Client {clientExists ? "found" : "not in master"}
-          </span>
-          <span className="text-slate-300">,</span>
-          <span className={`flex items-center gap-1.5 ${productExists ? "text-green-700" : "text-amber-700"}`}>
-            <Icon name={productExists ? "check" : "alert-triangle"} size={14} />
-            Product {productExists ? "found" : "not in master"}
-          </span>
-        </div>
+            {custom && (
+              <div className="px-4 py-4 border-t border-slate-200 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-600 text-slate-700 min-w-0">
+                    {t("scanParsedAs", lang)} <span className="font-700 text-[#1a3458]">{custom.title}</span>
+                  </p>
+                  <button onClick={clearCustom} className="flex items-center gap-1 shrink-0 text-xs font-600 text-slate-500 border border-slate-300 rounded-sm px-2 py-1 hover:text-red-700 hover:border-red-300 cursor-pointer transition-colors">
+                    <Icon name="close" size={12} /> {t("scanDiscard", lang)}
+                  </button>
+                </div>
 
-        <div className="overflow-y-auto flex-1">
-          <table className="w-full text-base border-collapse">
-            <thead className="sticky top-0 bg-white border-b border-slate-200">
-              <tr>
-                <th className="text-left px-4 py-2.5 text-sm font-600 text-slate-500 w-32">Field</th>
-                <th className="text-left px-4 py-2.5 text-sm font-600 text-slate-500">Value (edit to correct)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {custom.fields.map((f, i) => {
-                const dataKey = targetToDataKey(f.target);
-                const val = dataKey && editedData ? String(editedData[dataKey] ?? f.source) : f.source;
-                return (
-                  <tr key={i} className="border-b border-slate-100">
-                    <td className="px-4 py-2 text-sm text-slate-500 align-middle">{f.label}</td>
-                    <td className="px-4 py-1.5 align-middle">
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <span className={`flex items-center gap-1.5 ${clientExists ? "text-green-700" : "text-amber-700"}`}>
+                    <Icon name={clientExists ? "check" : "alert-triangle"} size={14} />
+                    {t(clientExists ? "scanClientFound" : "scanClientNotFound", lang)}
+                  </span>
+                  <span className={`flex items-center gap-1.5 ${productExists ? "text-green-700" : "text-amber-700"}`}>
+                    <Icon name={productExists ? "check" : "alert-triangle"} size={14} />
+                    {t(productExists ? "scanProductFound" : "scanProductNotFound", lang)}
+                  </span>
+                </div>
+
+                {custom.warnings.length > 0 && (
+                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-sm px-3 py-2 space-y-1">
+                    {custom.warnings.map(warning => <p key={warning}>{warning}</p>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto min-w-0">
+            {!custom ? (
+              busy ? (
+                <div className="h-full flex flex-col items-center justify-center gap-6 px-8">
+                  <div className="w-full max-w-sm">
+                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-[#1a3458] rounded-full transition-all duration-1000 ease-linear"
+                        style={{ width: `${((loadingStep + 1) / LOADING_STEP_KEYS.length) * 100}%` }} />
+                    </div>
+                    <div className="mt-4 flex flex-col gap-2">
+                      {LOADING_STEP_KEYS.map((key, i) => (
+                        <div key={key} className={`flex items-center gap-2.5 text-sm ${i < loadingStep ? "text-slate-500" : i === loadingStep ? "font-600 text-[#1a3458]" : "text-slate-400"}`}>
+                          {i < loadingStep ? (
+                            <Icon name="check" size={15} className="text-green-600 shrink-0" />
+                          ) : i === loadingStep ? (
+                            <Icon name="loader" size={15} className="text-[#1a3458] animate-spin shrink-0" />
+                          ) : (
+                            <span className="w-4 h-4 rounded-full border border-slate-300 shrink-0" />
+                          )}
+                          {t(key, lang)}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center gap-5 px-8 text-center">
+                  <Icon name="scan" size={52} className="text-slate-200" />
+                  <div className="space-y-1.5">
+                    <p className="text-base font-600 text-slate-600">{t("scanNoDocTitle", lang)}</p>
+                    <p className="text-sm text-slate-400">{t("scanNoDocBody", lang)}</p>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="grid grid-cols-2 gap-x-5 gap-y-4 p-5">
+                {custom.fields.map((f, i) => {
+                  const dataKey = f.key;
+                  const value = editedData?.[dataKey];
+                  const val = f.status === "missing" && value === 0 ? "" : String(value ?? f.source);
+                  return (
+                    <div key={i} className="flex flex-col gap-1">
+                      <label className="text-sm font-600 text-slate-700">
+                        {SCAN_FIELD_LABEL[f.key] ? t(SCAN_FIELD_LABEL[f.key], lang) : f.label}
+                      </label>
                       {dataKey ? (
                         <input
-                          type={dataKey === "orderDate" || dataKey === "deliveryDate" ? "date" : "text"}
+                          type={dataKey === "orderDate" || dataKey === "deliveryDate" ? "date" : ["quantity", "unitPrice", "orderAmount"].includes(dataKey) ? "number" : "text"}
+                          step="any"
                           value={val}
+                          placeholder={f.status === "missing" ? t("scanNotFound", lang) : undefined}
                           onChange={e => setField(dataKey, e.target.value)}
                           className="w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-sm focus:outline-none focus:border-[#1a3458] focus:ring-2 focus:ring-[#1a3458]/20 bg-white transition-colors"
                         />
                       ) : (
                         <span className="text-sm font-mono text-slate-400">{f.source}</span>
                       )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-          </>
-        )}
-
-        {!custom && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
-            <Icon name="scan" size={40} className="text-slate-200" />
-            <p className="text-sm text-slate-500">
-              No document captured yet. Upload a scanned PDF or image, or take a photo of the quotation above.
-            </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
         <div className="flex items-center gap-3 px-5 py-4 border-t border-slate-200">
           <Btn variant="outline" onClick={onClose}>Cancel</Btn>
@@ -731,7 +740,7 @@ function ScanModal({ clients, products, onClose, onApply }: {
           {custom && (
             <Btn variant="primary" size="lg" onClick={() => editedData && onApply(editedData, clientExists, productExists)}>
               <Icon name="check" size={16} />
-              {clientExists && productExists ? "Apply to form" : "Begin guided import"}
+              {clientExists && productExists ? t("scanApply", lang) : t("scanGuidedImport", lang)}
             </Btn>
           )}
         </div>
@@ -744,7 +753,10 @@ function ScanModal({ clients, products, onClose, onApply }: {
 
 function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; onOpenScan: () => void; lang: Lang; setLang: (l: Lang) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const dateStr = new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const nowJst = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
+  const dateStr = new Date(nowJst).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const jstHour = new Date(nowJst).getHours();
+  const greetingKey = jstHour < 11 ? "greetingMorning" : jstHour < 18 ? "greetingDay" : "greetingEvening";
   const inProd = orders.filter(o => o.progress === "In production").length;
   const shipped = orders.filter(o => o.progress === "Shipped").length;
 
@@ -757,7 +769,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
 
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
+      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
       <header className="flex items-center gap-3 px-4 py-3 bg-[#1a3458] text-white shrink-0">
         <button onClick={() => setMenuOpen(true)} className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
           <Icon name="menu" size={20} />
@@ -782,7 +794,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
         <div className="border-b border-slate-200 bg-white">
           <div className="px-8 pt-7 pb-5 max-w-5xl mx-auto flex items-end justify-between">
             <div>
-              <h1 className="text-2xl font-700 text-[#1a3458]">{t("greeting", lang)}</h1>
+              <h1 className="text-2xl font-700 text-[#1a3458]">{t(greetingKey, lang)}</h1>
               <p className="text-base text-slate-500 mt-1">{dateStr}</p>
             </div>
             <p className="text-sm text-slate-500 text-right">
@@ -963,6 +975,16 @@ const LABELS = {
   searchItemPlaceholder: { ja: "製品名・品番を検索...", en: "Search items by name or number..." },
   appTitle:         { ja: "キヨメタ受注管理V2",   en: "Kiyometa Order Management" },
   greeting:         { ja: "おはようございます",   en: "Good morning" },
+  greetingMorning:  { ja: "おはようございます",   en: "Good morning" },
+  greetingDay:      { ja: "こんにちは",          en: "Good afternoon" },
+  greetingEvening:  { ja: "こんばんは",          en: "Good evening" },
+  navTitle:         { ja: "ナビゲーション",       en: "Navigation" },
+  navHome:          { ja: "ホーム",            en: "Home" },
+  navOrderEntry:    { ja: "受注入力",           en: "Order entry" },
+  navSearchBilling: { ja: "検索・請求",         en: "Search & billing" },
+  navClientMaster:  { ja: "取引先マスタ",        en: "Client master" },
+  navProductMaster: { ja: "製品マスタ",          en: "Product master" },
+  navSchedule:      { ja: "生産計画",           en: "Schedule" },
   inProdSuffix:     { ja: "件 製作中",           en: " in production" },
   shippedSuffix:    { ja: "件 出荷済み",         en: " shipped" },
   newOrder:         { ja: "新規",              en: "New order" },
@@ -1034,6 +1056,43 @@ const LABELS = {
   dayHeader:          { ja: "日",              en: "days" },
   hrHeader:           { ja: "時間",             en: "hr" },
   minHeader:          { ja: "分",              en: "min" },
+  scanModalTitle:     { ja: "見積書をスキャン",     en: "Scan quotation" },
+  captureHeading:     { ja: "見積書撮影",         en: "Capture a quotation" },
+  workingOnDoc:       { ja: "処理中",            en: "Working on your document" },
+  scanUploadDoc:      { ja: "書類をアップロード",  en: "Upload document" },
+  scanTakePhoto:      { ja: "写真を撮る",         en: "Take photo" },
+  scanNoDocTitle:     { ja: "まだ書類がありません",  en: "No document captured yet." },
+  scanNoDocBody:      { ja: "スキャンしたPDFまたは画像、見積書の写真をアップロードしてください。", en: "Upload a scanned PDF or image, or take a photo of the quotation." },
+  scanParsedAs:       { ja: "解析結果",          en: "Parsed as" },
+  scanDiscard:        { ja: "破棄",            en: "Discard" },
+  scanClientFound:    { ja: "取引先に登録あり",     en: "Client found" },
+  scanClientNotFound: { ja: "取引先に未登録",      en: "Client not in master" },
+  scanProductFound:   { ja: "製品に登録あり",      en: "Product found" },
+  scanProductNotFound:{ ja: "製品に未登録",       en: "Product not in master" },
+  scanFieldHeader:    { ja: "項目",            en: "Field" },
+  scanValueHeader:    { ja: "値",             en: "Value" },
+  scanNotFound:       { ja: "検出なし",          en: "Not found" },
+  scanApply:          { ja: "フォームに反映",       en: "Apply to form" },
+  scanGuidedImport:   { ja: "登録して続行",       en: "Begin guided import" },
+  scanStepScanning:   { ja: "書類をスキャン中...",   en: "Scanning document..." },
+  scanStepRetrieving: { ja: "文字を抽出中...",     en: "Retrieving text..." },
+  scanStepCleaning:   { ja: "整理・マッチ中...",    en: "Cleaning and matching..." },
+  scanStepMaster:     { ja: "マスタと照合中...",   en: "Checking against master data..." },
+  scanErrNoFields:    { ja: "項目を抽出できませんでした。より高解像度の画像をお試しください。", en: "Could not extract any fields from the document. Try a higher-resolution image." },
+  scanErrUnreachable: { ja: "OCRエラー。認識サービスに接続できません。", en: "OCR failed. Is the recognition service reachable?" },
+  scanFldOrderDate:   { ja: "受注日",           en: "Order date" },
+  scanFldDeliveryDate:{ ja: "納期",             en: "Delivery date" },
+  scanFldClient:      { ja: "取引先",           en: "Client" },
+  scanFldOrderNumber: { ja: "注文番号",          en: "Order no." },
+  scanFldProductNo:   { ja: "図面 / 品目番号",    en: "Drawing / item no." },
+  scanFldProductName: { ja: "製品名",           en: "Product name" },
+  scanFldQuantity:    { ja: "数量",             en: "Quantity" },
+  scanFldUnitPrice:   { ja: "単価",             en: "Unit price" },
+  scanFldAmount:      { ja: "金額 (税抜)",       en: "Amount (excl. tax)" },
+  scanFldProcess:     { ja: "工程",             en: "Process" },
+  scanFldPostal:      { ja: "郵便番号",          en: "Postal code" },
+  scanFldAddress:     { ja: "住所",             en: "Address" },
+  scanFldPhone:       { ja: "電話番号",          en: "Phone" },
 } as const;
 
 type Lang = "ja" | "en";
@@ -2259,7 +2318,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     productName: sd && isScanRouted ? sd.productName : "",
     productNumber: sd && isScanRouted ? sd.productNumber : "",
     unitPrice: sd && isScanRouted ? sd.unitPrice : "",
-    tasks: makeTasks(54),
+    tasks: makeTasks(54).map((task, i) => i === 0 && sd && isScanRouted && sd.processName ? { ...task, content: sd.processName } : task),
     drawings: makeDrawings(7),
   });
 
@@ -3040,7 +3099,7 @@ export default function App() {
   const handleScanApply = (data: ScanFillData, clientExists: boolean, productExists: boolean) => {
     setScanOpen(false);
     // Use the exact master names so the order always links to existing records
-    // even when the scan only matched them fuzzily (e.g. 伸和／株式会社).
+    // when corporate abbreviations or department suffixes differ.
     const client = findClientMatch(clients, data.client)?.name ?? data.client;
     if (!clientExists) { setScanRouting({ stage: "need-client", data: { ...data, client } }); navigate("client-master"); return; }
     if (!productExists) { setScanRouting({ stage: "need-product", data: { ...data, client } }); navigate("product-master"); return; }
@@ -3087,7 +3146,7 @@ export default function App() {
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setLang={setLang} setOrders={setOrders} />}
 
-      {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} />}
+      {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>
   );
 }

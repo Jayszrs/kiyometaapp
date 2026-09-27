@@ -1,10 +1,8 @@
 import { supabase } from "./supabaseClient";
 import type { Client, Product, ProductTask, OrderRecord } from "../App";
 
-// ---- Row <-> app-model mapping ----
-// DB columns are snake_case; the UI's TS interfaces (carried over unchanged
-// from the design) are camelCase. These functions are the only place that
-// translates between the two.
+// DB columns are snake_case; the UI types are camelCase. This module is the
+// only translation between the two.
 
 interface ClientRow {
   id: string;
@@ -157,10 +155,8 @@ export async function deleteClient(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// ---- Products ----
-// New drawing entries arrive from the UI as data: URIs (FileReader output);
-// existing ones are already https:// storage URLs — only the former need
-// uploading.
+// Drawings arrive as data URIs from the UI and are uploaded here; entries that
+// are already storage URLs are passed through.
 
 async function persistDrawings(productId: string, drawings: string[]): Promise<{ path: string; url: string }[]> {
   const out: { path: string; url: string }[] = [];

@@ -5,7 +5,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY prepare_models.py .
+RUN python prepare_models.py
+COPY main.py recognition.py ./
 
 ENV CORS_ORIGINS=*
 ENV MAX_PDF_PAGES=3
