@@ -110,13 +110,14 @@ export default function ManagementPage({ onBack }: Props) {
 
   return (
     <div className="flex h-full flex-col bg-[#f5f6f8] text-slate-800">
-      <header className="flex items-center gap-3 bg-[#1a3458] px-4 py-3 text-white">
+      <header className="flex items-center gap-2 bg-[#1a3458] px-3 py-3 text-white sm:gap-3 sm:px-4">
         <button onClick={onBack} className="rounded px-2 py-1.5 text-sm hover:bg-white/10">← Home</button>
+        <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-700">Role Management & Audit</h1>
           <p className="truncate text-xs text-blue-200">Signed in as {profile.username} · {profile.role}</p>
         </div>
-        <button onClick={signOut} className="text-sm text-blue-200 hover:text-white">Sign out</button>
+        <button onClick={signOut} className="shrink-0 text-xs text-blue-200 hover:text-white sm:text-sm">Sign out</button>
       </header>
 
       <div className="border-b border-slate-200 bg-white px-4 sm:px-8">
@@ -126,7 +127,7 @@ export default function ManagementPage({ onBack }: Props) {
         </div>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+      <main className="flex-1 overflow-y-auto p-3 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-4">
           {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load()} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? "Checking..." : "Check again"}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
@@ -158,7 +159,30 @@ export default function ManagementPage({ onBack }: Props) {
                   <h2 className="text-lg font-700 text-[#1a3458]">Employee access</h2>
                   <p className="text-sm text-slate-500">{users.filter(user => user.active).length} active accounts</p>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="divide-y divide-slate-100 sm:hidden">
+                  {users.map(user => (
+                    <article key={user.id} className="space-y-4 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words font-700 text-slate-800">{user.displayName}</p>
+                          <p className="truncate font-mono text-xs text-slate-500">@{user.username}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-700 ${user.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{user.active ? "Active" : "Inactive"}</span>
+                      </div>
+                      <label className="block text-xs font-600 uppercase tracking-wide text-slate-400">
+                        Role
+                        {profile.role === "administrator" && user.id !== profile.id ? (
+                          <select value={user.role} onChange={e => void run(() => updateManagedUser({ userId: user.id, role: e.target.value as UserRole }), "Role updated.")} className="mt-1.5 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-500 normal-case text-slate-700"><option value="operator">Operator</option><option value="administrator">Administrator</option></select>
+                        ) : <span className="mt-1 block text-sm font-500 normal-case text-slate-700 capitalize">{user.role}</span>}
+                      </label>
+                      <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
+                        <button disabled={profile.role !== "administrator" && user.role !== "operator"} onClick={() => setResetTarget(user)} className="rounded border border-slate-300 px-3 py-2 text-sm font-600 hover:bg-slate-50 disabled:opacity-30">Reset password</button>
+                        {profile.role === "administrator" && user.id !== profile.id && <button onClick={() => void run(() => updateManagedUser({ userId: user.id, active: !user.active }), user.active ? "Account disabled." : "Account activated.")} className="rounded border border-slate-300 px-3 py-2 text-sm font-600 hover:bg-slate-50">{user.active ? "Disable" : "Activate"}</button>}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[700px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Employee</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
@@ -187,7 +211,16 @@ export default function ManagementPage({ onBack }: Props) {
             ) : (
               <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
                 <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-700 text-[#1a3458]">Operator activity</h2><p className="text-sm text-slate-500">Database changes are recorded automatically.</p></div><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee or action..." className="w-full rounded border border-slate-300 px-3 py-2 text-sm sm:w-72" /></div>
-                <div className="overflow-x-auto">
+                <div className="divide-y divide-slate-100 sm:hidden">
+                  {filteredLogs.map(log => {
+                    const source = String(log.metadata.source ?? "");
+                    const stockReference = String((log.newData ?? log.oldData)?.reference_type ?? "");
+                    const isAutomaticStock = log.entity === "stock_movements" && ["purchase", "order"].includes(stockReference);
+                    const undoable = !source.startsWith("undo:") && !isAutomaticStock && ["insert", "update", "delete"].includes(log.action) && ["clients", "products", "orders", "inventory_items", "purchases", "stock_movements"].includes(log.entity);
+                    return <article key={log.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700 text-slate-800">@{log.username}</p><p className="text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs font-700 text-slate-600">{ACTION_LABELS[log.action] ?? log.action}</span></div><div className="rounded bg-slate-50 p-3"><p className="text-xs font-600 uppercase tracking-wide text-slate-400">{log.entity}</p><p className="mt-1 break-all font-mono text-xs text-slate-600">{log.entityId ?? String(log.metadata.target_username ?? "-")}</p></div><div className="flex justify-end">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">Undone</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm("Undo this data change?")) void run(() => undoAuditLog(log.id), "Activity was undone."); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 hover:bg-amber-100">Undo</button> : <span className="text-xs text-slate-400">View only</span>}</div></article>;
+                  })}
+                </div>
+                <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[850px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Time</th><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Activity</th><th className="px-4 py-3">Record</th><th className="px-5 py-3 text-right">Recovery</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
@@ -208,8 +241,8 @@ export default function ManagementPage({ onBack }: Props) {
       </main>
 
       {resetTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 pt-4 sm:items-center sm:p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-2xl sm:p-6">
             <h2 className="text-xl font-700 text-[#1a3458]">Reset operator password</h2>
             <p className="mt-1 text-sm text-slate-500">Set a new password for @{resetTarget.username}.</p>
             <input type="password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} className="mt-5 w-full rounded border border-slate-300 px-3 py-2.5" />

@@ -469,7 +469,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
-      <header className="flex items-center gap-2 px-4 py-3 bg-[#1a3458] text-white shrink-0">
+      <header className="app-header flex items-center gap-2 px-3 py-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
         {showBack ? (
           <button onClick={() => onNavigate(backTarget)} title={backLabel}
             className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label={backLabel}>
@@ -486,7 +486,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
           <span className="truncate text-base font-600">{title ?? "Kiyometa Order Management"}</span>
         </div>
         {lang !== undefined && setLang && (
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
+          <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
             <ToggleSwitch
               checked={lang === "en"}
               onChange={v => setLang(v ? "en" : "ja")}
@@ -511,7 +511,7 @@ function UserMenuButton() {
     <button onClick={signOut} title="Sign out"
       className="flex items-center gap-1.5 text-sm text-blue-200 hover:text-white transition-colors cursor-pointer shrink-0">
       <Icon name="user" size={15} className="shrink-0" />
-      <span className="max-w-[180px] truncate">@{profile.username}</span>
+       <span className="hidden max-w-[180px] truncate sm:inline">@{profile.username}</span>
     </button>
   );
 }
@@ -531,7 +531,7 @@ function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () =
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <nav className="relative w-72 bg-white h-full flex flex-col shadow-xl">
+       <nav className="relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
           <span className="font-600 text-base">Navigation</span>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label="Close">
@@ -704,15 +704,15 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
-      <header className="flex items-center gap-3 px-4 py-3 bg-[#1a3458] text-white shrink-0">
+      <header className="app-header flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
         <button onClick={() => setMenuOpen(true)} className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
           <Icon name="menu" size={20} />
         </button>
-        <div className="flex items-center gap-2.5 flex-1">
+        <div className="flex min-w-0 items-center gap-2.5 flex-1">
           <img src="/app-logo.png" alt="Kiyometa" className="h-8 w-8 shrink-0 rounded object-cover" />
-          <span className="text-base font-600">{t("appTitle", lang)}</span>
+          <span className="truncate text-base font-600">{t("appTitle", lang)}</span>
         </div>
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
+        <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
           <ToggleSwitch
             checked={lang === "en"}
             onChange={v => setLang(v ? "en" : "ja")}
@@ -726,22 +726,22 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
 
       <div className="flex-1 overflow-y-auto">
         <div className="border-b border-slate-200 bg-white">
-          <div className="px-8 pt-7 pb-5 max-w-5xl mx-auto flex items-end justify-between">
+          <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
             <div>
               <h1 className="text-2xl font-700 text-[#1a3458]">{t("greeting", lang)}</h1>
               <p className="text-base text-slate-500 mt-1">{dateStr}</p>
             </div>
-            <p className="text-sm text-slate-500 text-right">
+            <p className="text-sm text-slate-500 sm:text-right">
               <span className="font-600 text-slate-700">{inProd}</span>{t("inProdSuffix", lang)},{" "}
               <span className="font-600 text-slate-700">{shipped}</span>{t("shippedSuffix", lang)}
             </p>
           </div>
         </div>
 
-        <div className="px-8 py-6 max-w-5xl mx-auto space-y-6">
+        <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-8 sm:py-6">
 
           {/* Row 1: Quick actions */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[390px]:grid-cols-2">
             <button onClick={() => onNavigate("order-entry")}
               className="flex items-center gap-3 px-5 py-4 bg-[#1a3458] text-white rounded-sm hover:bg-[#112240] transition-colors cursor-pointer">
               <Icon name="plus" size={20} className="text-blue-200 shrink-0" />
@@ -779,8 +779,32 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
                 {t("viewAll", lang)} <Icon name="chevron-right" size={14} />
               </button>
             </div>
-            <div className="bg-white border border-slate-200 rounded-sm overflow-hidden">
-              <table className="w-full text-base border-collapse">
+            <div className="overflow-hidden rounded-sm border border-slate-200 bg-white">
+              <div className="divide-y divide-slate-100 sm:hidden">
+                {orders.map(o => (
+                  <button key={o.id} type="button" onClick={() => onNavigate("order-entry")}
+                    className="block w-full space-y-3 p-4 text-left transition-colors hover:bg-slate-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words font-700 text-slate-800">{o.productName}</p>
+                        <p className="mt-0.5 truncate text-sm text-slate-500">{o.client}</p>
+                      </div>
+                      <StatusBadge status={o.progress} lang={lang} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("amountLabel", lang)}</p>
+                        <p className="mt-0.5 font-mono font-700 text-slate-700">¥{o.orderAmount.toLocaleString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("deliveryLabel", lang)}</p>
+                        <p className="mt-0.5 font-mono text-slate-600">{o.deliveryDate}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <table className="hidden w-full border-collapse text-base sm:table">
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th className="text-left px-4 py-2.5 text-sm font-600 text-slate-500">{t("productNameLabel", lang)}</th>
@@ -1183,10 +1207,10 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     <AppShell onNavigate={onNavigate} title="Kiyometa Order Management V2" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} />}
 
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="responsive-workspace flex flex-1 overflow-hidden min-h-0">
 
         {/* Column 1: Filter & Sort */}
-        <aside className="w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
+        <aside className="responsive-panel responsive-panel-filter w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
 
           {/* Display Order */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -1255,7 +1279,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         </aside>
 
         {/* Column 2: Search & Record List */}
-        <aside className="w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
           <div className="px-3 pt-3 pb-2 border-b border-slate-200 shrink-0">
             <p className="text-xs font-700 text-white bg-[#1a3458] px-2 py-1 mb-2 rounded-sm">{L("searchItem")}</p>
             <div className="flex items-center gap-2 px-2.5 py-2 border-2 border-slate-300 rounded-sm bg-white focus-within:border-[#1a3458] transition-colors">
@@ -1291,7 +1315,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         </aside>
 
         {/* Column 3: Main Activity Form */}
-        <main className="flex-1 overflow-y-auto min-h-0 bg-white">
+        <main className="responsive-main flex-1 overflow-y-auto min-h-0 bg-white">
 
           {/* Scan bar */}
           <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 shrink-0">
@@ -1322,7 +1346,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
           <div className="p-4 space-y-4">
 
             {/* Row 1: Dates + Client + Order Number */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("orderDateLabel")}</label>
                 <input type="date" value={form.orderDate}
@@ -1360,7 +1384,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 2: Product + Product Number + Quantity + Amount */}
-            <div className="grid grid-cols-[1.2fr_1fr_1fr_1.2fr] gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr_1.2fr]">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("productName")}</label>
                 <div className="relative">
@@ -1430,7 +1454,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
             {/* Row 4: Man-hours Math Matrix -> [Required (min)] - [Worked (min)] = [Remaining (min)] */}
             <div className="border border-slate-200 rounded-sm p-3 bg-white">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
+              <div className="responsive-math-grid grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("requiredManhours")} ({L("minUnit")})</label>
                   <input type="number" value={form.requiredManhours === 0 ? "" : form.requiredManhours} readOnly
@@ -1455,7 +1479,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
             {/* Row 5: Schedule Math Matrix -> [Until Delivery] - [Required] = [Margin] */}
             <div className="border border-slate-200 rounded-sm p-3 bg-white">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
+              <div className="responsive-math-grid grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
                 <TimeStack titleJa={L("unitDelivery")} titleEn={L("unitDelivery")} values={deliveryDHM} lang={lang} />
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">-</div>
                 <TimeStack titleJa={L("unitRequired")} titleEn={L("unitRequired")} values={requiredDHM} lang={lang} />
@@ -1466,7 +1490,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
             {/* Row 6: Production End Date + Until End (separate, below the schedule matrix) */}
             <div className="border border-slate-200 rounded-sm p-3 bg-slate-50">
-              <div className="grid grid-cols-2 gap-6 items-start">
+              <div className="grid grid-cols-1 gap-6 items-start sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-700 text-slate-600 mb-1">{L("productionEndDate")}</label>
                   <input type="date" value={form.productionEndDate}
@@ -1481,7 +1505,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 7: Progress Status + Finish Task + Tasks */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("progressStatus")}</label>
                 <div className="relative">
@@ -1515,7 +1539,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 8: Contact toggle + Required Arrangements dropdown */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center justify-between">
                 <span className="text-sm font-700 text-slate-700 shrink-0">{L("contact")}</span>
                 <div className="ml-auto">
@@ -1550,11 +1574,11 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       </div>
 
       {/* Bottom action bar */}
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={() => onNavigate("search-billing")}>
           <Icon name="search" size={16} /><span>{L("searchBilling")}</span>
         </Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="ghost" size="lg" onClick={handleNew}>
           <Icon name="plus" size={16} /><span>{L("newButton")}</span>
         </Btn>
@@ -1640,8 +1664,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
 
   return (
     <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} lang={lang} setLang={setLang}>
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-filter w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
 
           {/* Search Period */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -1704,7 +1728,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
             {filtered.map(o => {
               const prod = productInfo(o);
@@ -1743,7 +1767,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
         </main>
 
         {/* Column 3: Right Edit Panel -- always visible, never overlays */}
-        <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
+        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
           {selectedId === null ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
               <div className="w-14 h-14 flex items-center justify-center rounded-full bg-slate-100 text-slate-300 shrink-0">
@@ -1838,12 +1862,12 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
         </aside>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap"><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
-        <Btn variant="action" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap"><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 lg:flex lg:items-center lg:gap-3 lg:px-5">
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1"><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
+        <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1"><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
       </footer>
     </AppShell>
   );
@@ -1900,20 +1924,20 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
 
   return (
     <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0 sm:gap-3 sm:px-4">
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))}><Icon name="chevron-left" size={14} />{t("prevPage", lang)}</Btn>
         <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</span>
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>{t("nextPage", lang)}<Icon name="chevron-right" size={14} /></Btn>
         <div className="flex-1" />
         <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center p-8 bg-slate-300">
-        <div className="w-full max-w-2xl bg-white shadow-md p-10">
+      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <div className="text-center mb-8">
             <h2 className="text-3xl font-700 text-slate-800 inline-block pb-2 border-b-2 border-slate-800">{t("invoiceTitle", lang)}</h2>
           </div>
 
-          <div className="flex justify-between items-start gap-6 mb-8">
+          <div className="mb-8 flex flex-col items-start justify-between gap-6 sm:flex-row">
             <div className="flex-1 min-w-0">
               <div className="border-2 border-slate-300 rounded-sm px-4 py-3">
                 <p className="text-lg font-700 text-slate-800 leading-snug">{client?.name}{lang === "ja" ? " 御中" : ""}</p>
@@ -1973,7 +1997,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             </div>
           </div>
 
-          <table className="w-full border-collapse">
+          <table className="w-full min-w-[540px] border-collapse">
             <thead>
               <tr className="bg-blue-50">
                 <th className="text-left px-3 py-2.5 text-sm font-600 text-slate-600 border border-slate-200">{t("totalAmount", lang)}</th>
@@ -1992,7 +2016,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             </tbody>
           </table>
 
-          <table className="w-full border-collapse text-base mt-6">
+          <table className="mt-6 w-full min-w-[540px] border-collapse text-base">
             <thead>
               <tr className="bg-blue-50">
                 <th className="text-left px-3 py-2.5 text-sm font-600 text-slate-600 border border-slate-200">{t("itemLabel", lang)}</th>
@@ -2110,8 +2134,8 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
       {isScanRouted && (
         <ScanBanner message={`Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2132,7 +2156,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
           </div>
         </aside>
 
-        <main className="flex-1 p-7 overflow-y-auto">
+        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-7">
           {Object.values(errors).some(v => v) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm max-w-lg">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2181,11 +2205,11 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         </main>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" disabled={isNew} onClick={() => { const deletedId = form.id; setClients(prev => prev.filter(c => c.id !== deletedId)); setIsNew(false); setDirty(false); if (clients[0]) { setForm(clients[0]); setSelectedId(clients[0].id); } deleteClient(deletedId).catch(err => alert(`Failed to delete client: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => { const deletedId = form.id; setClients(prev => prev.filter(c => c.id !== deletedId)); setIsNew(false); setDirty(false); if (clients[0]) { setForm(clients[0]); setSelectedId(clients[0].id); } deleteClient(deletedId).catch(err => alert(`Failed to delete client: ${err.message}`)); }}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2318,8 +2342,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       {isScanRouted && (
         <ScanBanner message={`Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2341,7 +2365,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-5">
+        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-5">
           {(Object.entries(errors).some(([k, v]) => v && !k.startsWith("task_")) || taskErrors.length > 0) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2361,7 +2385,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
           <div className="bg-white border border-slate-200 rounded-sm p-5 space-y-5">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FieldBox label={t("clientNameLabel", lang)}>
                 <SelectInput value={form.clientName} onChange={sf("clientName")} placeholder={t("selectPlaceholder", lang)} options={["", ...clients.map(c => c.name)]} />
               </FieldBox>
@@ -2381,7 +2405,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("drawings", lang).replace("{n}", String(form.drawings.length))}</p>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {form.drawings.map((d, i) => (
                   d ? (
                     <div key={i} className="relative aspect-video border-2 border-[#1a3458] rounded-sm overflow-hidden group">
@@ -2406,7 +2430,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               </button>
             </div>
 
-            <div className="relative flex items-center gap-3 px-4 py-3 bg-[#f5f6f8] border border-slate-200 rounded-sm">
+            <div className="relative flex flex-wrap items-center gap-3 px-4 py-3 bg-[#f5f6f8] border border-slate-200 rounded-sm">
               <span className="text-sm font-600 text-slate-600">{t("totalRequiredTime", lang)}</span>
               <button type="button" onClick={() => setShowCalcInfo(v => !v)}
                 className="text-slate-400 hover:text-[#1a3458] cursor-pointer transition-colors shrink-0"
@@ -2429,7 +2453,16 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("manufacturingTasks", lang)}</p>
               <div className="task-scroll border border-slate-200 rounded-sm max-h-[420px] overflow-y-scroll overscroll-contain">
-                <table className="w-full border-collapse text-base">
+                <div className="divide-y divide-slate-100 sm:hidden">
+                  {form.tasks.map((task, i) => (
+                    <div key={i} className={focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}>
+                      <p className="text-xs font-700 uppercase tracking-wide text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
+                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => { const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
+                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskTime", lang)}</span><input type="number" step="0.1" min="0" max="999.9" value={task.time} onFocus={() => setFocusedRow(i)} onChange={e => { const raw = e.target.value.replace(/^0+(?=[1-9])/, ""); const parsed = raw === "" ? ("" as const) : parseFloat(raw); const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-right font-mono text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_time_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_time_${i}`]}</p>}</label>
+                    </div>
+                  ))}
+                </div>
+                <table className="hidden w-full border-collapse text-base sm:table">
                   <thead className="bg-[#f5f6f8] sticky top-0 z-10">
                     <tr className="border-b border-slate-200">
                       <th className="text-center px-3 py-2 text-sm font-600 text-slate-400 w-14">{t("taskNoHeader", lang)}</th>
@@ -2478,11 +2511,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         </main>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" disabled={isNew} onClick={() => { const deletedId = form.id; setProducts(prev => prev.filter(p => p.id !== deletedId)); setIsNew(false); setDirty(false); if (products[0]) { setForm(products[0]); setSelectedId(products[0].id); } deleteProduct(deletedId).catch(err => alert(`Failed to delete product: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => { const deletedId = form.id; setProducts(prev => prev.filter(p => p.id !== deletedId)); setIsNew(false); setDirty(false); if (products[0]) { setForm(products[0]); setSelectedId(products[0].id); } deleteProduct(deletedId).catch(err => alert(`Failed to delete product: ${err.message}`)); }}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2515,16 +2548,16 @@ function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
         <div className="flex-1" />
         <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center p-8 bg-slate-300">
-        <div className="w-full max-w-2xl bg-white shadow-md p-10">
+      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
           <p className="text-sm text-slate-500 mb-6"><span className="font-600 text-slate-600">{t("deliveryDateLabel", lang)}:</span><span className="ml-2 font-mono">{todayStr}</span></p>
-          <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FieldBox label={t("inCharge", lang)}><TextInput value="" placeholder={ph.inCharge} onChange={() => {}} /></FieldBox>
             <FieldBox label={t("deliveryConditions", lang)}><TextInput value="" placeholder={ph.conditions} onChange={() => {}} /></FieldBox>
             <FieldBox label={t("paymentTerms", lang)}><TextInput value="" placeholder={ph.terms} onChange={() => {}} /></FieldBox>
           </div>
-          <table className="w-full border-collapse text-base mb-6">
+          <table className="mb-6 w-full min-w-[560px] border-collapse text-base">
             <thead>
               <tr className="border-b-2 border-slate-200">
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("orderNoLabel", lang)}</th>
@@ -2654,8 +2687,8 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
 
   return (
     <AppShell onNavigate={onNavigate} title={t("scheduleTitle", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
-      <div className="flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
-        <aside className="w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
+      <div className="responsive-workspace schedule-workspace flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
+        <aside className="responsive-panel responsive-panel-filter w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
           <p className="mt-1 px-2 text-xs font-700 text-white/60 shrink-0">{t("scheduleFilter", lang)}</p>
           <div className="flex flex-col gap-1.5">
             {Object.entries(SCHEDULE_STATUS_COLORS).map(([status, colorClass]) => {
@@ -2670,9 +2703,9 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col min-h-0 bg-white">
-          <div className="flex items-center justify-between px-4 py-2 bg-[#f0f4f8] border-b border-slate-200 shrink-0">
-            <div className="flex items-center gap-4">
+        <main className="responsive-calendar flex-1 flex flex-col min-h-0 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#f0f4f8] px-2 py-2 shrink-0 sm:flex-nowrap sm:px-4">
+            <div className="flex items-center gap-1 sm:gap-4">
               <div className="flex items-center gap-2 bg-slate-800 text-white px-3 py-1 rounded-sm text-sm">
                 <span className="font-600 whitespace-nowrap">{t("remainingHeads", lang)}</span>
                 <input type="number" min={0} value={headcount} onChange={e => setHeadcount(Number(e.target.value))}
@@ -2683,14 +2716,14 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
             <div className="flex items-center gap-4">
               <button type="button" onClick={() => changeMonth(-1)} aria-label={lang === "ja" ? "前月" : "Previous month"}
                 className="p-1 rounded-sm hover:bg-slate-200 cursor-pointer transition-colors"><Icon name="chevron-left" size={20} /></button>
-              <h2 className="text-xl font-700 text-slate-800 w-44 text-center whitespace-nowrap">{monthLabel}</h2>
+              <h2 className="w-32 whitespace-nowrap text-center text-base font-700 text-slate-800 sm:w-44 sm:text-xl">{monthLabel}</h2>
               <button type="button" onClick={() => changeMonth(1)} aria-label={lang === "ja" ? "翌月" : "Next month"}
                 className="p-1 rounded-sm hover:bg-slate-200 cursor-pointer transition-colors"><Icon name="chevron-right" size={20} /></button>
             </div>
-            <div className="flex bg-[#1a3458] text-white rounded-sm overflow-hidden">
+            <div className="ml-auto flex w-full overflow-hidden rounded-sm bg-[#1a3458] text-white sm:ml-0 sm:w-auto">
               {(["1W", "2W", "3W", "6W"] as const).map(mode => (
                 <button key={mode} type="button" onClick={() => setViewMode(mode)}
-                  className={`px-3 py-1 text-sm font-600 border-r border-white/20 last:border-0 cursor-pointer transition-colors ${viewMode === mode ? "bg-blue-600" : "hover:bg-blue-900"}`}>
+                  className={`flex-1 px-3 py-1 text-sm font-600 border-r border-white/20 last:border-0 cursor-pointer transition-colors sm:flex-none ${viewMode === mode ? "bg-blue-600" : "hover:bg-blue-900"}`}>
                   {mode}
                 </button>
               ))}
@@ -2733,7 +2766,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </main>
 
-        <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
+        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
           <div className="px-4 py-3 bg-[#f5f6f8] border-b border-slate-200 shrink-0 flex items-center justify-between">
             <span className="flex items-center gap-2">
               <span className="text-base font-700 text-slate-800">{t("orderDetailsHeader", lang)}</span>
@@ -2858,20 +2891,20 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <header className="flex items-center justify-between px-4 py-2 bg-[#1a3458] shrink-0">
-        <div className="flex gap-2">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#1a3458] shrink-0 sm:px-4">
+        <div className="flex flex-wrap gap-2">
           <button onClick={() => onNavigate("order-entry")} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("returnButton", lang)}</button>
           <button onClick={handleSaveAndReturn} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveAndReturn", lang)}</button>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveButton", lang)}</button>
           <button onClick={() => window.print()} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("printButton", lang)}</button>
           <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("toCad", lang)}</button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 pt-5">
-        <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="flex-1 overflow-y-auto p-3 pt-4 sm:p-4 sm:pt-5">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="border border-slate-400 rounded-sm flex flex-col h-full">
             <div className="flex border-b border-slate-400">
               <div className="w-24 bg-slate-100 px-2 py-1 text-sm font-600 border-r border-slate-400 flex items-center">{t("client", lang)}</div>
@@ -2908,7 +2941,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-x-8 gap-y-3">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
           {tasks.map((task, i) => (
             <label key={i} className="flex items-start gap-3 py-1 cursor-pointer hover:bg-slate-50">
               <span className="w-16 text-sm text-slate-700 shrink-0">{t("taskLabelPrefix", lang)}{i + 1}</span>

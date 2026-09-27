@@ -17,8 +17,8 @@ export default function AuthGate() {
 
   if (!profile.active) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-5">
-        <section className="w-full max-w-md rounded-lg bg-white p-8 text-center shadow-lg ring-1 ring-slate-200">
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-3 sm:p-5">
+        <section className="w-full max-w-md rounded-lg bg-white p-5 text-center shadow-lg ring-1 ring-slate-200 sm:p-8">
           <h1 className="text-xl font-700 text-[#1a3458]">Account disabled</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">
             This account is no longer active. Contact an administrator if access should be restored.

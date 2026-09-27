@@ -22,8 +22,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-slate-200 rounded-sm shadow-sm p-8">
+    <div className="flex h-full items-center justify-center overflow-y-auto bg-[#f5f6f8] p-3 sm:p-6" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
+      <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
         <div className="flex items-center gap-2.5 mb-6">
           <img src="/app-logo.png" alt="Kiyometa" className="h-10 w-10 shrink-0 rounded object-cover shadow-sm" />
           <div>
