@@ -29,10 +29,19 @@ runtime and never downloads models or sends documents anywhere.
 | --- | --- |
 | `GET /health` | `{"ok": true}` |
 | `POST /ocr` | multipart `file` -> `{ source, lines }` |
-| `POST /log` | parser trace from the web app (diagnostics) |
+| `POST /log` | parser trace; off unless `OCR_LOG_ENDPOINT=1` |
 
 Each line: `text`, `x0`, `y0`, `x1`, `y1`, `score`, zero-based `page`. Coordinates
 refer to the upright page; whole-page rotation is detected before extraction.
+
+Uploads are bounded so a single request cannot exhaust the server:
+
+- Body above `MAX_UPLOAD_MB` -> `413`, rejected before any decoding.
+- Page or image above `MAX_PAGE_PIXELS` -> `400`.
+- Above `OCR_MAX_CONCURRENT` in-flight requests -> `429`. Requests are refused
+  rather than queued, because a queued request still holds its rasterized pages
+  in memory while it waits.
+- Corrupt or non-image input -> `400`, never `500`.
 
 ## Environment
 
@@ -40,7 +49,11 @@ refer to the upright page; whole-page rotation is detected before extraction.
 | --- | --- | --- |
 | `OCR_MODEL_DIR` | `ocr-service/models` | Model directory |
 | `MAX_PDF_PAGES` | `3` | PDFs above this are rejected, not truncated |
-| `CORS_ORIGINS` | `*` | Restrict to the web app origin in production |
+| `MAX_UPLOAD_MB` | `25` | Hard cap on the request body |
+| `MAX_PAGE_PIXELS` | `20000000` | ~20 MP per rasterized page |
+| `OCR_MAX_CONCURRENT` | `2` | Concurrent `/ocr` requests |
+| `OCR_LOG_ENDPOINT` | `0` | Set to `1` to expose `POST /log` |
+| `CORS_ORIGINS` | unset | Unset sends no CORS headers, so other origins are blocked. The web app is same-origin behind the proxy and needs none. |
 
 ## Deployment (BSD / Linux VPS)
 
@@ -59,17 +72,20 @@ Run it as a supervised service, bound to localhost:
 nginx:
 
 ```nginx
-client_max_body_size 25m;
+client_max_body_size 26m;
 
 location /ocr {
     proxy_pass http://127.0.0.1:8787;
     proxy_read_timeout 180s;
     proxy_send_timeout 180s;
+    limit_req zone=ocr burst=5 nodelay;
 }
 ```
 
 `client_max_body_size` must be raised: the default is 1 MB and scanned PDFs
-exceed it. `proxy_read_timeout` must cover a 3-page CPU run (~30-90 s).
+exceed it. `proxy_read_timeout` must cover a 3-page CPU run (~30-90 s). Keep the
+nginx cap slightly above `MAX_UPLOAD_MB` so the service returns its own `413`
+with a readable message instead of nginx returning a bare one.
 
 Autodeploy needs one extra step after `git pull`:
 

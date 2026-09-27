@@ -300,6 +300,42 @@ function validateProduct(form: Product, allProducts: Product[], isNew: boolean):
   return e;
 }
 
+// A value of only spaces is truthy, so it would pass every `!field` check above
+// and reach the database as a blank-looking name. Text is trimmed once, before
+// validation and before the write. trim() also removes ideographic (U+3000) and
+// no-break spaces, which Japanese keyboards produce readily.
+function cleanOrder(o: OrderRecord): OrderRecord {
+  return {
+    ...o,
+    client: o.client.trim(),
+    orderNumber: o.orderNumber.trim(),
+    productName: o.productName.trim(),
+    orderContact: o.orderContact.trim(),
+    contactContents: o.contactContents.trim(),
+  };
+}
+
+function cleanClient(c: Client): Client {
+  return {
+    ...c,
+    name: c.name.trim(),
+    phone: c.phone.trim(),
+    email: c.email.trim(),
+    postalCode: c.postalCode.trim(),
+    address: c.address.trim(),
+  };
+}
+
+function cleanProduct(p: Product): Product {
+  return {
+    ...p,
+    clientName: p.clientName.trim(),
+    productName: p.productName.trim(),
+    productNumber: p.productNumber.trim(),
+    tasks: p.tasks.map(t => ({ ...t, content: t.content.trim() })),
+  };
+}
+
 // ---- UI primitives ----
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -1231,17 +1267,19 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const handleNew = () => { setForm(blankForm()); setIsNew(true); setSelectedId(""); setErrors({}); };
 
   const handleSave = async () => {
-    const errs = validateOrder(form, clients, products);
+    const cleaned = cleanOrder(form);
+    setForm(cleaned);
+    const errs = validateOrder(cleaned, clients, products);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     if (isNew) {
-      const record = { ...form, id: newId() };
+      const record = { ...cleaned, id: newId() };
       setOrders(prev => prev.some(o => o.id === record.id) ? prev : [record, ...prev]);
       setSelectedId(record.id);
       setIsNew(false);
       await upsertOrder(record).catch(err => alert(`Failed to save order: ${err.message}`));
     } else {
-      setOrders(prev => prev.map(o => o.id === form.id ? form : o));
-      await upsertOrder(form).catch(err => alert(`Failed to save order: ${err.message}`));
+      setOrders(prev => prev.map(o => o.id === cleaned.id ? cleaned : o));
+      await upsertOrder(cleaned).catch(err => alert(`Failed to save order: ${err.message}`));
     }
     setErrors({});
   };
@@ -2162,9 +2200,11 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   };
 
   const handleSave = async () => {
-    const errs = validateClient(form, clients, isNew);
+    const cleaned = cleanClient(form);
+    setForm(cleaned);
+    const errs = validateClient(cleaned, clients, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const candidate = isNew ? { ...form, id: genUUID() } : form;
+    const candidate = isNew ? { ...cleaned, id: genUUID() } : cleaned;
     let saved: Client;
 
     try {
@@ -2393,9 +2433,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   const handleSave = async () => {
-    const errs = validateProduct(form, products, isNew);
+    const cleaned = cleanProduct(form);
+    setForm(cleaned);
+    const errs = validateProduct(cleaned, products, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const record = isNew ? { ...form, id: genUUID() } : form;
+    const record = isNew ? { ...cleaned, id: genUUID() } : cleaned;
     if (isNew) {
       setProducts(prev => prev.some(p => p.id === record.id) ? prev : [...prev, record]);
       setForm(record);
@@ -2408,8 +2450,6 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setDirty(false);
 
     try {
-      // upsertProduct uploads any new data: URI drawings to Storage and
-      // returns the record with hosted URLs in their place.
       const saved = await upsertProduct(record);
       setProducts(prev => prev.map(p => p.id === saved.id ? saved : p));
       setForm(prev => prev.id === saved.id ? saved : prev);

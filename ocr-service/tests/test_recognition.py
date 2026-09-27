@@ -2,6 +2,7 @@ import io
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 import pymupdf
 from fastapi import HTTPException, UploadFile
@@ -61,6 +62,59 @@ class RecognitionTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 main.ocr(UploadFile(filename='scan.png',file=io.BytesIO(b'image')))
         self.assertEqual(error.exception.status_code,422)
+
+
+class UploadLimitTests(unittest.TestCase):
+    def test_oversized_upload_is_rejected_before_decoding(self):
+        payload = io.BytesIO(b'x' * 64)
+        with patch.object(main,'MAX_UPLOAD_BYTES',32):
+            with self.assertRaises(HTTPException) as error:
+                main.ocr(UploadFile(filename='scan.pdf',file=payload))
+        self.assertEqual(error.exception.status_code,413)
+
+    def test_oversized_image_is_rejected(self):
+        ok, encoded = cv2.imencode('.png', np.zeros((80,80,3),np.uint8))
+        self.assertTrue(ok)
+        with patch.object(main,'MAX_PAGE_PIXELS',100):
+            with self.assertRaises(ValueError):
+                main.decode_image(encoded.tobytes())
+
+    def test_oversized_pdf_page_is_rejected_before_rasterizing(self):
+        with pymupdf.open() as doc:
+            doc.new_page(width=2000, height=2000)
+            with patch.object(main,'MAX_PAGE_PIXELS',1000):
+                with self.assertRaisesRegex(ValueError,'lower resolution'):
+                    main.rasterize_pdf(doc.tobytes())
+
+    def test_busy_service_reports_429_instead_of_queueing(self):
+        held = [main._slots.acquire(blocking=False) for _ in range(main._slots._value)]
+        self.assertNotIn(False, held)
+        try:
+            with self.assertRaises(HTTPException) as error:
+                main.ocr(UploadFile(filename='scan.pdf',file=io.BytesIO(b'x')))
+            self.assertEqual(error.exception.status_code,429)
+        finally:
+            for _ in held:
+                main._slots.release()
+
+    def test_malformed_pdf_does_not_surface_as_500(self):
+        with self.assertRaises(HTTPException) as error:
+            main.ocr(UploadFile(filename='broken.pdf',file=io.BytesIO(b'%PDF-1.7 truncated')))
+        self.assertEqual(error.exception.status_code,400)
+
+    def test_filename_cannot_inject_log_lines(self):
+        cleaned = main.safe_name('quote.pdf\n2026-01-01 INFO forged entry')
+        self.assertNotIn('\n', cleaned)
+        self.assertNotIn('\r', cleaned)
+        self.assertTrue(cleaned.startswith('quote.pdf'))
+        self.assertEqual(main.safe_name('   '), 'upload')
+        self.assertTrue(main.safe_name('a'*500 + '.pdf').endswith('.pdf'))
+
+    def test_log_endpoint_is_off_unless_enabled(self):
+        with self.assertRaises(HTTPException) as error:
+            main.log_message(main.LogIn(message='forged log line'))
+        self.assertEqual(error.exception.status_code,404)
+
 
 
 if __name__ == '__main__':
