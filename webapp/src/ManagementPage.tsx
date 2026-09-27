@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
+import UndoButton from "./components/UndoButton";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import {
   createManagedUser,
   fetchAuditLogs,
+  isUndoableAuditLog,
   listManagedUsers,
   resetManagedUserPassword,
   undoAuditLog,
@@ -58,7 +60,7 @@ export default function ManagementPage({ onBack }: Props) {
       }
       const nextUsers = await listManagedUsers();
       setUsers(nextUsers);
-      if (profile.role === "administrator") setLogs(await fetchAuditLogs());
+      setLogs(await fetchAuditLogs());
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -117,6 +119,7 @@ export default function ManagementPage({ onBack }: Props) {
           <h1 className="truncate text-base font-700">Role Management & Audit</h1>
           <p className="truncate text-xs text-blue-200">Signed in as {profile.username} · {profile.role}</p>
         </div>
+        <UndoButton />
         <button onClick={signOut} className="shrink-0 text-xs text-blue-200 hover:text-white sm:text-sm">Sign out</button>
       </header>
 
@@ -206,17 +209,11 @@ export default function ManagementPage({ onBack }: Props) {
           )}
 
           {tab === "audit" && (
-            profile.role !== "administrator" ? (
-              <div className="rounded-lg bg-white p-8 text-center shadow-sm ring-1 ring-slate-200"><h2 className="text-lg font-700 text-[#1a3458]">Administrator access required</h2><p className="mt-2 text-sm text-slate-500">Only administrators can inspect employee activity and undo data changes.</p></div>
-            ) : (
               <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
-                <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-700 text-[#1a3458]">Operator activity</h2><p className="text-sm text-slate-500">Database changes are recorded automatically.</p></div><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee or action..." className="w-full rounded border border-slate-300 px-3 py-2 text-sm sm:w-72" /></div>
+                <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-700 text-[#1a3458]">Activity & undo</h2><p className="text-sm text-slate-500">{profile.role === "administrator" ? "Administrators can recover activity from every employee." : "Operators can review and recover their own activity."}</p></div><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee or action..." className="w-full rounded border border-slate-300 px-3 py-2 text-sm sm:w-72" /></div>
                 <div className="divide-y divide-slate-100 sm:hidden">
                   {filteredLogs.map(log => {
-                    const source = String(log.metadata.source ?? "");
-                    const stockReference = String((log.newData ?? log.oldData)?.reference_type ?? "");
-                    const isAutomaticStock = log.entity === "stock_movements" && ["purchase", "order"].includes(stockReference);
-                    const undoable = !source.startsWith("undo:") && !isAutomaticStock && ["insert", "update", "delete"].includes(log.action) && ["clients", "products", "orders", "inventory_items", "purchases", "stock_movements"].includes(log.entity);
+                    const undoable = isUndoableAuditLog(log);
                     return <article key={log.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700 text-slate-800">@{log.username}</p><p className="text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs font-700 text-slate-600">{ACTION_LABELS[log.action] ?? log.action}</span></div><div className="rounded bg-slate-50 p-3"><p className="text-xs font-600 uppercase tracking-wide text-slate-400">{log.entity}</p><p className="mt-1 break-all font-mono text-xs text-slate-600">{log.entityId ?? String(log.metadata.target_username ?? "-")}</p></div><div className="flex justify-end">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">Undone</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm("Undo this data change?")) void run(() => undoAuditLog(log.id), "Activity was undone."); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 hover:bg-amber-100">Undo</button> : <span className="text-xs text-slate-400">View only</span>}</div></article>;
                   })}
                 </div>
@@ -225,17 +222,13 @@ export default function ManagementPage({ onBack }: Props) {
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Time</th><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Activity</th><th className="px-4 py-3">Record</th><th className="px-5 py-3 text-right">Recovery</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredLogs.map(log => {
-                        const source = String(log.metadata.source ?? "");
-                        const stockReference = String((log.newData ?? log.oldData)?.reference_type ?? "");
-                        const isAutomaticStock = log.entity === "stock_movements" && ["purchase", "order"].includes(stockReference);
-                        const undoable = !source.startsWith("undo:") && !isAutomaticStock && ["insert", "update", "delete"].includes(log.action) && ["clients", "products", "orders", "inventory_items", "purchases", "stock_movements"].includes(log.entity);
+                        const undoable = isUndoableAuditLog(log);
                         return <tr key={log.id} className="align-top hover:bg-slate-50"><td className="whitespace-nowrap px-5 py-4 text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</td><td className="px-4 py-4 font-700">@{log.username}</td><td className="px-4 py-4"><span className="font-600">{ACTION_LABELS[log.action] ?? log.action}</span><p className="text-xs text-slate-500">{log.entity}</p></td><td className="max-w-xs px-4 py-4 font-mono text-xs text-slate-500">{log.entityId ?? String(log.metadata.target_username ?? "-")}</td><td className="px-5 py-4 text-right">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">Undone</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm("Undo this data change?")) void run(() => undoAuditLog(log.id), "Activity was undone."); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 font-700 text-amber-800 hover:bg-amber-100">Undo</button> : <span className="text-xs text-slate-400">View only</span>}</td></tr>;
                       })}
                     </tbody>
                   </table>
                 </div>
               </section>
-            )
           )}
         </div>
       </main>

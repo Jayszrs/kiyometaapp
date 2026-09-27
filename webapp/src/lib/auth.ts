@@ -16,12 +16,21 @@ export interface UserProfile {
   displayName: string;
   role: UserRole;
   active: boolean;
+  avatarPath: string;
+  employeeNumber: string;
+  phone: string;
+  department: string;
+  position: string;
+  birthDate: string;
+  address: string;
+  bio: string;
 }
 
 interface AuthValue {
   email: string;
   profile: UserProfile;
   signOut: () => void;
+  updateProfile: (profile: UserProfile) => void;
 }
 
 const emptyProfile: UserProfile = {
@@ -30,12 +39,21 @@ const emptyProfile: UserProfile = {
   displayName: "",
   role: "operator",
   active: true,
+  avatarPath: "",
+  employeeNumber: "",
+  phone: "",
+  department: "",
+  position: "",
+  birthDate: "",
+  address: "",
+  bio: "",
 };
 
 export const AuthContext = createContext<AuthValue>({
   email: "",
   profile: emptyProfile,
   signOut: () => {},
+  updateProfile: () => {},
 });
 
 export function useAuth() {
@@ -68,12 +86,25 @@ export function useSession() {
           ? "administrator"
           : "operator";
 
-      let data: { id: string; username: string; display_name: string; role: string; active: boolean } | null = null;
-      const result = await supabase
+      type ProfileRow = {
+        id: string; username: string; display_name: string; role: string; active: boolean;
+        avatar_path?: string; employee_number?: string; phone?: string; department?: string;
+        position?: string; birth_date?: string | null; address?: string; bio?: string;
+      };
+      let data: ProfileRow | null = null;
+      let result = await supabase
         .from("profiles")
-        .select("id, username, display_name, role, active")
+        .select("id, username, display_name, role, active, avatar_path, employee_number, phone, department, position, birth_date, address, bio")
         .eq("id", nextSession.user.id)
         .maybeSingle();
+      // Keep old deployments usable while migration 006 is being rolled out.
+      if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
+        result = await supabase
+          .from("profiles")
+          .select("id, username, display_name, role, active")
+          .eq("id", nextSession.user.id)
+          .maybeSingle();
+      }
       data = result.data;
       if (result.error && isMissingOperationsSchema(result.error)) {
         markOperationsMigrationRequired();
@@ -88,12 +119,17 @@ export function useSession() {
           displayName: data.display_name || data.username,
           role: data.role as UserRole,
           active: data.active,
+          avatarPath: data.avatar_path ?? "",
+          employeeNumber: data.employee_number ?? "",
+          phone: data.phone ?? "",
+          department: data.department ?? "",
+          position: data.position ?? "",
+          birthDate: data.birth_date ?? "",
+          address: data.address ?? "",
+          bio: data.bio ?? "",
         } : {
-          id: nextSession.user.id,
-          username: fallbackUsername,
-          displayName: fallbackUsername,
-          role: fallbackRole,
-          active: true,
+          ...emptyProfile, id: nextSession.user.id, username: fallbackUsername,
+          displayName: fallbackUsername, role: fallbackRole,
         });
         setLoading(false);
       }
@@ -105,7 +141,7 @@ export function useSession() {
       if (nextSession) {
         const { error } = await supabase.auth.getUser();
         const invalidSession = error && (
-          error.status === 401 || /invalid|expired|jwt|refresh token/i.test(error.message)
+          error.status === 401 || error.status === 403 || /invalid|expired|jwt|refresh token/i.test(error.message)
         );
         if (invalidSession) {
           await supabase.auth.signOut({ scope: "local" });
@@ -127,7 +163,7 @@ export function useSession() {
     };
   }, []);
 
-  return { session, profile, loading };
+  return { session, profile, loading, updateProfile: setProfile };
 }
 
 export async function signIn(identity: string, password: string) {

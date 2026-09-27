@@ -2,9 +2,11 @@ import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
+import UndoButton from "./components/UndoButton";
 
 const InventoryPage = lazy(() => import("./InventoryPage"));
 const ManagementPage = lazy(() => import("./ManagementPage"));
+const ProfilePage = lazy(() => import("./ProfilePage"));
 
 // ---- Types ----
 
@@ -19,7 +21,8 @@ type Page =
   | "schedule"
   | "checklist"
   | "inventory"
-  | "management";
+  | "management"
+  | "profile";
 
 type DeliverySlipMode = "single" | "multiple";
 
@@ -496,7 +499,8 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
             />
           </div>
         )}
-        <UserMenuButton />
+        <UndoButton />
+        <UserMenuButton onNavigate={onNavigate} />
       </header>
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
         {children}
@@ -505,18 +509,25 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   );
 }
 
-function UserMenuButton() {
+function UserMenuButton({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const { profile, signOut } = useAuth();
   return (
-    <button onClick={signOut} title="Sign out"
-      className="flex items-center gap-1.5 text-sm text-blue-200 hover:text-white transition-colors cursor-pointer shrink-0">
-      <Icon name="user" size={15} className="shrink-0" />
-       <span className="hidden max-w-[180px] truncate sm:inline">@{profile.username}</span>
-    </button>
+    <div className="flex shrink-0 items-center gap-1">
+      <button onClick={() => onNavigate("profile")} title="Edit my profile"
+        className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm text-blue-100 transition-colors hover:bg-white/10 hover:text-white">
+        <Icon name="user" size={15} className="shrink-0" />
+        <span className="hidden max-w-[180px] truncate sm:inline">@{profile.username}</span>
+      </button>
+      <button onClick={signOut} title="Sign out" aria-label="Sign out"
+        className="rounded px-2 py-1.5 text-xs text-blue-200 transition-colors hover:bg-white/10 hover:text-white">
+        <span className="hidden sm:inline">Sign out</span><span className="sm:hidden">↪</span>
+      </button>
+    </div>
   );
 }
 
 function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void }) {
+  const { profile } = useAuth();
   if (!open) return null;
   const items = [
     { label: "Home", page: "home" as Page, icon: "home", desc: "Dashboard overview" },
@@ -526,7 +537,10 @@ function NavDrawer({ open, onClose, onNavigate }: { open: boolean; onClose: () =
     { label: "Product master", page: "product-master" as Page, icon: "package", desc: "Manage product specifications" },
     { label: "Schedule", page: "schedule" as Page, icon: "calendar", desc: "Production schedule & capacity" },
     { label: "Inventory", page: "inventory" as Page, icon: "database", desc: "Purchasing and stock mutations" },
-    { label: "Role management", page: "management" as Page, icon: "shield", desc: "Employees, passwords, and audit" },
+    { label: "My profile", page: "profile" as Page, icon: "user", desc: "Personal details and profile photo" },
+    ...(profile.role === "administrator" ? [
+      { label: "Role management", page: "management" as Page, icon: "shield", desc: "Employees, passwords, and audit" },
+    ] : []),
   ];
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -687,6 +701,7 @@ function ScanModal({ clients, products, onClose, onApply }: {
 // ---- Page: Home ----
 
 function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void }) {
+  const { profile } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const dateStr = new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const inProd = orders.filter(o => o.progress === "In production").length;
@@ -698,7 +713,10 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
     { label: t("clientMaster", lang), desc: "View and edit client information", page: "client-master" as Page, icon: "users" },
     { label: t("productMaster", lang), desc: "View and edit product specifications", page: "product-master" as Page, icon: "package" },
     { label: "Inventory", desc: "Materials, purchasing, and stock mutations", page: "inventory" as Page, icon: "database" },
-    { label: "Role & Audit", desc: "Employee access and activity history", page: "management" as Page, icon: "shield" },
+    { label: "My Profile", desc: "Photo and employee details", page: "profile" as Page, icon: "user" },
+    ...(profile.role === "administrator" ? [
+      { label: "Role & Audit", desc: "Employee access and activity history", page: "management" as Page, icon: "shield" },
+    ] : []),
   ];
 
   return (
@@ -721,7 +739,8 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
             dark
           />
         </div>
-        <UserMenuButton />
+        <UndoButton />
+        <UserMenuButton onNavigate={onNavigate} />
       </header>
 
       <div className="flex-1 overflow-y-auto">
@@ -1141,27 +1160,36 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const handleSave = async () => {
     const errs = validateOrder(form, clients, products);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    if (isNew) {
-      const record = { ...form, id: newId() };
-      setOrders(prev => prev.some(o => o.id === record.id) ? prev : [record, ...prev]);
-      setSelectedId(record.id);
+    const record = isNew ? { ...form, id: newId() } : form;
+    try {
+      const saved = await upsertOrder(record);
+      setOrders(prev => prev.some(o => o.id === saved.id)
+        ? prev.map(o => o.id === saved.id ? saved : o)
+        : [saved, ...prev]);
+      setForm(saved);
+      setSelectedId(saved.id);
       setIsNew(false);
-      await upsertOrder(record).catch(err => alert(`Failed to save order: ${err.message}`));
-    } else {
-      setOrders(prev => prev.map(o => o.id === form.id ? form : o));
-      await upsertOrder(form).catch(err => alert(`Failed to save order: ${err.message}`));
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+      return;
     }
     setErrors({});
   };
 
   const handleDelete = async () => {
+    if (!confirm("Delete this order? You can recover it with Undo.")) return;
     const deletedId = form.id;
-    setOrders(prev => prev.filter(o => o.id !== deletedId));
+    try {
+      await deleteOrder(deletedId);
+    } catch (err) {
+      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     const rest = orders.filter(o => o.id !== deletedId);
+    setOrders(rest);
     if (rest[0]) { setForm(rest[0]); setSelectedId(rest[0].id); }
     else { handleNew(); }
     setErrors({});
-    await deleteOrder(deletedId).catch(err => alert(`Failed to delete order: ${err.message}`));
   };
 
   const handleScanApply = (data: ScanFillData, clientExists: boolean, productExists: boolean) => {
@@ -1636,15 +1664,25 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
 
   const handleSave = async () => {
     if (!panelForm.client || !panelForm.productName || !panelForm.deliveryDate) return;
-    setOrders(prev => prev.map(o => o.id === panelForm.id ? panelForm : o));
-    await upsertOrder(panelForm).catch(err => alert(`Failed to save order: ${err.message}`));
+    try {
+      const saved = await upsertOrder(panelForm);
+      setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
+      setPanelForm(saved);
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   const handleDelete = async (id: string) => {
+    try {
+      await deleteOrder(id);
+    } catch (err) {
+      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     setOrders(prev => prev.filter(o => o.id !== id));
     setDeleteConfirm(null);
     if (panelForm.id === id) resetSelection();
-    await deleteOrder(id).catch(err => alert(`Failed to delete order: ${err.message}`));
   };
 
   const spf = (k: keyof OrderRecord) => (e: string) => setPanelForm(prev => ({ ...prev, [k]: e }));
@@ -2129,6 +2167,27 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     setDirty(true);
   };
 
+  const handleDelete = async () => {
+    if (isNew || !confirm("Delete this client? You can recover it with Undo.")) return;
+    const deletedId = form.id;
+    try {
+      await deleteClient(deletedId);
+    } catch (err) {
+      alert(`Failed to delete client: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    const rest = clients.filter(client => client.id !== deletedId);
+    setClients(rest);
+    setDirty(false);
+    if (rest[0]) {
+      setForm(rest[0]);
+      setSelectedId(rest[0].id);
+      setIsNew(false);
+    } else {
+      handleNew();
+    }
+  };
+
   return (
     <AppShell onNavigate={onNavigate} title={t("clientMaster", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
@@ -2209,7 +2268,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
         <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => { const deletedId = form.id; setClients(prev => prev.filter(c => c.id !== deletedId)); setIsNew(false); setDirty(false); if (clients[0]) { setForm(clients[0]); setSelectedId(clients[0].id); } deleteClient(deletedId).catch(err => alert(`Failed to delete client: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2309,31 +2368,49 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     const errs = validateProduct(form, products, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const record = isNew ? { ...form, id: genUUID() } : form;
-    if (isNew) {
-      setProducts(prev => prev.some(p => p.id === record.id) ? prev : [...prev, record]);
-      setForm(record);
-      setSelectedId(record.id);
-      setIsNew(false);
-    } else {
-      setProducts(prev => prev.map(p => p.id === record.id ? record : p));
-    }
-    setErrors({});
-    setDirty(false);
 
     try {
       // upsertProduct uploads any new data: URI drawings to Storage and
       // returns the record with hosted URLs in their place.
       const saved = await upsertProduct(record);
-      setProducts(prev => prev.map(p => p.id === saved.id ? saved : p));
-      setForm(prev => prev.id === saved.id ? saved : prev);
+      setProducts(prev => prev.some(p => p.id === saved.id)
+        ? prev.map(p => p.id === saved.id ? saved : p)
+        : [...prev, saved]);
+      setForm(saved);
+      setSelectedId(saved.id);
+      setIsNew(false);
+      setErrors({});
+      setDirty(false);
     } catch (err) {
       alert(`Failed to save product: ${err instanceof Error ? err.message : err}`);
+      return;
     }
 
     // Continue scan routing
     if (isScanRouted && sd) {
       setScanRouting({ stage: "filling", data: sd });
       onNavigate("order-entry");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (isNew || !confirm("Delete this product? You can recover it with Undo.")) return;
+    const deletedId = form.id;
+    try {
+      await deleteProduct(deletedId);
+    } catch (err) {
+      alert(`Failed to delete product: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    const rest = products.filter(product => product.id !== deletedId);
+    setProducts(rest);
+    setDirty(false);
+    if (rest[0]) {
+      setForm(rest[0]);
+      setSelectedId(rest[0].id);
+      setIsNew(false);
+    } else {
+      handleNew();
     }
   };
 
@@ -2515,7 +2592,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
         <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => { const deletedId = form.id; setProducts(prev => prev.filter(p => p.id !== deletedId)); setIsNew(false); setDirty(false); if (products[0]) { setForm(products[0]); setSelectedId(products[0].id); } deleteProduct(deletedId).catch(err => alert(`Failed to delete product: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2678,11 +2755,16 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
 
   const handleSave = async () => {
     if (!form || !dirty) return;
-    setOrders(prev => prev.map(o => o.id === form.id ? form : o));
-    setDirty(false);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2000);
-    await upsertOrder(form).catch(err => alert(`Failed to save order: ${err.message}`));
+    try {
+      const persisted = await upsertOrder(form);
+      setOrders(prev => prev.map(o => o.id === persisted.id ? persisted : o));
+      setPanelForm(persisted);
+      setDirty(false);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   return (
@@ -2875,12 +2957,16 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
   const tasks = product?.tasks || Array(54).fill({ content: "", time: "" });
   const completed = order.completedTasks || Array(54).fill(false);
 
-  const toggleTask = (index: number) => {
+  const toggleTask = async (index: number) => {
     const newCompleted = [...completed];
     newCompleted[index] = !newCompleted[index];
     const updated = { ...order, completedTasks: newCompleted };
-    setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
-    upsertOrder(updated).catch(err => alert(`Failed to save task progress: ${err.message}`));
+    try {
+      const persisted = await upsertOrder(updated);
+      setOrders(prev => prev.map(o => o.id === order.id ? persisted : o));
+    } catch (err) {
+      alert(`Failed to save task progress: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   const handleSaveAndReturn = () => {
@@ -2958,7 +3044,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
 // ---- Root ----
 
 export default function App() {
-  const { signOut } = useAuth();
+  const { profile, signOut } = useAuth();
   const [page, setPage] = useState<Page>("home");
   const [deliveryMode, setDeliveryMode] = useState<DeliverySlipMode>("single");
   const [clients, setClients] = useState<Client[]>([]);
@@ -3072,7 +3158,9 @@ export default function App() {
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
       {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onBack={() => navigate("home")} /></Suspense>}
-      {page === "management"     && <Suspense fallback={<PageLoading />}><ManagementPage onBack={() => navigate("home")} /></Suspense>}
+      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading />}><ManagementPage onBack={() => navigate("home")} /></Suspense>}
+      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
+      {page === "profile"        && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
     </div>
   );
 }

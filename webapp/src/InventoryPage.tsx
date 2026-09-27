@@ -21,6 +21,7 @@ import {
   type StockMovement,
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
+import UndoButton from "./components/UndoButton";
 
 interface Props {
   products: Product[];
@@ -448,6 +449,7 @@ export default function InventoryPage({ products, onBack }: Props) {
         <button onClick={onBack} className="rounded px-2 py-1.5 text-sm hover:bg-white/10">← Home</button>
         <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
         <div className="min-w-0 flex-1"><h1 className="truncate text-base font-700">Inventory & Purchasing</h1><p className="truncate text-xs text-blue-200">Stock movements, purchase receipts, and automatic material usage</p></div>
+        <UndoButton />
         <span className="hidden text-xs text-blue-200 sm:block">@{profile.username}</span>
       </header>
 

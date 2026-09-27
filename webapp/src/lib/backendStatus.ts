@@ -22,16 +22,18 @@ export async function probeOperationsBackend(force = false): Promise<boolean> {
   if (operationsProbe) return operationsProbe;
 
   operationsProbe = (async () => {
-    const [{ error: profilesError }, { error: numbersError }] = await Promise.all([
+    const [{ error: profilesError }, { error: numbersError }, { data: undoData, error: undoError }] = await Promise.all([
       supabase.from("profiles").select("id").limit(1),
       supabase.from("stock_movements").select("movement_no").limit(1),
+      supabase.rpc("undo_capabilities"),
     ]);
-    const error = profilesError ?? numbersError;
-    if (!error) {
+    const error = profilesError ?? numbersError ?? undoError;
+    const undoVersion = Number((undoData as { version?: unknown } | null)?.version ?? 0);
+    if (!error && undoVersion >= 3) {
       markOperationsBackendReady();
       return true;
     }
-    if (isMissingOperationsSchema(error)) {
+    if (isMissingOperationsSchema(error) || (!error && undoVersion < 3)) {
       markOperationsMigrationRequired();
       return false;
     }
@@ -50,13 +52,13 @@ export function isMissingOperationsSchema(error: unknown): boolean {
   const candidate = error as { code?: string; message?: string; details?: string };
   const text = `${candidate.message ?? ""} ${candidate.details ?? ""}`.toLowerCase();
   return candidate.code === "42P01" || candidate.code === "42703" ||
-    candidate.code === "PGRST204" || candidate.code === "PGRST205" ||
+    candidate.code === "PGRST202" || candidate.code === "PGRST204" || candidate.code === "PGRST205" ||
     text.includes("could not find the table") || text.includes("could not find the") ||
     text.includes("schema cache");
 }
 
 export const MIGRATION_REQUIRED_MESSAGE =
-  "Migration backend belum lengkap. Jalankan migration 001, 002, lalu 003 di project Supabase yang dipakai aplikasi, kemudian klik Check again.";
+  "Migration backend belum lengkap. Jalankan migration 001 sampai 006 di project Supabase yang dipakai aplikasi, kemudian klik Check again.";
 
 export const EDGE_FUNCTION_REQUIRED_MESSAGE =
   "Database sudah siap, tetapi Edge Function manage-users belum dapat diakses. Deploy function tersebut ke project Supabase yang sama, lalu klik Check again.";

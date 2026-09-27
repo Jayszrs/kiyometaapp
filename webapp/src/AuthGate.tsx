@@ -3,7 +3,7 @@ import LoginPage from "./LoginPage";
 import { AuthContext, useSession, signOut } from "./lib/auth";
 
 export default function AuthGate() {
-  const { session, profile, loading } = useSession();
+  const { session, profile, loading, updateProfile } = useSession();
 
   if (loading) {
     return (
@@ -32,7 +32,7 @@ export default function AuthGate() {
   }
 
   return (
-    <AuthContext.Provider value={{ email: session.user.email ?? "", profile, signOut }}>
+    <AuthContext.Provider value={{ email: session.user.email ?? "", profile, signOut, updateProfile }}>
       <App />
     </AuthContext.Provider>
   );

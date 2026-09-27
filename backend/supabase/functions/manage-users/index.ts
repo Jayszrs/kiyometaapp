@@ -48,6 +48,7 @@ serve(async (request) => {
     const action = String(payload.action ?? "");
 
     if (action === "list") {
+      if (caller.role !== "administrator") return json({ error: "Administrator role required" }, 403);
       const { data, error } = await adminClient
         .from("profiles")
         .select("id, username, display_name, role, active, created_at, updated_at")
@@ -110,6 +111,7 @@ serve(async (request) => {
     }
 
     if (action === "reset-password") {
+      if (caller.role !== "administrator") return json({ error: "Administrator role required" }, 403);
       const targetId = String(payload.userId ?? "");
       const password = String(payload.password ?? "");
       if (password.length < 8) return json({ error: "Password must contain at least 8 characters" }, 400);
@@ -120,10 +122,6 @@ serve(async (request) => {
         .eq("id", targetId)
         .single();
       if (targetError || !target) return json({ error: "User not found" }, 404);
-      if (caller.role !== "administrator" && target.role !== "operator") {
-        return json({ error: "Operators may only reset other operator passwords" }, 403);
-      }
-
       const { error } = await adminClient.auth.admin.updateUserById(targetId, { password });
       if (error) return json({ error: error.message }, 400);
 

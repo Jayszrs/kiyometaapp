@@ -100,15 +100,43 @@ function functionError(data: unknown, fallback: string): Error {
 }
 
 async function invokeUsers(body: Record<string, unknown>) {
-  const { data, error } = await supabase.functions.invoke("manage-users", { body });
+  let result = await supabase.functions.invoke("manage-users", { body });
+  let { data, error } = result;
+  let candidate = error as (Error & { context?: Response }) | null;
+  let status = candidate?.context instanceof Response ? candidate.context.status : 0;
+
+  // A browser can retain an expired access token while the refresh token is
+  // still valid. Refresh once and retry instead of leaving the page in a 401 loop.
+  if (status === 401) {
+    const refreshed = await supabase.auth.refreshSession();
+    if (!refreshed.error && refreshed.data.session) {
+      result = await supabase.functions.invoke("manage-users", { body });
+      data = result.data;
+      error = result.error;
+      candidate = error as (Error & { context?: Response }) | null;
+      status = candidate?.context instanceof Response ? candidate.context.status : 0;
+    }
+  }
   if (error) {
-    const candidate = error as Error & { context?: Response };
-    const status = candidate.context instanceof Response ? candidate.context.status : 0;
-    const text = `${candidate.name} ${candidate.message}`.toLowerCase();
+    let serverMessage = "";
+    if (candidate?.context instanceof Response) {
+      try {
+        const payload = await candidate.context.clone().json() as { error?: unknown };
+        serverMessage = typeof payload.error === "string" ? payload.error : "";
+      } catch {
+        // The fallback below is still more useful than failing while parsing.
+      }
+    }
+    if (status === 401) {
+      await supabase.auth.signOut({ scope: "local" });
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+    if (status === 403) throw new Error(serverMessage || "This account is not allowed to perform that action.");
+    const text = `${candidate?.name ?? ""} ${candidate?.message ?? ""}`.toLowerCase();
     if (status === 404 || /fetch|cors|failed to send|relay/.test(text)) {
       throw new Error(EDGE_FUNCTION_REQUIRED_MESSAGE);
     }
-    throw error;
+    throw new Error(serverMessage || candidate?.message || "User management request failed");
   }
   if (data?.error) throw functionError(data, "User management failed");
   return data;
@@ -172,6 +200,30 @@ export async function fetchAuditLogs(limit = 200): Promise<AuditLog[]> {
 export async function undoAuditLog(id: string): Promise<void> {
   const { error } = await supabase.rpc("undo_audit_entry", { p_audit_id: id });
   if (error) throw error;
+}
+
+const UNDOABLE_ENTITIES = new Set([
+  "clients",
+  "products",
+  "orders",
+  "inventory_items",
+  "purchases",
+  "stock_movements",
+  "product_materials",
+  "profiles",
+]);
+
+export function isUndoableAuditLog(log: AuditLog): boolean {
+  const source = String(log.metadata.source ?? "");
+  const stockReference = String((log.newData ?? log.oldData)?.reference_type ?? "");
+  const automaticStock = log.entity === "stock_movements" && ["purchase", "order"].includes(stockReference);
+  return (
+    !log.undoneAt
+    && !source.startsWith("undo:")
+    && !automaticStock
+    && ["insert", "update", "delete"].includes(log.action)
+    && UNDOABLE_ENTITIES.has(log.entity)
+  );
 }
 
 function inventoryFromRow(row: Record<string, unknown>): InventoryItem {
