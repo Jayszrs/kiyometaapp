@@ -3,7 +3,7 @@ import { Icon, Btn, TextInput } from "./App";
 import { signIn } from "./lib/auth";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -14,15 +14,15 @@ export default function LoginPage() {
     // Read from the form DOM so OS autofill / WebView keyboards that skip
     // React onChange still work (button must not be gated on reactive state).
     const fd = new FormData(e.currentTarget);
-    const submittedEmail = String(fd.get("email") ?? "").trim();
+    const submittedIdentity = String(fd.get("identity") ?? "").trim();
     const submittedPassword = String(fd.get("password") ?? "");
-    if (!submittedEmail || !submittedPassword) {
-      setError("Email and password are required.");
+    if (!submittedIdentity || !submittedPassword) {
+      setError("Username and password are required.");
       return;
     }
     setBusy(true);
     try {
-      await signIn(submittedEmail, submittedPassword);
+      await signIn(submittedIdentity, submittedPassword);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -31,10 +31,10 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-white border border-slate-200 rounded-sm shadow-sm p-8">
+    <div className="flex h-full items-center justify-center overflow-y-auto bg-[#f5f6f8] p-3 sm:p-6" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
+      <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
         <div className="flex items-center gap-2.5 mb-6">
-          <span className="flex items-center justify-center w-9 h-9 rounded bg-[#0d7377] text-white text-base font-700 shrink-0">K</span>
+          <img src="/app-logo.png" alt="Kiyometa" className="h-10 w-10 shrink-0 rounded object-cover shadow-sm" />
           <div>
             <p className="text-lg font-700 text-[#1a3458] leading-tight">Kiyometa</p>
             <p className="text-sm text-slate-500 leading-tight">Order Management</p>
@@ -49,8 +49,8 @@ export default function LoginPage() {
         )}
 
         <label className="block mb-4">
-          <span className="block text-sm font-600 text-slate-500 mb-1">Email</span>
-          <TextInput name="email" type="email" value={email} onChange={setEmail} placeholder="operator@kiyometa.app" />
+          <span className="block text-sm font-600 text-slate-500 mb-1">Username</span>
+          <TextInput name="identity" value={username} onChange={setUsername} placeholder="operator" />
         </label>
         <label className="block mb-6">
           <span className="block text-sm font-600 text-slate-500 mb-1">Password</span>

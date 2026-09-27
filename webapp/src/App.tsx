@@ -1,10 +1,22 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import { runOcr, sendOcrLog } from "./lib/ocrClient";
 import { parseQuotation, type ParsedQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
+import UndoButton from "./components/UndoButton";
+import {
+  deleteBomItem,
+  fetchProductMaterialData,
+  saveBomItem,
+  type BomItem,
+  type InventoryItem,
+} from "./lib/operations";
+
+const InventoryPage = lazy(() => import("./InventoryPage"));
+const ManagementPage = lazy(() => import("./ManagementPage"));
+const ProfilePage = lazy(() => import("./ProfilePage"));
 
 // ---- Types ----
 
@@ -17,7 +29,10 @@ type Page =
   | "product-master"
   | "delivery-slip"
   | "schedule"
-  | "checklist";
+  | "checklist"
+  | "inventory"
+  | "management"
+  | "profile";
 
 type DeliverySlipMode = "single" | "multiple";
 
@@ -91,6 +106,7 @@ const PATHS: Record<string, string> = {
   scan: "M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 12h10",
   users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   package: "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 001 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12",
+  "arrow-left": "M19 12H5M12 19l-7-7 7-7",
   "arrow-right": "M5 12h14M12 5l7 7-7 7",
   check: "M20 6L9 17l-5-5",
   share: "M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zM21 19a3 3 0 11-6 0 3 3 0 016 0z",
@@ -103,6 +119,9 @@ const PATHS: Record<string, string> = {
   upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
   camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z",
   loader: "M21 12a9 9 0 11-6.22-8.56",
+  user: "M20 21a8 8 0 00-16 0M12 13a5 5 0 100-10 5 5 0 000 10z",
+  database: "M20 6c0 1.66-3.58 3-8 3S4 7.66 4 6s3.58-3 8-3 8 1.34 8 3zM4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6",
+  shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4",
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
@@ -146,17 +165,6 @@ const PROGRESS_JA: Record<string, string> = {
   "Contact": "要連絡",
 };
 
-const SCHEDULE_STATUSES = [
-  "Order request",
-  "Receipt",
-  "In preparation",
-  "Preparation complete",
-  "In production",
-  "Complete",
-  "Shipped",
-  "Contact",
-];
-
 const SCHEDULE_STATUS_COLORS: Record<string, string> = {
   "Order request": "bg-pink-500 text-white border-pink-600",
   "Receipt": "bg-pink-200 text-slate-800 border-pink-300",
@@ -175,14 +183,6 @@ const ARRANGEMENT_OPTIONS = [
   "Labor assignment",
   "No arrangement",
 ];
-
-const PAGE_TAG: Record<string, string> = {
-  P1: "bg-blue-700 text-white",
-  "P1+P4": "bg-violet-700 text-white",
-  "P1+P5": "bg-teal-700 text-white",
-  P4: "bg-orange-600 text-white",
-  P5: "bg-green-700 text-white",
-};
 
 // ---- Validation ----
 
@@ -375,6 +375,7 @@ export function TextInput({ value, onChange, type = "text", placeholder = "", cl
   return (
     <input type={type} value={value} readOnly={readOnly} placeholder={placeholder} name={name}
       maxLength={maxLength} step={step}
+      onClick={event => { if (type === "date" && !readOnly) event.currentTarget.showPicker?.(); }}
       onChange={e => onChange?.(e.target.value)}
       className={`w-full px-3 py-2 text-base border rounded-sm bg-white focus:outline-none focus:ring-2 transition-colors ${border} ${readOnly ? "bg-slate-50 text-slate-400 cursor-default" : ""} ${className}`} />
   );
@@ -396,9 +397,9 @@ function SelectInput({ value, onChange, options, hasError = false, placeholder =
 
 type BtnVariant = "primary" | "action" | "danger" | "ghost" | "outline";
 
-export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "" }: {
+export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "", ariaLabel }: {
   children: React.ReactNode; onClick?: () => void;
-  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string;
+  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string; ariaLabel?: string;
 }) {
   const vars: Record<BtnVariant, string> = {
     primary: "bg-[#1a3458] hover:bg-[#112240] text-white border-[#1a3458]",
@@ -409,7 +410,7 @@ export function Btn({ children, onClick, variant = "outline", size = "md", disab
   };
   const sizes = { sm: "px-3 py-1.5 text-sm gap-1.5", md: "px-4 py-2 text-base gap-2", lg: "px-6 py-2.5 text-base gap-2" };
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel}
       className={`inline-flex items-center justify-center font-600 border rounded-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${vars[variant]} ${sizes[size]} ${className}`}>
       {children}
     </button>
@@ -446,14 +447,24 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
-      <header className="flex items-center gap-2 px-4 py-3 bg-[#1a3458] text-white shrink-0">
-        <button onClick={() => setMenuOpen(true)}
-          className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
-          <Icon name="menu" size={20} />
-        </button>
-        <span className="text-base font-600 flex-1">{title ?? "Kiyometa Order Management"}</span>
+      <header className="app-header flex items-center gap-2 px-3 py-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
+        {showBack ? (
+          <button onClick={() => onNavigate(backTarget)} title={backLabel}
+            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label={backLabel}>
+            <Icon name="arrow-left" size={20} />
+          </button>
+        ) : (
+          <button onClick={() => setMenuOpen(true)}
+            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
+            <Icon name="menu" size={20} />
+          </button>
+        )}
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
+          <span className="truncate text-base font-600">{title ?? "Kiyometa Order Management"}</span>
+        </div>
         {lang !== undefined && setLang && (
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
+          <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
             <ToggleSwitch
               checked={lang === "en"}
               onChange={v => setLang(v ? "en" : "ja")}
@@ -463,7 +474,8 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
             />
           </div>
         )}
-        <UserMenuButton />
+        <UndoButton />
+        <UserMenuButton onNavigate={onNavigate} />
       </header>
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
         {children}
@@ -472,18 +484,25 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   );
 }
 
-function UserMenuButton() {
-  const { email, signOut } = useAuth();
+function UserMenuButton({ onNavigate }: { onNavigate: (p: Page) => void }) {
+  const { profile, signOut } = useAuth();
   return (
-    <button onClick={signOut} title="Sign out"
-      className="flex items-center gap-1.5 text-sm text-blue-200 hover:text-white transition-colors cursor-pointer shrink-0">
-      <Icon name="user" size={15} className="shrink-0" />
-      <span className="max-w-[180px] truncate">{email}</span>
-    </button>
+    <div className="flex shrink-0 items-center gap-1">
+      <button onClick={() => onNavigate("profile")} title="Edit my profile"
+        className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm text-blue-100 transition-colors hover:bg-white/10 hover:text-white">
+        <Icon name="user" size={15} className="shrink-0" />
+        <span className="hidden max-w-[180px] truncate sm:inline">@{profile.username}</span>
+      </button>
+      <button onClick={signOut} title="Sign out" aria-label="Sign out"
+        className="rounded px-2 py-1.5 text-xs text-blue-200 transition-colors hover:bg-white/10 hover:text-white">
+        <span className="hidden sm:inline">Sign out</span><span className="sm:hidden">↪</span>
+      </button>
+    </div>
   );
 }
 
 function NavDrawer({ open, onClose, onNavigate, lang = "en" }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang?: Lang }) {
+  const { profile } = useAuth();
   if (!open) return null;
   const items = [
     { key: "navHome" as const, page: "home" as Page, icon: "home" },
@@ -492,11 +511,16 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en" }: { open: boolean; 
     { key: "navClientMaster" as const, page: "client-master" as Page, icon: "users" },
     { key: "navProductMaster" as const, page: "product-master" as Page, icon: "package" },
     { key: "navSchedule" as const, page: "schedule" as Page, icon: "calendar" },
+    { key: "navInventory" as const, page: "inventory" as Page, icon: "database" },
+    { key: "navProfile" as const, page: "profile" as Page, icon: "user" },
+    ...(profile.role === "administrator"
+      ? [{ key: "navManagement" as const, page: "management" as Page, icon: "shield" }]
+      : []),
   ];
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <nav className="relative w-72 bg-white h-full flex flex-col shadow-xl">
+       <nav className="relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
           <span className="font-600 text-base">{t("navTitle", lang)}</span>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label="Close">
@@ -788,6 +812,7 @@ return (
 // ---- Page: Home ----
 
 function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; onOpenScan: () => void; lang: Lang; setLang: (l: Lang) => void }) {
+  const { profile } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const nowJst = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
   const dateStr = new Date(nowJst).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -801,20 +826,25 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
     { label: t("searchBilling", lang), desc: "Search orders, print invoices and delivery slips", page: "search-billing" as Page, icon: "search" },
     { label: t("clientMaster", lang), desc: "View and edit client information", page: "client-master" as Page, icon: "users" },
     { label: t("productMaster", lang), desc: "View and edit product specifications", page: "product-master" as Page, icon: "package" },
+    { label: t("navInventory", lang), desc: "Materials, purchasing, and stock mutations", page: "inventory" as Page, icon: "database" },
+    { label: t("navProfile", lang), desc: "Photo and employee details", page: "profile" as Page, icon: "user" },
+    ...(profile.role === "administrator" ? [
+      { label: t("navManagement", lang), desc: "Employee access and activity history", page: "management" as Page, icon: "shield" },
+    ] : []),
   ];
 
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
-      <header className="flex items-center gap-3 px-4 py-3 bg-[#1a3458] text-white shrink-0">
-        <button onClick={() => setMenuOpen(true)} className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
+      <header className="app-header flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
+        <button onClick={() => setMenuOpen(true)} aria-label="Menu" className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
           <Icon name="menu" size={20} />
         </button>
-        <div className="flex items-center gap-2.5 flex-1">
-          <span className="flex items-center justify-center w-7 h-7 rounded bg-[#0d7377] text-white text-sm font-700 shrink-0">K</span>
-          <span className="text-base font-600">{t("appTitle", lang)}</span>
+        <div className="flex min-w-0 items-center gap-2.5 flex-1">
+          <img src="/app-logo.png" alt="Kiyometa" className="h-8 w-8 shrink-0 rounded object-cover" />
+          <span className="truncate text-base font-600">{t("appTitle", lang)}</span>
         </div>
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
+        <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
           <ToggleSwitch
             checked={lang === "en"}
             onChange={v => setLang(v ? "en" : "ja")}
@@ -823,27 +853,28 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
             dark
           />
         </div>
-        <UserMenuButton />
+        <UndoButton />
+        <UserMenuButton onNavigate={onNavigate} />
       </header>
 
       <div className="flex-1 overflow-y-auto">
         <div className="border-b border-slate-200 bg-white">
-          <div className="px-8 pt-7 pb-5 max-w-5xl mx-auto flex items-end justify-between">
+          <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
             <div>
               <h1 className="text-2xl font-700 text-[#1a3458]">{t(greetingKey, lang)}</h1>
               <p className="text-base text-slate-500 mt-1">{dateStr}</p>
             </div>
-            <p className="text-sm text-slate-500 text-right">
+            <p className="text-sm text-slate-500 sm:text-right">
               <span className="font-600 text-slate-700">{inProd}</span>{t("inProdSuffix", lang)},{" "}
               <span className="font-600 text-slate-700">{shipped}</span>{t("shippedSuffix", lang)}
             </p>
           </div>
         </div>
 
-        <div className="px-8 py-6 max-w-5xl mx-auto space-y-6">
+        <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-8 sm:py-6">
 
           {/* Row 1: Quick actions */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[390px]:grid-cols-2">
             <button onClick={() => onNavigate("order-entry")}
               className="flex items-center gap-3 px-5 py-4 bg-[#1a3458] text-white rounded-sm hover:bg-[#112240] transition-colors cursor-pointer">
               <Icon name="plus" size={20} className="text-blue-200 shrink-0" />
@@ -859,7 +890,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
           {/* Row 2: Sections */}
           <div>
             <p className="text-xs font-700 text-slate-400 mb-2">{t("sectionsHeader", lang)}</p>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
               {quickNav.map(item => (
                 <button key={item.label} onClick={() => onNavigate(item.page)}
                   className="flex flex-col items-center gap-2 px-4 py-4 bg-white border border-slate-200 rounded-sm hover:border-[#1a3458] hover:bg-slate-50 cursor-pointer transition-colors text-center">
@@ -881,8 +912,32 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
                 {t("viewAll", lang)} <Icon name="chevron-right" size={14} />
               </button>
             </div>
-            <div className="bg-white border border-slate-200 rounded-sm overflow-hidden">
-              <table className="w-full text-base border-collapse">
+            <div className="overflow-hidden rounded-sm border border-slate-200 bg-white">
+              <div className="divide-y divide-slate-100 sm:hidden">
+                {orders.map(o => (
+                  <button key={o.id} type="button" onClick={() => onNavigate("order-entry")}
+                    className="block w-full space-y-3 p-4 text-left transition-colors hover:bg-slate-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words font-700 text-slate-800">{o.productName}</p>
+                        <p className="mt-0.5 truncate text-sm text-slate-500">{o.client}</p>
+                      </div>
+                      <StatusBadge status={o.progress} lang={lang} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("amountLabel", lang)}</p>
+                        <p className="mt-0.5 font-mono font-700 text-slate-700">¥{o.orderAmount.toLocaleString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("deliveryLabel", lang)}</p>
+                        <p className="mt-0.5 font-mono text-slate-600">{o.deliveryDate}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <table className="hidden w-full border-collapse text-base sm:table">
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th className="text-left px-4 py-2.5 text-sm font-600 text-slate-500">{t("productNameLabel", lang)}</th>
@@ -1021,6 +1076,9 @@ const LABELS = {
   navClientMaster:  { ja: "取引先マスタ",        en: "Client master" },
   navProductMaster: { ja: "製品マスタ",          en: "Product master" },
   navSchedule:      { ja: "生産計画",           en: "Schedule" },
+  navInventory:     { ja: "在庫管理",           en: "Inventory" },
+  navProfile:       { ja: "マイプロフィール",   en: "My profile" },
+  navManagement:    { ja: "権限管理",           en: "Role management" },
   inProdSuffix:     { ja: "件 製作中",           en: " in production" },
   shippedSuffix:    { ja: "件 出荷済み",         en: " shipped" },
   newOrder:         { ja: "新規",              en: "New order" },
@@ -1078,6 +1136,8 @@ const LABELS = {
   addImage:           { ja: "クリックして画像を追加", en: "Tap or click to add an image" },
   addDrawingSlots:    { ja: "画像スロットを追加",  en: "Add more drawing slots" },
   totalRequiredTime:  { ja: "総必要時間",          en: "Total required time" },
+  autoCalculated:     { ja: "自動計算",            en: "Auto-calculated" },
+  autoCalcInfo:       { ja: "合計時間は下のタスクから自動計算されます。", en: "Total time is automatically calculated from the tasks below." },
   minPerUnit:         { ja: "分/1個",              en: "min / 1 unit" },
   totalCalculation:   { ja: "合計計算",            en: "Total Calculation" },
   manufacturingTasks: { ja: "製造タスク (1-54)",  en: "Manufacturing tasks (1-54)" },
@@ -1167,12 +1227,10 @@ function TimeStack({ titleJa, titleEn, values, lang }: {
         return (
           <div key={label} className="flex items-center gap-1.5">
             <span className="w-9 shrink-0 text-xs font-700 text-slate-500">{label}</span>
-            <input
-              type="number"
-              value={v}
-              readOnly
-              className="flex-1 min-w-0 px-2 py-1.5 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-600 font-mono text-center cursor-default focus:outline-none"
-            />
+            <output
+              title="Calculated automatically"
+              className="flex min-w-0 flex-1 items-center justify-center rounded-sm border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-base text-slate-600"
+            >{v}</output>
           </div>
         );
       })}
@@ -1258,7 +1316,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
   const setProductByName = (name: string) => {
     const p = products.find(pt => pt.productName === name);
-    const total = p ? p.tasks.reduce((s, t) => s + (Number(t.time) || 0), 0) : 0;
+    const perUnit = p ? p.tasks.reduce((s, t) => s + (Number(t.time) || 0), 0) : 0;
+    const total = perUnit * Math.max(form.quantity || 0, 1);
     const unitPrice = p && p.unitPrice !== "" ? Number(p.unitPrice) : 0;
     setForm(prev => ({ ...prev, productName: name, requiredManhours: total, orderAmount: prev.quantity * unitPrice }));
     setErrors(prev => ({ ...prev, productName: "", requiredManhours: "", orderAmount: "" }));
@@ -1271,27 +1330,36 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     setForm(cleaned);
     const errs = validateOrder(cleaned, clients, products);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    if (isNew) {
-      const record = { ...cleaned, id: newId() };
-      setOrders(prev => prev.some(o => o.id === record.id) ? prev : [record, ...prev]);
-      setSelectedId(record.id);
+    const record = isNew ? { ...cleaned, id: newId() } : cleaned;
+    try {
+      const saved = await upsertOrder(record);
+      setOrders(prev => prev.some(o => o.id === saved.id)
+        ? prev.map(o => o.id === saved.id ? saved : o)
+        : [saved, ...prev]);
+      setForm(saved);
+      setSelectedId(saved.id);
       setIsNew(false);
-      await upsertOrder(record).catch(err => alert(`Failed to save order: ${err.message}`));
-    } else {
-      setOrders(prev => prev.map(o => o.id === cleaned.id ? cleaned : o));
-      await upsertOrder(cleaned).catch(err => alert(`Failed to save order: ${err.message}`));
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+      return;
     }
     setErrors({});
   };
 
   const handleDelete = async () => {
+    if (!confirm("Delete this order? You can recover it with Undo.")) return;
     const deletedId = form.id;
-    setOrders(prev => prev.filter(o => o.id !== deletedId));
+    try {
+      await deleteOrder(deletedId);
+    } catch (err) {
+      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     const rest = orders.filter(o => o.id !== deletedId);
+    setOrders(rest);
     if (rest[0]) { setForm(rest[0]); setSelectedId(rest[0].id); }
     else { handleNew(); }
     setErrors({});
-    await deleteOrder(deletedId).catch(err => alert(`Failed to delete order: ${err.message}`));
   };
 
   const remaining = (form.requiredManhours || 0) - (form.workedManhours || 0);
@@ -1328,10 +1396,10 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   return (
     <AppShell onNavigate={onNavigate} title="Kiyometa Order Management V2" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
 
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="responsive-workspace flex flex-1 overflow-hidden min-h-0">
 
         {/* Column 1: Filter & Sort */}
-        <aside className="w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
+        <aside className="responsive-panel responsive-panel-filter w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
 
           {/* Display Order */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -1400,7 +1468,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         </aside>
 
         {/* Column 2: Search & Record List */}
-        <aside className="w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
           <div className="px-3 pt-3 pb-2 border-b border-slate-200 shrink-0">
             <p className="text-xs font-700 text-white bg-[#1a3458] px-2 py-1 mb-2 rounded-sm">{L("searchItem")}</p>
             <div className="flex items-center gap-2 px-2.5 py-2 border-2 border-slate-300 rounded-sm bg-white focus-within:border-[#1a3458] transition-colors">
@@ -1436,7 +1504,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         </aside>
 
         {/* Column 3: Main Activity Form */}
-        <main className="flex-1 overflow-y-auto min-h-0 bg-white">
+        <main className="responsive-main flex-1 overflow-y-auto min-h-0 bg-white">
 
           {/* Scan bar */}
           <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 shrink-0">
@@ -1467,10 +1535,11 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
           <div className="p-4 space-y-4">
 
             {/* Row 1: Dates + Client + Order Number */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("orderDateLabel")}</label>
                 <input type="date" value={form.orderDate}
+                  onClick={event => event.currentTarget.showPicker?.()}
                   onChange={e => { setForm(prev => ({ ...prev, orderDate: e.target.value })); setErrors(prev => ({ ...prev, deliveryDate: e.target.value && form.deliveryDate && e.target.value > form.deliveryDate ? "Delivery date must be on or after order date." : "" })); }}
                   className={inputCls(!!errors.orderDate)} />
                 {errors.orderDate && <p className="text-xs text-red-600 mt-0.5">{errors.orderDate}</p>}
@@ -1478,6 +1547,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("deliveryDateLabel")}</label>
                 <input type="date" value={form.deliveryDate}
+                  onClick={event => event.currentTarget.showPicker?.()}
                   onChange={e => { setForm(prev => ({ ...prev, deliveryDate: e.target.value })); setErrors(prev => ({ ...prev, deliveryDate: e.target.value && form.orderDate && e.target.value < form.orderDate ? "Delivery date must be on or after order date." : "" })); }}
                   className={inputCls(!!errors.deliveryDate)} />
                 {errors.deliveryDate && <p className="text-xs text-red-600 mt-0.5">{errors.deliveryDate}</p>}
@@ -1505,7 +1575,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 2: Product + Product Number + Quantity + Amount */}
-            <div className="grid grid-cols-[1.2fr_1fr_1fr_1.2fr] gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr_1.2fr]">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("productName")}</label>
                 <div className="relative">
@@ -1540,8 +1610,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                     const qty = c === "" ? 0 : parseInt(c, 10);
                     const p = products.find(pt => pt.productName === form.productName);
                     const unitPrice = p && p.unitPrice !== "" ? Number(p.unitPrice) : 0;
-                    setForm(prev => ({ ...prev, quantity: qty, orderAmount: qty * unitPrice }));
-                    setErrors(prev => ({ ...prev, quantity: "", orderAmount: "" }));
+                    const perUnitMinutes = p ? p.tasks.reduce((sum, task) => sum + (Number(task.time) || 0), 0) : 0;
+                    setForm(prev => ({ ...prev, quantity: qty, orderAmount: qty * unitPrice, requiredManhours: qty * perUnitMinutes }));
+                    setErrors(prev => ({ ...prev, quantity: "", orderAmount: "", requiredManhours: "" }));
                   }}
                   className={inputCls(!!errors.quantity)} />
                 {errors.quantity && <p className="text-xs text-red-600 mt-0.5">{errors.quantity}</p>}
@@ -1575,11 +1646,13 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
             {/* Row 4: Man-hours Math Matrix -> [Required (min)] - [Worked (min)] = [Remaining (min)] */}
             <div className="border border-slate-200 rounded-sm p-3 bg-white">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
+              <div className="responsive-math-grid grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("requiredManhours")} ({L("minUnit")})</label>
-                  <input type="number" value={form.requiredManhours === 0 ? "" : form.requiredManhours} readOnly
-                    className="w-full px-3 py-2 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-500 cursor-default" />
+                  <output
+                    title="Calculated automatically from product task time × order quantity"
+                    className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{form.requiredManhours || 0}</output>
+                  <p className="mt-1 text-xs text-slate-400">Auto: product time × quantity</p>
                 </div>
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">-</div>
                 <div>
@@ -1592,15 +1665,16 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">=</div>
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("remainingManhours")} ({L("minUnit")})</label>
-                  <input type="number" value={remaining} readOnly
-                    className="w-full px-3 py-2 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-500 cursor-default" />
+                  <output
+                    title="Calculated automatically from required time minus worked time"
+                    className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{remaining}</output>
                 </div>
               </div>
             </div>
 
             {/* Row 5: Schedule Math Matrix -> [Until Delivery] - [Required] = [Margin] */}
             <div className="border border-slate-200 rounded-sm p-3 bg-white">
-              <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
+              <div className="responsive-math-grid grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
                 <TimeStack titleJa={L("unitDelivery")} titleEn={L("unitDelivery")} values={deliveryDHM} lang={lang} />
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">-</div>
                 <TimeStack titleJa={L("unitRequired")} titleEn={L("unitRequired")} values={requiredDHM} lang={lang} />
@@ -1611,12 +1685,13 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
             {/* Row 6: Production End Date + Until End (separate, below the schedule matrix) */}
             <div className="border border-slate-200 rounded-sm p-3 bg-slate-50">
-              <div className="grid grid-cols-2 gap-6 items-start">
+              <div className="grid grid-cols-1 gap-6 items-start sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-700 text-slate-600 mb-1">{L("productionEndDate")}</label>
                   <input type="date" value={form.productionEndDate}
+                    onClick={event => event.currentTarget.showPicker?.()}
                     onChange={e => { setForm(prev => ({ ...prev, productionEndDate: e.target.value })); const err = e.target.value && form.orderDate && e.target.value < form.orderDate ? "Cannot be earlier than the order date." : e.target.value && form.deliveryDate && e.target.value > form.deliveryDate ? "Cannot be later than the delivery date." : ""; setErrors(prev => ({ ...prev, productionEndDate: err })); }}
-                    className={inputCls(!!errors.productionEndDate)} />
+                    className={`${inputCls(!!errors.productionEndDate)} cursor-pointer`} />
                   {errors.productionEndDate && <p className="text-xs text-red-600 mt-0.5">{errors.productionEndDate}</p>}
                 </div>
                 <div>
@@ -1626,7 +1701,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 7: Progress Status + Finish Task + Tasks */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("progressStatus")}</label>
                 <div className="relative">
@@ -1660,7 +1735,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             </div>
 
             {/* Row 8: Contact toggle + Required Arrangements dropdown */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-sm flex items-center justify-between">
                 <span className="text-sm font-700 text-slate-700 shrink-0">{L("contact")}</span>
                 <div className="ml-auto">
@@ -1695,11 +1770,11 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       </div>
 
       {/* Bottom action bar */}
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={() => onNavigate("search-billing")}>
           <Icon name="search" size={16} /><span>{L("searchBilling")}</span>
         </Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="ghost" size="lg" onClick={handleNew}>
           <Icon name="plus" size={16} /><span>{L("newButton")}</span>
         </Btn>
@@ -1757,15 +1832,25 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
 
   const handleSave = async () => {
     if (!panelForm.client || !panelForm.productName || !panelForm.deliveryDate) return;
-    setOrders(prev => prev.map(o => o.id === panelForm.id ? panelForm : o));
-    await upsertOrder(panelForm).catch(err => alert(`Failed to save order: ${err.message}`));
+    try {
+      const saved = await upsertOrder(panelForm);
+      setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
+      setPanelForm(saved);
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   const handleDelete = async (id: string) => {
+    try {
+      await deleteOrder(id);
+    } catch (err) {
+      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
     setOrders(prev => prev.filter(o => o.id !== id));
     setDeleteConfirm(null);
     if (panelForm.id === id) resetSelection();
-    await deleteOrder(id).catch(err => alert(`Failed to delete order: ${err.message}`));
   };
 
   const spf = (k: keyof OrderRecord) => (e: string) => setPanelForm(prev => ({ ...prev, [k]: e }));
@@ -1780,13 +1865,42 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
     return clientOk && statusFilter[o.progress] && dateOk;
   }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
 
+  const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const downloadCsv = () => {
+    const headers = ["Order date", "Delivery date", "Client", "Order number", "Product", "Quantity", "Amount", "Progress"];
+    const lines = [headers, ...filtered.map(order => [
+      order.orderDate, order.deliveryDate, order.client, order.orderNumber,
+      order.productName, order.quantity, order.orderAmount, order.progress,
+    ])].map(row => row.map(csvCell).join(","));
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `orders-${today}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const printPreparation = () => {
+    const popup = window.open("", "_blank", "width=960,height=720");
+    if (!popup) {
+      alert("The print window was blocked. Allow pop-ups for this application and try again.");
+      return;
+    }
+    popup.opener = null;
+    const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+    const rows = filtered.map(order => `<tr><td>${escape(order.deliveryDate)}</td><td>${escape(order.orderNumber)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="num">${escape(order.quantity)}</td><td>${escape(order.progress)}</td></tr>`).join("");
+    popup.document.write(`<!doctype html><html><head><title>Production preparation</title><style>body{font:14px Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px}p{color:#64748b;margin:0 0 24px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #cbd5e1;padding:10px 8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}.num{text-align:right}@media print{body{padding:0}}</style></head><body><h1>Production Preparation List</h1><p>${escape(fromDate)} — ${escape(toDate)} · ${filtered.length} order(s)</p><table><thead><tr><th>Delivery</th><th>Order no.</th><th>Client</th><th>Product</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
+    popup.document.close();
+  };
+
   const productInfo = (o: OrderRecord) =>
     productByKey.get(`${o.client}|${o.productName}`) ?? null;
 
   return (
     <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} lang={lang} setLang={setLang}>
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-filter w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
 
           {/* Search Period */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -1849,7 +1963,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
             {filtered.map(o => {
               const prod = productInfo(o);
@@ -1888,7 +2002,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
         </main>
 
         {/* Column 3: Right Edit Panel -- always visible, never overlays */}
-        <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
+        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
           {selectedId === null ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
               <div className="w-14 h-14 flex items-center justify-center rounded-full bg-slate-100 text-slate-300 shrink-0">
@@ -1903,7 +2017,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 shrink-0">
                 <span className="text-base font-700 text-slate-800">{lang === "ja" ? "受注詳細" : "Order Details"}</span>
                 <button onClick={resetSelection} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors" aria-label="Close">
-                  <Icon name="x" size={17} />
+                  <Icon name="close" size={17} />
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
@@ -1983,12 +2097,12 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
         </aside>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap"><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
-        <Btn variant="action" size="md" className="flex-1 justify-center whitespace-nowrap" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="flex-1 justify-center whitespace-nowrap"><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 lg:flex lg:items-center lg:gap-3 lg:px-5">
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
+        <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1" onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
       </footer>
     </AppShell>
   );
@@ -2045,20 +2159,20 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
 
   return (
     <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0 sm:gap-3 sm:px-4">
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))}><Icon name="chevron-left" size={14} />{t("prevPage", lang)}</Btn>
         <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</span>
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>{t("nextPage", lang)}<Icon name="chevron-right" size={14} /></Btn>
         <div className="flex-1" />
         <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center p-8 bg-slate-300">
-        <div className="w-full max-w-2xl bg-white shadow-md p-10">
+      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <div className="text-center mb-8">
             <h2 className="text-3xl font-700 text-slate-800 inline-block pb-2 border-b-2 border-slate-800">{t("invoiceTitle", lang)}</h2>
           </div>
 
-          <div className="flex justify-between items-start gap-6 mb-8">
+          <div className="mb-8 flex flex-col items-start justify-between gap-6 sm:flex-row">
             <div className="flex-1 min-w-0">
               <div className="border-2 border-slate-300 rounded-sm px-4 py-3">
                 <p className="text-lg font-700 text-slate-800 leading-snug">{client?.name}{lang === "ja" ? " 御中" : ""}</p>
@@ -2118,7 +2232,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             </div>
           </div>
 
-          <table className="w-full border-collapse">
+          <table className="w-full min-w-[540px] border-collapse">
             <thead>
               <tr className="bg-blue-50">
                 <th className="text-left px-3 py-2.5 text-sm font-600 text-slate-600 border border-slate-200">{t("totalAmount", lang)}</th>
@@ -2137,7 +2251,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             </tbody>
           </table>
 
-          <table className="w-full border-collapse text-base mt-6">
+          <table className="mt-6 w-full min-w-[540px] border-collapse text-base">
             <thead>
               <tr className="bg-blue-50">
                 <th className="text-left px-3 py-2.5 text-sm font-600 text-slate-600 border border-slate-200">{t("itemLabel", lang)}</th>
@@ -2252,13 +2366,34 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     setDirty(true);
   };
 
+  const handleDelete = async () => {
+    if (isNew || !confirm("Delete this client? You can recover it with Undo.")) return;
+    const deletedId = form.id;
+    try {
+      await deleteClient(deletedId);
+    } catch (err) {
+      alert(`Failed to delete client: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    const rest = clients.filter(client => client.id !== deletedId);
+    setClients(rest);
+    setDirty(false);
+    if (rest[0]) {
+      setForm(rest[0]);
+      setSelectedId(rest[0].id);
+      setIsNew(false);
+    } else {
+      handleNew();
+    }
+  };
+
   return (
     <AppShell onNavigate={onNavigate} title={t("clientMaster", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
         <ScanBanner message={`Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2279,7 +2414,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
           </div>
         </aside>
 
-        <main className="flex-1 p-7 overflow-y-auto">
+        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-7">
           {Object.values(errors).some(v => v) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm max-w-lg">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2315,7 +2450,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
               <FieldBox label={t("postalCodeLabel", lang)} error={errors.postalCode}>
                 <div className="flex gap-2">
                   <TextInput value={form.postalCode} onChange={sf("postalCode")} hasError={!!errors.postalCode} placeholder="e.g. 393-0011" />
-                  <Btn variant="outline" size="sm" onClick={handlePostalSearch}><Icon name="search" size={14} /></Btn>
+                  <Btn variant="outline" size="sm" onClick={handlePostalSearch} ariaLabel="Find address from postal code"><Icon name="search" size={14} /></Btn>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "形式: 3桁-4桁" : "Format: 3 digits, hyphen, 4 digits"}</p>
               </FieldBox>
@@ -2328,11 +2463,11 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         </main>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" disabled={isNew} onClick={() => { const deletedId = form.id; setClients(prev => prev.filter(c => c.id !== deletedId)); setIsNew(false); setDirty(false); if (clients[0]) { setForm(clients[0]); setSelectedId(clients[0].id); } deleteClient(deletedId).catch(err => alert(`Failed to delete client: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2370,7 +2505,13 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [search, setSearch] = useState("");
   const [drawingIndex, setDrawingIndex] = useState<number | null>(null);
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
-  const [calculatedTotal, setCalculatedTotal] = useState<number | null>(null);
+  const [showCalcInfo, setShowCalcInfo] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [allBom, setAllBom] = useState<BomItem[]>([]);
+  const [materialItemId, setMaterialItemId] = useState("");
+  const [materialQty, setMaterialQty] = useState(1);
+  const [materialBusy, setMaterialBusy] = useState(false);
+  const [materialError, setMaterialError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const taskErrors = Object.entries(errors).filter(([k, v]) => k.startsWith("task_") && v);
@@ -2379,10 +2520,55 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     if (!q) return true;
     return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q);
   });
+  const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
+  const productMaterials = allBom.filter(row => row.productId === form.id);
+  const inventoryById = (id: string) => inventoryItems.find(item => item.id === id);
 
-  const handleCalculateTotal = () => {
-    const total = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
-    setCalculatedTotal(total);
+  const reloadMaterials = async () => {
+    const data = await fetchProductMaterialData();
+    setInventoryItems(data.items);
+    setAllBom(data.bom);
+  };
+
+  useEffect(() => {
+    void reloadMaterials().catch(error => setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."));
+  }, []); // Product/inventory data is refreshed again after every BOM write.
+
+  const addMaterial = async () => {
+    if (isNew) {
+      setMaterialError("Save the product before adding materials.");
+      return;
+    }
+    if (!materialItemId || materialQty <= 0) return;
+    setMaterialBusy(true);
+    setMaterialError("");
+    try {
+      await saveBomItem({
+        id: genUUID(), bomNo: "", productId: form.id,
+        inventoryItemId: materialItemId, quantityPerUnit: materialQty, notes: "",
+      });
+      await reloadMaterials();
+      setMaterialItemId("");
+      setMaterialQty(1);
+    } catch (error) {
+      setMaterialError(error instanceof Error ? error.message : "Failed to add material.");
+    } finally {
+      setMaterialBusy(false);
+    }
+  };
+
+  const removeMaterial = async (row: BomItem) => {
+    if (!confirm(`Remove ${row.bomNo} from this product? You can recover it with Undo.`)) return;
+    setMaterialBusy(true);
+    setMaterialError("");
+    try {
+      await deleteBomItem(row.id);
+      await reloadMaterials();
+    } catch (error) {
+      setMaterialError(error instanceof Error ? error.message : "Failed to remove material.");
+    } finally {
+      setMaterialBusy(false);
+    }
   };
 
   const sf = (v: keyof Product) => (e: string) => {
@@ -2438,23 +2624,20 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     const errs = validateProduct(cleaned, products, isNew);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const record = isNew ? { ...cleaned, id: genUUID() } : cleaned;
-    if (isNew) {
-      setProducts(prev => prev.some(p => p.id === record.id) ? prev : [...prev, record]);
-      setForm(record);
-      setSelectedId(record.id);
-      setIsNew(false);
-    } else {
-      setProducts(prev => prev.map(p => p.id === record.id ? record : p));
-    }
-    setErrors({});
-    setDirty(false);
 
     try {
       const saved = await upsertProduct(record);
-      setProducts(prev => prev.map(p => p.id === saved.id ? saved : p));
-      setForm(prev => prev.id === saved.id ? saved : prev);
+      setProducts(prev => prev.some(p => p.id === saved.id)
+        ? prev.map(p => p.id === saved.id ? saved : p)
+        : [...prev, saved]);
+      setForm(saved);
+      setSelectedId(saved.id);
+      setIsNew(false);
+      setErrors({});
+      setDirty(false);
     } catch (err) {
       alert(`Failed to save product: ${err instanceof Error ? err.message : err}`);
+      return;
     }
 
     // Continue scan routing
@@ -2464,13 +2647,34 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     }
   };
 
+  const handleDelete = async () => {
+    if (isNew || !confirm("Delete this product? You can recover it with Undo.")) return;
+    const deletedId = form.id;
+    try {
+      await deleteProduct(deletedId);
+    } catch (err) {
+      alert(`Failed to delete product: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    const rest = products.filter(product => product.id !== deletedId);
+    setProducts(rest);
+    setDirty(false);
+    if (rest[0]) {
+      setForm(rest[0]);
+      setSelectedId(rest[0].id);
+      setIsNew(false);
+    } else {
+      handleNew();
+    }
+  };
+
   return (
     <AppShell onNavigate={onNavigate} title={t("productMaster", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
         <ScanBanner message={`Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+      <div className="responsive-workspace flex flex-1 overflow-hidden">
+        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2492,7 +2696,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
           </div>
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-5">
+        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-5">
           {(Object.entries(errors).some(([k, v]) => v && !k.startsWith("task_")) || taskErrors.length > 0) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2512,7 +2716,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
           <div className="bg-white border border-slate-200 rounded-sm p-5 space-y-5">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FieldBox label={t("clientNameLabel", lang)}>
                 <SelectInput value={form.clientName} onChange={sf("clientName")} placeholder={t("selectPlaceholder", lang)} options={["", ...clients.map(c => c.name)]} />
               </FieldBox>
@@ -2532,7 +2736,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("drawings", lang).replace("{n}", String(form.drawings.length))}</p>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {form.drawings.map((d, i) => (
                   d ? (
                     <div key={i} className="relative aspect-video border-2 border-[#1a3458] rounded-sm overflow-hidden group">
@@ -2557,22 +2761,95 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               </button>
             </div>
 
-            <div className="flex items-center gap-4 mb-4">
-              <span className="text-sm font-600 text-slate-700 shrink-0">{t("totalRequiredTime", lang)}</span>
-              <div className="flex items-end gap-2 border-b-2 border-slate-300 pb-1 w-32 min-w-32">
-                <span className="font-mono text-xl font-700 text-slate-800 text-right flex-1">{calculatedTotal !== null ? calculatedTotal : ""}</span>
-                <span className="text-sm text-slate-600 mb-0.5 shrink-0">{t("minPerUnit", lang)}</span>
-              </div>
-              <button type="button" onClick={handleCalculateTotal}
-                className="ml-auto inline-flex items-center justify-center px-6 py-1.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-600 shadow-sm cursor-pointer transition-colors shrink-0">
-                {t("totalCalculation", lang)}
+            <div className="relative flex flex-wrap items-center gap-3 px-4 py-3 bg-[#f5f6f8] border border-slate-200 rounded-sm">
+              <span className="text-sm font-600 text-slate-600">{t("totalRequiredTime", lang)}</span>
+              <button type="button" onClick={() => setShowCalcInfo(v => !v)}
+                className="text-slate-400 hover:text-[#1a3458] cursor-pointer transition-colors shrink-0"
+                aria-label={t("autoCalcInfo", lang)}>
+                <Icon name="info" size={15} />
               </button>
+              <span className="text-2xl font-700 text-[#1a3458] font-mono">{totalTime.toFixed(1)}</span>
+              <span className="text-sm text-slate-400">({t("autoCalculated", lang)})</span>
+              {showCalcInfo && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowCalcInfo(false)} />
+                  <div className="absolute left-3 top-full mt-2 z-50 w-72 bg-white border border-slate-200 rounded-sm shadow-lg px-4 py-3 text-sm text-slate-600">
+                    {t("autoCalcInfo", lang)}
+                  </div>
+                </>
+              )}
             </div>
+
+            <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-700 text-[#1a3458]">Materials used by this product (BOM)</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">Stock is deducted automatically when an order enters In production.</p>
+                </div>
+                <button type="button" onClick={() => onNavigate("inventory")} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-100">Open inventory</button>
+              </div>
+
+              {materialError && <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{materialError}</div>}
+
+              <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_150px_auto]">
+                <label className="block text-sm font-600 text-slate-600">
+                  Inventory material
+                  <select value={materialItemId} disabled={isNew || materialBusy} onChange={event => setMaterialItemId(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-base disabled:bg-slate-100">
+                    <option value="">Select material / component</option>
+                    {inventoryItems.filter(item => item.category !== "finished_good" && !productMaterials.some(row => row.inventoryItemId === item.id)).map(item => (
+                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · stock {item.availableQty.toLocaleString()} {item.unit}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm font-600 text-slate-600">
+                  Qty per product
+                  <input type="number" min="0.001" step="0.001" value={materialQty} disabled={isNew || materialBusy} onChange={event => setMaterialQty(Math.max(0, Number(event.target.value)))} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 text-base disabled:bg-slate-100" />
+                </label>
+                <button type="button" disabled={isNew || materialBusy || !materialItemId || materialQty <= 0} onClick={() => void addMaterial()} className="self-end rounded bg-[#1a3458] px-5 py-2.5 font-700 text-white disabled:cursor-not-allowed disabled:opacity-40">{materialBusy ? "Saving..." : "Add material"}</button>
+              </div>
+
+              {isNew ? (
+                <p className="p-4 text-sm text-amber-700">Save this product first, then its material requirements can be configured.</p>
+              ) : productMaterials.length === 0 ? (
+                <p className="p-4 text-sm text-amber-700">No materials configured. This product cannot enter production until its BOM is added.</p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {productMaterials.map(row => {
+                    const item = inventoryById(row.inventoryItemId);
+                    const empty = (item?.availableQty ?? 0) <= 0;
+                    const low = !empty && Boolean(item?.needsReorder);
+                    return (
+                      <div key={row.id} className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center ${empty ? "bg-red-50" : low ? "bg-amber-50" : ""}`}>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-700 text-slate-800">{item?.itemName ?? "Unknown material"}</p>
+                          <p className="font-mono text-xs text-slate-500">{item?.itemCode ?? row.bomNo} · {row.bomNo}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm sm:flex sm:items-center sm:gap-7">
+                          <div><p className="text-xs uppercase text-slate-400">Per unit</p><p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p></div>
+                          <div><p className="text-xs uppercase text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p></div>
+                        </div>
+                        <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? "OUT OF STOCK" : low ? "LOW STOCK" : "READY"}</span>
+                        <button type="button" disabled={materialBusy} onClick={() => void removeMaterial(row)} className="rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("manufacturingTasks", lang)}</p>
               <div className="task-scroll border border-slate-200 rounded-sm max-h-[420px] overflow-y-scroll overscroll-contain">
-                <table className="w-full border-collapse text-base">
+                <div className="divide-y divide-slate-100 sm:hidden">
+                  {form.tasks.map((task, i) => (
+                    <div key={i} className={focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}>
+                      <p className="text-xs font-700 uppercase tracking-wide text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
+                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => { const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
+                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskTime", lang)}</span><input type="number" step="0.1" min="0" max="999.9" value={task.time} onFocus={() => setFocusedRow(i)} onChange={e => { const raw = e.target.value.replace(/^0+(?=[1-9])/, ""); const parsed = raw === "" ? ("" as const) : parseFloat(raw); const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-right font-mono text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_time_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_time_${i}`]}</p>}</label>
+                    </div>
+                  ))}
+                </div>
+                <table className="hidden w-full border-collapse text-base sm:table">
                   <thead className="bg-[#f5f6f8] sticky top-0 z-10">
                     <tr className="border-b border-slate-200">
                       <th className="text-center px-3 py-2 text-sm font-600 text-slate-400 w-14">{t("taskNoHeader", lang)}</th>
@@ -2591,7 +2868,6 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                               const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x);
                               setForm(prev => ({ ...prev, tasks }));
                               setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" }));
-                              setCalculatedTotal(null);
                               setDirty(true);
                             }}
                             className={`w-full px-2 py-1 text-base border rounded-sm focus:outline-none focus:border-[#1a3458] transition-colors ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />
@@ -2607,7 +2883,6 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                               const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x);
                               setForm(prev => ({ ...prev, tasks }));
                               setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" }));
-                              setCalculatedTotal(null);
                               setDirty(true);
                             }}
                             className={`w-full px-2 py-1 text-base border rounded-sm text-right font-mono focus:outline-none focus:border-[#1a3458] transition-colors ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />
@@ -2623,11 +2898,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         </main>
       </div>
 
-      <footer className="flex items-center gap-3 px-5 py-3 bg-[#1a3458] shrink-0">
+      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" disabled={isNew} onClick={() => { const deletedId = form.id; setProducts(prev => prev.filter(p => p.id !== deletedId)); setIsNew(false); setDirty(false); if (products[0]) { setForm(products[0]); setSelectedId(products[0].id); } deleteProduct(deletedId).catch(err => alert(`Failed to delete product: ${err.message}`)); }}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2640,6 +2915,9 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
   mode: DeliverySlipMode; orders: OrderRecord[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const [inCharge, setInCharge] = useState("");
+  const [conditions, setConditions] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
   const items = mode === "single" ? orders.slice(3, 4) : orders.slice(3, 5);
   const total = items.reduce((s, o) => s + o.orderAmount, 0);
   const tax = Math.round(total * 0.1);
@@ -2660,16 +2938,16 @@ function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
         <div className="flex-1" />
         <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center p-8 bg-slate-300">
-        <div className="w-full max-w-2xl bg-white shadow-md p-10">
+      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
           <p className="text-sm text-slate-500 mb-6"><span className="font-600 text-slate-600">{t("deliveryDateLabel", lang)}:</span><span className="ml-2 font-mono">{todayStr}</span></p>
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <FieldBox label={t("inCharge", lang)}><TextInput value="" placeholder={ph.inCharge} onChange={() => {}} /></FieldBox>
-            <FieldBox label={t("deliveryConditions", lang)}><TextInput value="" placeholder={ph.conditions} onChange={() => {}} /></FieldBox>
-            <FieldBox label={t("paymentTerms", lang)}><TextInput value="" placeholder={ph.terms} onChange={() => {}} /></FieldBox>
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <FieldBox label={t("inCharge", lang)}><TextInput value={inCharge} placeholder={ph.inCharge} onChange={setInCharge} /></FieldBox>
+            <FieldBox label={t("deliveryConditions", lang)}><TextInput value={conditions} placeholder={ph.conditions} onChange={setConditions} /></FieldBox>
+            <FieldBox label={t("paymentTerms", lang)}><TextInput value={paymentTerms} placeholder={ph.terms} onChange={setPaymentTerms} /></FieldBox>
           </div>
-          <table className="w-full border-collapse text-base mb-6">
+          <table className="mb-6 w-full min-w-[560px] border-collapse text-base">
             <thead>
               <tr className="border-b-2 border-slate-200">
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("orderNoLabel", lang)}</th>
@@ -2790,17 +3068,22 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
 
   const handleSave = async () => {
     if (!form || !dirty) return;
-    setOrders(prev => prev.map(o => o.id === form.id ? form : o));
-    setDirty(false);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2000);
-    await upsertOrder(form).catch(err => alert(`Failed to save order: ${err.message}`));
+    try {
+      const persisted = await upsertOrder(form);
+      setOrders(prev => prev.map(o => o.id === persisted.id ? persisted : o));
+      setPanelForm(persisted);
+      setDirty(false);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   return (
     <AppShell onNavigate={onNavigate} title={t("scheduleTitle", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
-      <div className="flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
-        <aside className="w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
+      <div className="responsive-workspace schedule-workspace flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
+        <aside className="responsive-panel responsive-panel-filter w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
           <p className="mt-1 px-2 text-xs font-700 text-white/60 shrink-0">{t("scheduleFilter", lang)}</p>
           <div className="flex flex-col gap-1.5">
             {Object.entries(SCHEDULE_STATUS_COLORS).map(([status, colorClass]) => {
@@ -2815,9 +3098,9 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </aside>
 
-        <main className="flex-1 flex flex-col min-h-0 bg-white">
-          <div className="flex items-center justify-between px-4 py-2 bg-[#f0f4f8] border-b border-slate-200 shrink-0">
-            <div className="flex items-center gap-4">
+        <main className="responsive-calendar flex-1 flex flex-col min-h-0 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#f0f4f8] px-2 py-2 shrink-0 sm:flex-nowrap sm:px-4">
+            <div className="flex items-center gap-1 sm:gap-4">
               <div className="flex items-center gap-2 bg-slate-800 text-white px-3 py-1 rounded-sm text-sm">
                 <span className="font-600 whitespace-nowrap">{t("remainingHeads", lang)}</span>
                 <input type="number" min={0} value={headcount} onChange={e => setHeadcount(Number(e.target.value))}
@@ -2828,14 +3111,14 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
             <div className="flex items-center gap-4">
               <button type="button" onClick={() => changeMonth(-1)} aria-label={lang === "ja" ? "前月" : "Previous month"}
                 className="p-1 rounded-sm hover:bg-slate-200 cursor-pointer transition-colors"><Icon name="chevron-left" size={20} /></button>
-              <h2 className="text-xl font-700 text-slate-800 w-44 text-center whitespace-nowrap">{monthLabel}</h2>
+              <h2 className="w-32 whitespace-nowrap text-center text-base font-700 text-slate-800 sm:w-44 sm:text-xl">{monthLabel}</h2>
               <button type="button" onClick={() => changeMonth(1)} aria-label={lang === "ja" ? "翌月" : "Next month"}
                 className="p-1 rounded-sm hover:bg-slate-200 cursor-pointer transition-colors"><Icon name="chevron-right" size={20} /></button>
             </div>
-            <div className="flex bg-[#1a3458] text-white rounded-sm overflow-hidden">
+            <div className="ml-auto flex w-full overflow-hidden rounded-sm bg-[#1a3458] text-white sm:ml-0 sm:w-auto">
               {(["1W", "2W", "3W", "6W"] as const).map(mode => (
                 <button key={mode} type="button" onClick={() => setViewMode(mode)}
-                  className={`px-3 py-1 text-sm font-600 border-r border-white/20 last:border-0 cursor-pointer transition-colors ${viewMode === mode ? "bg-blue-600" : "hover:bg-blue-900"}`}>
+                  className={`flex-1 px-3 py-1 text-sm font-600 border-r border-white/20 last:border-0 cursor-pointer transition-colors sm:flex-none ${viewMode === mode ? "bg-blue-600" : "hover:bg-blue-900"}`}>
                   {mode}
                 </button>
               ))}
@@ -2878,7 +3161,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </main>
 
-        <aside className="w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
+        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
           <div className="px-4 py-3 bg-[#f5f6f8] border-b border-slate-200 shrink-0 flex items-center justify-between">
             <span className="flex items-center gap-2">
               <span className="text-base font-700 text-slate-800">{t("orderDetailsHeader", lang)}</span>
@@ -2968,9 +3251,9 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
 
 // ---- Page 8: Task checklist ----
 
-function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang, setLang }: {
+function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang }: {
   orderId: string | null; orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
-  products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
+  products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang;
 }) {
   const order = orders.find(o => o.id === orderId);
   const product = products.find(p => p.clientName === order?.client && p.productName === order?.productName);
@@ -2987,12 +3270,16 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang,
   const tasks = product?.tasks || Array(54).fill({ content: "", time: "" });
   const completed = order.completedTasks || Array(54).fill(false);
 
-  const toggleTask = (index: number) => {
+  const toggleTask = async (index: number) => {
     const newCompleted = [...completed];
     newCompleted[index] = !newCompleted[index];
     const updated = { ...order, completedTasks: newCompleted };
-    setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
-    upsertOrder(updated).catch(err => alert(`Failed to save task progress: ${err.message}`));
+    try {
+      const persisted = await upsertOrder(updated);
+      setOrders(prev => prev.map(o => o.id === order.id ? persisted : o));
+    } catch (err) {
+      alert(`Failed to save task progress: ${err instanceof Error ? err.message : err}`);
+    }
   };
 
   const handleSaveAndReturn = () => {
@@ -3003,20 +3290,19 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang,
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <header className="flex items-center justify-between px-4 py-2 bg-[#1a3458] shrink-0">
-        <div className="flex gap-2">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#1a3458] shrink-0 sm:px-4">
+        <div className="flex flex-wrap gap-2">
           <button onClick={() => onNavigate("order-entry")} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("returnButton", lang)}</button>
           <button onClick={handleSaveAndReturn} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveAndReturn", lang)}</button>
         </div>
-        <div className="flex gap-2">
-          <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveButton", lang)}</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">Auto-saved</span>
           <button onClick={() => window.print()} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("printButton", lang)}</button>
-          <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("toCad", lang)}</button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 pt-5">
-        <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="flex-1 overflow-y-auto p-3 pt-4 sm:p-4 sm:pt-5">
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="border border-slate-400 rounded-sm flex flex-col h-full">
             <div className="flex border-b border-slate-400">
               <div className="w-24 bg-slate-100 px-2 py-1 text-sm font-600 border-r border-slate-400 flex items-center">{t("client", lang)}</div>
@@ -3053,7 +3339,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang,
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-x-8 gap-y-3">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
           {tasks.map((task, i) => (
             <label key={i} className="flex items-start gap-3 py-1 cursor-pointer hover:bg-slate-50">
               <span className="w-16 text-sm text-slate-700 shrink-0">{t("taskLabelPrefix", lang)}{i + 1}</span>
@@ -3070,6 +3356,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang,
 // ---- Root ----
 
 export default function App() {
+  const { profile, signOut } = useAuth();
   const [page, setPage] = useState<Page>("home");
   const [deliveryMode, setDeliveryMode] = useState<DeliverySlipMode>("single");
   const [clients, setClients] = useState<Client[]>([]);
@@ -3086,9 +3373,10 @@ export default function App() {
     let cancelled = false;
     let requestInFlight = false;
     let initialLoadComplete = false;
+    let refreshPaused = false;
 
     const refreshData = async () => {
-      if (requestInFlight) return;
+      if (requestInFlight || refreshPaused) return;
       requestInFlight = true;
 
       try {
@@ -3104,6 +3392,7 @@ export default function App() {
         if (!cancelled && !initialLoadComplete) {
           setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
           setDataState("error");
+          refreshPaused = true;
         }
       } finally {
         requestInFlight = false;
@@ -3166,9 +3455,19 @@ export default function App() {
   if (dataState === "error") {
     return (
       <div className="flex items-center justify-center h-full bg-[#f5f6f8] p-8" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-        <div className="max-w-md flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-sm">
-          <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
-          <p className="text-sm text-red-700">{dataError}</p>
+        <div className="w-full max-w-lg rounded-lg border border-red-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start gap-3">
+            <Icon name="alert-triangle" size={20} className="mt-0.5 shrink-0 text-red-600" />
+            <div>
+              <h1 className="font-700 text-slate-800">Data could not be loaded</h1>
+              <p className="mt-1 text-sm leading-6 text-red-700">{dataError}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">If the console shows 401, sign out and log in again. If it shows 404 for profiles or inventory tables, deploy backend migration 002 first.</p>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button onClick={() => void signOut()} className="rounded border border-slate-300 px-4 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50">Sign out</button>
+            <button onClick={() => window.location.reload()} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">Retry</button>
+          </div>
         </div>
       </div>
     );
@@ -3184,9 +3483,17 @@ export default function App() {
       {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-      {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setLang={setLang} setOrders={setOrders} />}
+      {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
+      {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onBack={() => navigate("home")} /></Suspense>}
+      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading />}><ManagementPage onBack={() => navigate("home")} /></Suspense>}
+      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
+      {page === "profile"        && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>
   );
+}
+
+function PageLoading() {
+  return <div className="flex h-full items-center justify-center bg-[#f5f6f8] text-sm text-slate-500">Loading module...</div>;
 }

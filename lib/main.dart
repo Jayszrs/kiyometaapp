@@ -86,9 +86,20 @@ class _WebViewHomeState extends State<WebViewHome> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.wifi_off, size: 40, color: Colors.grey),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.asset(
+                          'assets/branding/kiyometa-logo.png',
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
                       const SizedBox(height: 12),
-                      Text(_error!, textAlign: TextAlign.center),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 520),
+                        child: Text(_error!, textAlign: TextAlign.center),
+                      ),
                       const SizedBox(height: 16),
                       FilledButton(
                         onPressed: _reload,
