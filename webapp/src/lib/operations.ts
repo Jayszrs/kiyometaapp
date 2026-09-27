@@ -304,6 +304,26 @@ export async function fetchInventoryData() {
   };
 }
 
+export async function fetchProductMaterialData(): Promise<{ items: InventoryItem[]; bom: BomItem[] }> {
+  const [itemsResult, bomResult] = await Promise.all([
+    supabase.from("inventory_balances").select("*").order("item_code"),
+    supabase.from("product_materials").select("*").order("product_id"),
+  ]);
+  if (itemsResult.error) throw itemsResult.error;
+  if (bomResult.error) throw bomResult.error;
+  return {
+    items: (itemsResult.data ?? []).map(inventoryFromRow),
+    bom: (bomResult.data ?? []).map(row => ({
+      id: row.id,
+      bomNo: row.bom_no ?? "",
+      productId: row.product_id,
+      inventoryItemId: row.inventory_item_id,
+      quantityPerUnit: Number(row.quantity_per_unit),
+      notes: row.notes,
+    })) as BomItem[],
+  };
+}
+
 export async function saveInventoryItem(item: Omit<InventoryItem, "availableQty" | "suggestedPurchaseQty" | "needsReorder" | "stockValue">) {
   const row = {
     id: item.id,

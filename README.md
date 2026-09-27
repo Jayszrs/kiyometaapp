@@ -42,6 +42,7 @@ new Supabase project:
 4. `backend/supabase/migrations/004_business_number_permissions.sql`
 5. `backend/supabase/migrations/005_all_roles_safe_undo.sql`
 6. `backend/supabase/migrations/006_employee_profiles.sql`
+7. `backend/supabase/migrations/007_product_inventory_integration.sql`
 
 Then link the Supabase CLI to the project and deploy the protected user
 management function:
@@ -73,9 +74,12 @@ Dashboard -> Authentication -> Users before using the in-app controls.
   employee biodata without being able to change their username or role.
 - Inventory master data, purchases, printable purchase receipts, and stock
   mutations are stored in Supabase.
-- Product material requirements (BOM) drive automatic stock deductions when
-  an order reaches `Complete` or `Shipped`. Reopening/deleting the order safely
-  reconciles the deducted stock.
+- Product material requirements (BOM) can be managed from Product Master or
+  Inventory. Stock is deducted when an order enters `In production`, remains
+  idempotent through `Complete`/`Shipped`, and is restored when the order moves
+  back before production or is deleted.
+- Database-level balance guards reject any order, purchase correction, import,
+  manual movement, or undo operation that would make inventory negative.
 - The supplied Excel workbooks were used as the field and workflow reference;
   they are not runtime dependencies and are not copied into the repository.
 

@@ -3,6 +3,13 @@ import { useAuth } from "./lib/auth";
 import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import UndoButton from "./components/UndoButton";
+import {
+  deleteBomItem,
+  fetchProductMaterialData,
+  saveBomItem,
+  type BomItem,
+  type InventoryItem,
+} from "./lib/operations";
 
 const InventoryPage = lazy(() => import("./InventoryPage"));
 const ManagementPage = lazy(() => import("./ManagementPage"));
@@ -401,6 +408,7 @@ export function TextInput({ value, onChange, type = "text", placeholder = "", cl
   return (
     <input type={type} value={value} readOnly={readOnly} placeholder={placeholder}
       maxLength={maxLength} step={step}
+      onClick={event => { if (type === "date" && !readOnly) event.currentTarget.showPicker?.(); }}
       onChange={e => onChange?.(e.target.value)}
       className={`w-full px-3 py-2 text-base border rounded-sm bg-white focus:outline-none focus:ring-2 transition-colors ${border} ${readOnly ? "bg-slate-50 text-slate-400 cursor-default" : ""} ${className}`} />
   );
@@ -422,9 +430,9 @@ function SelectInput({ value, onChange, options, hasError = false, placeholder =
 
 type BtnVariant = "primary" | "action" | "danger" | "ghost" | "outline";
 
-export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "" }: {
+export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "", ariaLabel }: {
   children: React.ReactNode; onClick?: () => void;
-  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string;
+  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string; ariaLabel?: string;
 }) {
   const vars: Record<BtnVariant, string> = {
     primary: "bg-[#1a3458] hover:bg-[#112240] text-white border-[#1a3458]",
@@ -435,7 +443,7 @@ export function Btn({ children, onClick, variant = "outline", size = "md", disab
   };
   const sizes = { sm: "px-3 py-1.5 text-sm gap-1.5", md: "px-4 py-2 text-base gap-2", lg: "px-6 py-2.5 text-base gap-2" };
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel}
       className={`inline-flex items-center justify-center font-600 border rounded-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${vars[variant]} ${sizes[size]} ${className}`}>
       {children}
     </button>
@@ -723,7 +731,7 @@ function HomePage({ orders, onNavigate, lang, setLang }: { orders: OrderRecord[]
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} />
       <header className="app-header flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
-        <button onClick={() => setMenuOpen(true)} className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
+        <button onClick={() => setMenuOpen(true)} aria-label="Menu" className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
           <Icon name="menu" size={20} />
         </button>
         <div className="flex min-w-0 items-center gap-2.5 flex-1">
@@ -1063,12 +1071,10 @@ function TimeStack({ titleJa, titleEn, values, lang }: {
         return (
           <div key={label} className="flex items-center gap-1.5">
             <span className="w-9 shrink-0 text-xs font-700 text-slate-500">{label}</span>
-            <input
-              type="number"
-              value={v}
-              readOnly
-              className="flex-1 min-w-0 px-2 py-1.5 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-600 font-mono text-center cursor-default focus:outline-none"
-            />
+            <output
+              title="Calculated automatically"
+              className="flex min-w-0 flex-1 items-center justify-center rounded-sm border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-base text-slate-600"
+            >{v}</output>
           </div>
         );
       })}
@@ -1149,7 +1155,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
   const setProductByName = (name: string) => {
     const p = products.find(pt => pt.productName === name);
-    const total = p ? p.tasks.reduce((s, t) => s + (Number(t.time) || 0), 0) : 0;
+    const perUnit = p ? p.tasks.reduce((s, t) => s + (Number(t.time) || 0), 0) : 0;
+    const total = perUnit * Math.max(form.quantity || 0, 1);
     const unitPrice = p && p.unitPrice !== "" ? Number(p.unitPrice) : 0;
     setForm(prev => ({ ...prev, productName: name, requiredManhours: total, orderAmount: prev.quantity * unitPrice }));
     setErrors(prev => ({ ...prev, productName: "", requiredManhours: "", orderAmount: "" }));
@@ -1378,6 +1385,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("orderDateLabel")}</label>
                 <input type="date" value={form.orderDate}
+                  onClick={event => event.currentTarget.showPicker?.()}
                   onChange={e => { setForm(prev => ({ ...prev, orderDate: e.target.value })); setErrors(prev => ({ ...prev, deliveryDate: e.target.value && form.deliveryDate && e.target.value > form.deliveryDate ? "Delivery date must be on or after order date." : "" })); }}
                   className={inputCls(!!errors.orderDate)} />
                 {errors.orderDate && <p className="text-xs text-red-600 mt-0.5">{errors.orderDate}</p>}
@@ -1385,6 +1393,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("deliveryDateLabel")}</label>
                 <input type="date" value={form.deliveryDate}
+                  onClick={event => event.currentTarget.showPicker?.()}
                   onChange={e => { setForm(prev => ({ ...prev, deliveryDate: e.target.value })); setErrors(prev => ({ ...prev, deliveryDate: e.target.value && form.orderDate && e.target.value < form.orderDate ? "Delivery date must be on or after order date." : "" })); }}
                   className={inputCls(!!errors.deliveryDate)} />
                 {errors.deliveryDate && <p className="text-xs text-red-600 mt-0.5">{errors.deliveryDate}</p>}
@@ -1447,8 +1456,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                     const qty = c === "" ? 0 : parseInt(c, 10);
                     const p = products.find(pt => pt.productName === form.productName);
                     const unitPrice = p && p.unitPrice !== "" ? Number(p.unitPrice) : 0;
-                    setForm(prev => ({ ...prev, quantity: qty, orderAmount: qty * unitPrice }));
-                    setErrors(prev => ({ ...prev, quantity: "", orderAmount: "" }));
+                    const perUnitMinutes = p ? p.tasks.reduce((sum, task) => sum + (Number(task.time) || 0), 0) : 0;
+                    setForm(prev => ({ ...prev, quantity: qty, orderAmount: qty * unitPrice, requiredManhours: qty * perUnitMinutes }));
+                    setErrors(prev => ({ ...prev, quantity: "", orderAmount: "", requiredManhours: "" }));
                   }}
                   className={inputCls(!!errors.quantity)} />
                 {errors.quantity && <p className="text-xs text-red-600 mt-0.5">{errors.quantity}</p>}
@@ -1485,8 +1495,10 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <div className="responsive-math-grid grid grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-center">
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("requiredManhours")} ({L("minUnit")})</label>
-                  <input type="number" value={form.requiredManhours === 0 ? "" : form.requiredManhours} readOnly
-                    className="w-full px-3 py-2 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-500 cursor-default" />
+                  <output
+                    title="Calculated automatically from product task time × order quantity"
+                    className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{form.requiredManhours || 0}</output>
+                  <p className="mt-1 text-xs text-slate-400">Auto: product time × quantity</p>
                 </div>
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">-</div>
                 <div>
@@ -1499,8 +1511,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">=</div>
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("remainingManhours")} ({L("minUnit")})</label>
-                  <input type="number" value={remaining} readOnly
-                    className="w-full px-3 py-2 text-base border border-slate-200 rounded-sm bg-slate-50 text-slate-500 cursor-default" />
+                  <output
+                    title="Calculated automatically from required time minus worked time"
+                    className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{remaining}</output>
                 </div>
               </div>
             </div>
@@ -1522,8 +1535,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <div>
                   <label className="block text-sm font-700 text-slate-600 mb-1">{L("productionEndDate")}</label>
                   <input type="date" value={form.productionEndDate}
+                    onClick={event => event.currentTarget.showPicker?.()}
                     onChange={e => { setForm(prev => ({ ...prev, productionEndDate: e.target.value })); const err = e.target.value && form.orderDate && e.target.value < form.orderDate ? "Cannot be earlier than the order date." : e.target.value && form.deliveryDate && e.target.value > form.deliveryDate ? "Cannot be later than the delivery date." : ""; setErrors(prev => ({ ...prev, productionEndDate: err })); }}
-                    className={inputCls(!!errors.productionEndDate)} />
+                    className={`${inputCls(!!errors.productionEndDate)} cursor-pointer`} />
                   {errors.productionEndDate && <p className="text-xs text-red-600 mt-0.5">{errors.productionEndDate}</p>}
                 </div>
                 <div>
@@ -1697,6 +1711,35 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
     return clientOk && statusFilter[o.progress] && dateOk;
   }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
 
+  const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const downloadCsv = () => {
+    const headers = ["Order date", "Delivery date", "Client", "Order number", "Product", "Quantity", "Amount", "Progress"];
+    const lines = [headers, ...filtered.map(order => [
+      order.orderDate, order.deliveryDate, order.client, order.orderNumber,
+      order.productName, order.quantity, order.orderAmount, order.progress,
+    ])].map(row => row.map(csvCell).join(","));
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `orders-${today}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const printPreparation = () => {
+    const popup = window.open("", "_blank", "width=960,height=720");
+    if (!popup) {
+      alert("The print window was blocked. Allow pop-ups for this application and try again.");
+      return;
+    }
+    popup.opener = null;
+    const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+    const rows = filtered.map(order => `<tr><td>${escape(order.deliveryDate)}</td><td>${escape(order.orderNumber)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="num">${escape(order.quantity)}</td><td>${escape(order.progress)}</td></tr>`).join("");
+    popup.document.write(`<!doctype html><html><head><title>Production preparation</title><style>body{font:14px Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px}p{color:#64748b;margin:0 0 24px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #cbd5e1;padding:10px 8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}.num{text-align:right}@media print{body{padding:0}}</style></head><body><h1>Production Preparation List</h1><p>${escape(fromDate)} — ${escape(toDate)} · ${filtered.length} order(s)</p><table><thead><tr><th>Delivery</th><th>Order no.</th><th>Client</th><th>Product</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
+    popup.document.close();
+  };
+
   const productInfo = (o: OrderRecord) =>
     productByKey.get(`${o.client}|${o.productName}`) ?? null;
 
@@ -1820,7 +1863,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 shrink-0">
                 <span className="text-base font-700 text-slate-800">{lang === "ja" ? "受注詳細" : "Order Details"}</span>
                 <button onClick={resetSelection} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors" aria-label="Close">
-                  <Icon name="x" size={17} />
+                  <Icon name="close" size={17} />
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
@@ -1901,11 +1944,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
       </div>
 
       <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 lg:flex lg:items-center lg:gap-3 lg:px-5">
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1"><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
         <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
         <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
         <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1"><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1" onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
       </footer>
     </AppShell>
   );
@@ -2251,7 +2294,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
               <FieldBox label={t("postalCodeLabel", lang)} error={errors.postalCode}>
                 <div className="flex gap-2">
                   <TextInput value={form.postalCode} onChange={sf("postalCode")} hasError={!!errors.postalCode} placeholder="e.g. 393-0011" />
-                  <Btn variant="outline" size="sm" onClick={handlePostalSearch}><Icon name="search" size={14} /></Btn>
+                  <Btn variant="outline" size="sm" onClick={handlePostalSearch} ariaLabel="Find address from postal code"><Icon name="search" size={14} /></Btn>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "形式: 3桁-4桁" : "Format: 3 digits, hyphen, 4 digits"}</p>
               </FieldBox>
@@ -2307,6 +2350,12 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [drawingIndex, setDrawingIndex] = useState<number | null>(null);
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
   const [showCalcInfo, setShowCalcInfo] = useState(false);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [allBom, setAllBom] = useState<BomItem[]>([]);
+  const [materialItemId, setMaterialItemId] = useState("");
+  const [materialQty, setMaterialQty] = useState(1);
+  const [materialBusy, setMaterialBusy] = useState(false);
+  const [materialError, setMaterialError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const taskErrors = Object.entries(errors).filter(([k, v]) => k.startsWith("task_") && v);
@@ -2316,6 +2365,55 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q);
   });
   const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
+  const productMaterials = allBom.filter(row => row.productId === form.id);
+  const inventoryById = (id: string) => inventoryItems.find(item => item.id === id);
+
+  const reloadMaterials = async () => {
+    const data = await fetchProductMaterialData();
+    setInventoryItems(data.items);
+    setAllBom(data.bom);
+  };
+
+  useEffect(() => {
+    void reloadMaterials().catch(error => setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."));
+  }, []); // Product/inventory data is refreshed again after every BOM write.
+
+  const addMaterial = async () => {
+    if (isNew) {
+      setMaterialError("Save the product before adding materials.");
+      return;
+    }
+    if (!materialItemId || materialQty <= 0) return;
+    setMaterialBusy(true);
+    setMaterialError("");
+    try {
+      await saveBomItem({
+        id: genUUID(), bomNo: "", productId: form.id,
+        inventoryItemId: materialItemId, quantityPerUnit: materialQty, notes: "",
+      });
+      await reloadMaterials();
+      setMaterialItemId("");
+      setMaterialQty(1);
+    } catch (error) {
+      setMaterialError(error instanceof Error ? error.message : "Failed to add material.");
+    } finally {
+      setMaterialBusy(false);
+    }
+  };
+
+  const removeMaterial = async (row: BomItem) => {
+    if (!confirm(`Remove ${row.bomNo} from this product? You can recover it with Undo.`)) return;
+    setMaterialBusy(true);
+    setMaterialError("");
+    try {
+      await deleteBomItem(row.id);
+      await reloadMaterials();
+    } catch (error) {
+      setMaterialError(error instanceof Error ? error.message : "Failed to remove material.");
+    } finally {
+      setMaterialBusy(false);
+    }
+  };
 
   const sf = (v: keyof Product) => (e: string) => {
     setForm(prev => ({ ...prev, [v]: e }));
@@ -2527,6 +2625,63 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               )}
             </div>
 
+            <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-700 text-[#1a3458]">Materials used by this product (BOM)</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">Stock is deducted automatically when an order enters In production.</p>
+                </div>
+                <button type="button" onClick={() => onNavigate("inventory")} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-100">Open inventory</button>
+              </div>
+
+              {materialError && <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{materialError}</div>}
+
+              <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_150px_auto]">
+                <label className="block text-sm font-600 text-slate-600">
+                  Inventory material
+                  <select value={materialItemId} disabled={isNew || materialBusy} onChange={event => setMaterialItemId(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-base disabled:bg-slate-100">
+                    <option value="">Select material / component</option>
+                    {inventoryItems.filter(item => item.category !== "finished_good" && !productMaterials.some(row => row.inventoryItemId === item.id)).map(item => (
+                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · stock {item.availableQty.toLocaleString()} {item.unit}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm font-600 text-slate-600">
+                  Qty per product
+                  <input type="number" min="0.001" step="0.001" value={materialQty} disabled={isNew || materialBusy} onChange={event => setMaterialQty(Math.max(0, Number(event.target.value)))} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 text-base disabled:bg-slate-100" />
+                </label>
+                <button type="button" disabled={isNew || materialBusy || !materialItemId || materialQty <= 0} onClick={() => void addMaterial()} className="self-end rounded bg-[#1a3458] px-5 py-2.5 font-700 text-white disabled:cursor-not-allowed disabled:opacity-40">{materialBusy ? "Saving..." : "Add material"}</button>
+              </div>
+
+              {isNew ? (
+                <p className="p-4 text-sm text-amber-700">Save this product first, then its material requirements can be configured.</p>
+              ) : productMaterials.length === 0 ? (
+                <p className="p-4 text-sm text-amber-700">No materials configured. This product cannot enter production until its BOM is added.</p>
+              ) : (
+                <div className="divide-y divide-slate-100">
+                  {productMaterials.map(row => {
+                    const item = inventoryById(row.inventoryItemId);
+                    const empty = (item?.availableQty ?? 0) <= 0;
+                    const low = !empty && Boolean(item?.needsReorder);
+                    return (
+                      <div key={row.id} className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center ${empty ? "bg-red-50" : low ? "bg-amber-50" : ""}`}>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-700 text-slate-800">{item?.itemName ?? "Unknown material"}</p>
+                          <p className="font-mono text-xs text-slate-500">{item?.itemCode ?? row.bomNo} · {row.bomNo}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm sm:flex sm:items-center sm:gap-7">
+                          <div><p className="text-xs uppercase text-slate-400">Per unit</p><p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p></div>
+                          <div><p className="text-xs uppercase text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p></div>
+                        </div>
+                        <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? "OUT OF STOCK" : low ? "LOW STOCK" : "READY"}</span>
+                        <button type="button" disabled={materialBusy} onClick={() => void removeMaterial(row)} className="rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("manufacturingTasks", lang)}</p>
               <div className="task-scroll border border-slate-200 rounded-sm max-h-[420px] overflow-y-scroll overscroll-contain">
@@ -2605,6 +2760,9 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
   mode: DeliverySlipMode; orders: OrderRecord[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const [inCharge, setInCharge] = useState("");
+  const [conditions, setConditions] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
   const items = mode === "single" ? orders.slice(3, 4) : orders.slice(3, 5);
   const total = items.reduce((s, o) => s + o.orderAmount, 0);
   const tax = Math.round(total * 0.1);
@@ -2630,9 +2788,9 @@ function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
           <p className="text-sm text-slate-500 mb-6"><span className="font-600 text-slate-600">{t("deliveryDateLabel", lang)}:</span><span className="ml-2 font-mono">{todayStr}</span></p>
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <FieldBox label={t("inCharge", lang)}><TextInput value="" placeholder={ph.inCharge} onChange={() => {}} /></FieldBox>
-            <FieldBox label={t("deliveryConditions", lang)}><TextInput value="" placeholder={ph.conditions} onChange={() => {}} /></FieldBox>
-            <FieldBox label={t("paymentTerms", lang)}><TextInput value="" placeholder={ph.terms} onChange={() => {}} /></FieldBox>
+            <FieldBox label={t("inCharge", lang)}><TextInput value={inCharge} placeholder={ph.inCharge} onChange={setInCharge} /></FieldBox>
+            <FieldBox label={t("deliveryConditions", lang)}><TextInput value={conditions} placeholder={ph.conditions} onChange={setConditions} /></FieldBox>
+            <FieldBox label={t("paymentTerms", lang)}><TextInput value={paymentTerms} placeholder={ph.terms} onChange={setPaymentTerms} /></FieldBox>
           </div>
           <table className="mb-6 w-full min-w-[560px] border-collapse text-base">
             <thead>
@@ -2982,10 +3140,9 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
           <button onClick={() => onNavigate("order-entry")} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("returnButton", lang)}</button>
           <button onClick={handleSaveAndReturn} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveAndReturn", lang)}</button>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveButton", lang)}</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">Auto-saved</span>
           <button onClick={() => window.print()} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("printButton", lang)}</button>
-          <button className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("toCad", lang)}</button>
         </div>
       </header>
 
