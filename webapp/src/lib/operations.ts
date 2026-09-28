@@ -383,18 +383,21 @@ export async function deletePurchase(id: string): Promise<void> {
 }
 
 export async function addStockMovement(input: Omit<StockMovement, "id" | "movementNo" | "createdAt">) {
-  const { error } = await supabase.from("stock_movements").insert({
-    movement_date: input.movementDate,
-    movement_type: input.movementType,
-    reference_type: input.referenceType,
-    reference_id: input.referenceId || null,
-    item_id: input.itemId,
-    quantity: input.quantity,
-    delta: input.delta,
-    pic: input.pic.trim(),
-    notes: input.notes.trim(),
+  // PostgREST insert is revoked on stock_movements; the only client path is
+  // record_stock_movement, which rejects a reference_type that would imply a
+  // purchase or an order exists behind the movement.
+  const { data, error } = await supabase.rpc("record_stock_movement", {
+    p_movement_date: input.movementDate,
+    p_movement_type: input.movementType,
+    p_reference_id: input.referenceId || null,
+    p_item_id: input.itemId,
+    p_quantity: input.quantity,
+    p_delta: input.delta,
+    p_pic: input.pic.trim(),
+    p_notes: input.notes.trim(),
   });
   if (error) throw error;
+  return (data ?? null) as StockMovement | null;
 }
 
 export async function deleteStockMovement(movement: StockMovement): Promise<void> {

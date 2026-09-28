@@ -60,6 +60,15 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+// Deleting master data and orders is administrator-only: the delete policies
+// added in migration 010 grant DELETE to administrators alone, so an operator
+// pressing the button would only collect a permission error from the server.
+// The browser check exists to keep the control honest, not to secure anything;
+// the row level policy is the actual gate.
+export function useCanDelete(): boolean {
+  return useContext(AuthContext).profile.role === "administrator";
+}
+
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile>(emptyProfile);

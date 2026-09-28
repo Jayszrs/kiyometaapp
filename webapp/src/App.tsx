@@ -1,7 +1,9 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
-import { useAuth } from "./lib/auth";
-import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings } from "./lib/db";
+import { useAuth, useCanDelete } from "./lib/auth";
+import { fetchAll, fetchProduct, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import { genUUID } from "./lib/uuid";
+import { addDaysJST, dateFromISO, endOfMonthJST, formatLongJST, todayJST } from "./lib/date";
+import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
 import { runOcr, sendOcrLog } from "./lib/ocrClient";
 import { parseQuotation, type ParsedQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
@@ -62,6 +64,12 @@ export interface OrderRecord {
   finishTask: boolean;
   hasContact: boolean;
   completedTasks?: boolean[];
+  // Concurrency and workflow state owned by the database. version increments on
+  // every successful write and is sent back as a precondition (see db.ts);
+  // materialsIssued mirrors inventory_stock_applied and gates which status
+  // moves are still safe.
+  version?: number;
+  materialsIssued?: boolean;
 }
 
 export interface Client {
@@ -104,7 +112,10 @@ export type { Page, DeliverySlipMode, Lang };
 
 // ---- Sample data ----
 
-const today = new Date().toISOString().slice(0, 10);
+// The office works in Japan time, so the default order date is the JST day.
+// toISOString() returned the UTC day, which was the previous date for every
+// entry made before 09:00 JST.
+const today = todayJST();
 
 function makeTasks(count = 54): ProductTask[] {
   return Array.from({ length: count }, () => ({ content: "", time: "" as number | "" }));
@@ -126,24 +137,26 @@ const PROGRESS_OPTIONS = [
 
 const PROGRESS_JA: Record<string, string> = {
   "Order request": "発注依頼",
-  "Receipt": "受領",
+  Receipt: "受領",
   "In preparation": "準備中",
   "Preparation complete": "準備完了",
   "In production": "製作中",
-  "Complete": "完了",
-  "Shipped": "出荷済み",
+  Complete: "完了",
+  Shipped: "出荷済み",
   "Contact": "要連絡",
+  Cancelled: "キャンセル",
 };
 
 const SCHEDULE_STATUS_COLORS: Record<string, string> = {
   "Order request": "bg-pink-500 text-white border-pink-600",
-  "Receipt": "bg-pink-200 text-slate-800 border-pink-300",
+  Receipt: "bg-pink-200 text-slate-800 border-pink-300",
   "In preparation": "bg-purple-500 text-white border-purple-600",
   "Preparation complete": "bg-green-400 text-slate-800 border-green-500",
   "In production": "bg-cyan-400 text-slate-800 border-cyan-500",
-  "Complete": "bg-blue-600 text-white border-blue-700",
-  "Shipped": "bg-yellow-400 text-slate-800 border-yellow-500",
+  Complete: "bg-blue-600 text-white border-blue-700",
+  Shipped: "bg-yellow-400 text-slate-800 border-yellow-500",
   "Contact": "bg-red-600 text-white border-red-700",
+  Cancelled: "bg-slate-500 text-white border-slate-600",
 };
 
 const ARRANGEMENT_OPTIONS = [
@@ -153,6 +166,20 @@ const ARRANGEMENT_OPTIONS = [
   "Labor assignment",
   "No arrangement",
 ];
+
+// Reduced consumption tax on the standard rate. Kept as one named constant
+// because the invoice and the delivery slip both used to inline the literal
+// 0.1, which meant changing the rate meant finding every copy of the number.
+const TAX_RATE = 0.1;
+
+// Delete is administrator-only (see useCanDelete). The buttons stay visible but
+// disabled so the reason is discoverable instead of the control vanishing on a
+// page an operator still has to use.
+function deleteHint(lang: Lang) {
+  return lang === "ja"
+    ? "削除できるしているのは管理者のみです。取り消す場合は在庫調整やコメントで記録してください。"
+    : "Only an administrator can delete. Record a correction with an inventory adjustment or a comment instead.";
+}
 
 // ---- Validation ----
 
@@ -367,9 +394,9 @@ function SelectInput({ value, onChange, options, hasError = false, placeholder =
 
 type BtnVariant = "primary" | "action" | "danger" | "ghost" | "outline";
 
-export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "", ariaLabel }: {
+export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "", ariaLabel, title }: {
   children: React.ReactNode; onClick?: () => void;
-  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string; ariaLabel?: string;
+  variant?: BtnVariant; size?: "sm" | "md" | "lg"; disabled?: boolean; className?: string; ariaLabel?: string; title?: string;
 }) {
   const vars: Record<BtnVariant, string> = {
     primary: "bg-[#1a3458] hover:bg-[#112240] text-white border-[#1a3458]",
@@ -380,7 +407,7 @@ export function Btn({ children, onClick, variant = "outline", size = "md", disab
   };
   const sizes = { sm: "px-3 py-1.5 text-sm gap-1.5", md: "px-4 py-2 text-base gap-2", lg: "px-6 py-2.5 text-base gap-2" };
   return (
-    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel}
+    <button onClick={onClick} disabled={disabled} aria-label={ariaLabel} title={title}
       className={`inline-flex items-center justify-center font-600 border rounded-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${vars[variant]} ${sizes[size]} ${className}`}>
       {children}
     </button>
@@ -1229,6 +1256,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   onOpenScan: () => void;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
+  const canDelete = useCanDelete();
   const newId = () => genUUID();
 
   const blankForm = (): OrderRecord => ({
@@ -1764,7 +1792,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         <Btn variant="action" size="lg" onClick={handleSave}>
           <Icon name="save" size={16} /><span>{L("saveButton")}</span>
         </Btn>
-        <Btn variant="danger" size="lg" onClick={handleDelete}>
+        <Btn variant="danger" size="lg" disabled={!canDelete} title={canDelete ? undefined : deleteHint(lang)} onClick={handleDelete}>
           <Icon name="trash" size={16} /><span>{L("deleteButton")}</span>
         </Btn>
       </footer>
@@ -1774,13 +1802,14 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
 // ---- Page 2: Search & billing ----
 
-function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, lang, setLang }: {
+function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, billingOrderIds, setBillingOrderIds, lang, setLang }: {
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   clients: Client[]; products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+  billingOrderIds: string[]; setBillingOrderIds: React.Dispatch<React.SetStateAction<string[]>>;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
-  const [fromDate, setFromDate] = useState("2025-10-01");
-  const [toDate, setToDate] = useState("2025-11-07");
+  const [fromDate, setFromDate] = useState(addDaysJST(today, -30));
+  const [toDate, setToDate] = useState(endOfMonthJST(today));
   const [clientFilter, setClientFilter] = useState<Record<string, boolean>>({});
   const [statusFilter, setStatusFilter] = useState<Record<string, boolean>>(
     Object.fromEntries(PROGRESS_OPTIONS.map(p => [p, true]))
@@ -1792,11 +1821,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
     return m;
   }, [products]);
 
-  const monthAgo = () => {
-    const d = new Date(today + "T00:00:00");
-    d.setMonth(d.getMonth() - 1);
-    return d.toISOString().slice(0, 10);
-  };
+  const monthAgo = () => addDaysJST(today, -30);
 
   // Right edit panel state
   const blankSBForm = (): OrderRecord => ({
@@ -1809,6 +1834,16 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelForm, setPanelForm] = useState<OrderRecord>(blankSBForm());
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // The billing and delivery documents are driven by this selection. It lives
+  // here rather than in the print pages so the documents reflect what the
+  // operator actually ticked, and so returning here shows the same selection.
+  const canDelete = useCanDelete();
+  const isBillable = (o: OrderRecord) => o.progress !== PROGRESS_CANCELLED && o.orderAmount > 0;
+  const toggleBillable = (o: OrderRecord) => {
+    if (!isBillable(o)) return;
+    setBillingOrderIds(prev => prev.includes(o.id) ? prev.filter(id => id !== o.id) : [...prev, o.id]);
+  };
 
   const selectOrder = (o: OrderRecord) => { setSelectedId(o.id); setPanelForm({ ...o }); setDeleteConfirm(null); };
   const resetSelection = () => { setSelectedId(null); setPanelForm(blankSBForm()); setDeleteConfirm(null); };
@@ -1845,10 +1880,27 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
   const filtered = orders.filter(o => {
     const clientOk = !Object.values(clientFilter).some(Boolean) || clientFilter[o.client];
     const dateOk = (!fromDate || !toDate) || (o.deliveryDate >= fromDate && o.deliveryDate <= toDate);
-    return clientOk && statusFilter[o.progress] && dateOk;
+    return clientOk && (statusFilter[o.progress] ?? o.progress === PROGRESS_CANCELLED) && dateOk;
   }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
 
-  const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const billableInView = filtered.filter(isBillable);
+  const allBillableSelected = billableInView.length > 0 && billableInView.every(o => billingOrderIds.includes(o.id));
+  const toggleAllBillable = () => {
+    setBillingOrderIds(prev => {
+      if (allBillableSelected) return prev.filter(id => !billableInView.some(o => o.id === id));
+      return Array.from(new Set([...prev, ...billableInView.map(o => o.id)]));
+    });
+  };
+
+  // Excel and CSV both treat a leading =, +, - or @ as a formula, so a product
+  // named "=SUM(A1)" executes when the file is opened. Prefixing with an
+  // apostrophe keeps the text and neutralises the trigger. The original version
+  // only doubled quotes, which is not enough.
+  const csvCell = (value: unknown) => {
+    let text = String(value ?? "");
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
   const downloadCsv = () => {
     const headers = ["Order date", "Delivery date", "Client", "Order number", "Product", "Quantity", "Amount", "Progress"];
     const lines = [headers, ...filtered.map(order => [
@@ -1954,7 +2006,17 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
               const unitPrice = prod ? prod.unitPrice : (o.quantity > 0 ? Math.round(o.orderAmount / o.quantity) : 0);
               return (
                 <div key={o.id} onClick={() => selectOrder(o)}
-                  className={`flex items-center gap-4 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
+                  className={`flex items-center gap-3 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={billingOrderIds.includes(o.id)}
+                    disabled={!isBillable(o)}
+                    onClick={e => e.stopPropagation()}
+                    onChange={() => toggleBillable(o)}
+                    title={isBillable(o) ? (lang === "ja" ? "請求・出荷伝票に含める" : "Include in the invoice and delivery slip") : (lang === "ja" ? "キャンセル済みまたは金額が 0 の受注は選べません" : "Cancelled orders and zero-value orders cannot be billed")}
+                    aria-label={o.orderNumber}
+                    className="w-4 h-4 accent-[#1a3458] cursor-pointer shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+                  />
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex items-center gap-3">
                       <StatusBadge status={o.progress} small lang={lang} />
@@ -2032,10 +2094,15 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
                   </FieldBox>
                 </div>
                 <FieldBox label={t("progressStatus", lang)}>
-                  <select value={panelForm.progress} onChange={e => setPanelForm(prev => ({ ...prev, progress: e.target.value }))}
-                    className="w-full px-3 py-2 text-base border border-slate-300 rounded-sm bg-white focus:outline-none focus:border-[#1a3458] focus:ring-2 focus:ring-[#1a3458]/20 transition-colors">
-                    {PROGRESS_OPTIONS.map(o => (
-                      <option key={o} value={o}>{lang === "ja" ? PROGRESS_JA[o] : o}</option>
+                  <select value={panelForm.progress} onChange={e => {
+                    const next = e.target.value;
+                    const refusal = transitionRejection(panelForm.progress, next, !!panelForm.materialsIssued);
+                    if (refusal) { alert(refusal); return; }
+                    setPanelForm(prev => ({ ...prev, progress: next }));
+                  }}
+                    className="w-full px-3 py-2 text-base border border-slate-300 rounded-sm bg-white focus:outline-none focus:border-[#1a3458] focus:ring-2 focus:border-[#1a3458]/20 transition-colors">
+                    {allowedTransitions(panelForm.progress, !!panelForm.materialsIssued).map(o => (
+                      <option key={o} value={o}>{lang === "ja" ? (PROGRESS_JA[o] ?? o) : o}</option>
                     ))}
                   </select>
                 </FieldBox>
@@ -2058,8 +2125,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
                     </button>
                   </>
                 ) : (
-                  <button onClick={() => setDeleteConfirm(panelForm.id)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-sm cursor-pointer transition-colors">
+                  <button onClick={() => setDeleteConfirm(panelForm.id)} disabled={!canDelete} title={canDelete ? undefined : deleteHint(lang)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-sm cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
                     <Icon name="trash" size={14} />{t("deleteButton", lang)}
                   </button>
                 )}
@@ -2082,9 +2149,25 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
 
       <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 lg:flex lg:items-center lg:gap-3 lg:px-5">
         <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
-        <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
+        <span className="col-span-2 flex items-center justify-center gap-2 min-[390px]:col-span-3 lg:col-span-1 lg:flex-none">
+          <label className="flex items-center gap-1.5 text-xs text-blue-100 cursor-pointer whitespace-nowrap">
+            <input type="checkbox" checked={allBillableSelected} onChange={toggleAllBillable}
+              className="w-4 h-4 accent-[#0d7377] cursor-pointer" />
+            {lang === "ja" ? "全選択" : "Select all"}
+          </label>
+          <span className="text-xs text-blue-200 font-mono whitespace-nowrap">
+            {lang === "ja" ? `${billingOrderIds.length} 件選択` : `${billingOrderIds.length} selected`}
+          </span>
+          {billingOrderIds.length > 0 && (
+            <button type="button" onClick={() => setBillingOrderIds([])}
+              className="text-xs text-blue-200 underline hover:text-white cursor-pointer whitespace-nowrap">
+              {lang === "ja" ? "クリア" : "Clear"}
+            </button>
+          )}
+        </span>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
+        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
+        <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
         <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1" onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
       </footer>
     </AppShell>
@@ -2093,36 +2176,54 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
 
 // ---- Page 3: Invoice ----
 
-function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
-  orders: OrderRecord[]; clients: Client[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
+  orders: OrderRecord[]; clients: Client[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = 6;
-  const [billingDate, setBillingDate] = useState("2025-11-01");
-  const [deadlineDate, setDeadlineDate] = useState("2025-12-01");
+  // The previous version pinned these to 2025-11-01 and 2025-12-01, so every
+  // invoice printed carried a stale billing date and deadline. They start on the
+  // real current day, and the deadline is a month out unless typed.
+  const [billingDate, setBillingDate] = useState(todayJST());
+  const [deadlineDate, setDeadlineDate] = useState(addDaysJST(todayJST(), 30));
   const [dateField, setDateField] = useState<"billing" | "deadline" | null>(null);
-  const [calCursor, setCalCursor] = useState(new Date(2025, 10, 1));
-  const items = orders.slice(0, 3);
+  const [calCursor, setCalCursor] = useState(() => {
+    const d = dateFromISO(todayJST());
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+
+  // Bills the orders ticked in the billing search, in the order they were
+  // listed. The previous version took orders.slice(0, 3) and clients[0], so it
+  // printed an invoice for whichever three rows happened to sort first and
+  // billed them to whichever client was alphabetically first. Sending that to
+  // a customer is worse than printing nothing.
+  const items = useMemo(
+    () => (orderIds.length > 0 ? orderIds.map(id => orders.find(o => o.id === id)).filter((o): o is OrderRecord => !!o) : []),
+    [orderIds, orders],
+  );
+  const clientName = items[0]?.client ?? "";
+  const client = clients.find(c => c.name === clientName);
+  const mixedClients = new Set(items.map(o => o.client)).size > 1;
   const subtotal = items.reduce((s, o) => s + o.orderAmount, 0);
-  const tax = Math.round(subtotal * 0.1);
+  const tax = Math.round(subtotal * TAX_RATE);
   const billed = subtotal + tax;
-  const client = clients[0];
 
   const fmtDate = (iso: string) => {
-    const d = new Date(iso + "T00:00:00");
+    const d = dateFromISO(iso);
+    if (Number.isNaN(d.getTime())) return iso;
     return lang === "ja"
       ? `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
       : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
-  const billMonth = new Date(billingDate + "T00:00:00");
+  const billMonth = dateFromISO(billingDate);
   const subject = lang === "ja"
     ? `${billMonth.getMonth() + 1}月請求分`
     : `${billMonth.toLocaleDateString("en-US", { month: "long" })} billing portion`;
 
   const openCalendar = (f: "billing" | "deadline") => {
-    const base = new Date((f === "billing" ? billingDate : deadlineDate) + "T00:00:00");
+    const base = dateFromISO(f === "billing" ? billingDate : deadlineDate);
     setDateField(f);
-    setCalCursor(new Date(base.getFullYear(), base.getMonth(), 1));
+    if (!Number.isNaN(base.getTime())) setCalCursor(new Date(base.getFullYear(), base.getMonth(), 1));
   };
 
   const y = calCursor.getFullYear(), m = calCursor.getMonth();
@@ -2147,7 +2248,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
         <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</span>
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>{t("nextPage", lang)}<Icon name="chevron-right" size={14} /></Btn>
         <div className="flex-1" />
-        <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
+        <Btn variant="primary" size="sm" onClick={() => window.print()} disabled={items.length === 0}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
       <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
         <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
@@ -2155,10 +2256,25 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             <h2 className="text-3xl font-700 text-slate-800 inline-block pb-2 border-b-2 border-slate-800">{t("invoiceTitle", lang)}</h2>
           </div>
 
+          {items.length === 0 ? (
+            <div className="mb-8 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {lang === "ja"
+                ? "請求書を作成する受注が選択されていません。請求検索で対象を選んでから印刷してください。"
+                : "No orders are selected for this invoice. Tick the orders in the billing search, then print."}
+            </div>
+          ) : null}
+          {mixedClients ? (
+            <div className="mb-8 rounded-sm border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+              {lang === "ja"
+                ? "選択された受注が複数の得意先を含みます。請求書は得意先ごとに作成してください。"
+                : "The selection spans more than one client. An invoice must be issued per client."}
+            </div>
+          ) : null}
+
           <div className="mb-8 flex flex-col items-start justify-between gap-6 sm:flex-row">
             <div className="flex-1 min-w-0">
               <div className="border-2 border-slate-300 rounded-sm px-4 py-3">
-                <p className="text-lg font-700 text-slate-800 leading-snug">{client?.name}{lang === "ja" ? " 御中" : ""}</p>
+                <p className="text-lg font-700 text-slate-800 leading-snug">{clientName}{lang === "ja" ? " 御中" : ""}</p>
                 <p className="text-sm text-slate-500 mt-2 pt-2 border-t border-dashed border-slate-200">{client?.address}</p>
               </div>
               <div className="mt-4 bg-blue-50 border border-blue-100 rounded-sm px-4 py-2.5">
@@ -2227,7 +2343,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             <tbody>
               <tr>
                 <td className="px-3 py-2.5 font-mono font-600 text-slate-800 border border-slate-200">¥{subtotal.toLocaleString()}</td>
-                <td className="px-3 py-2.5 font-mono text-slate-700 border border-slate-200">10%</td>
+                <td className="px-3 py-2.5 font-mono text-slate-700 border border-slate-200">{Math.round(TAX_RATE * 100)}%</td>
                 <td className="px-3 py-2.5 font-mono text-slate-700 border border-slate-200">¥{tax.toLocaleString()}</td>
                 <td className="px-3 py-2.5 font-mono font-700 text-[#0d7377] border border-slate-200">¥{billed.toLocaleString()}</td>
               </tr>
@@ -2246,8 +2362,11 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
             <tbody>
               {items.map(o => (
                 <tr key={o.id} className="bg-white">
-                  <td className="px-3 py-2.5 text-slate-800 border-b border-slate-100">{o.productName}</td>
-                  <td className="px-3 py-2.5 text-right font-mono text-sm text-slate-600 border-b border-slate-100">¥{(o.orderAmount / o.quantity).toLocaleString()}</td>
+                  <td className="px-3 py-2.5 text-slate-800 border-b border-slate-100">
+                    <span className="block">{o.productName}</span>
+                    <span className="block font-mono text-xs text-slate-400">{o.orderNumber} / {o.client}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right font-mono text-sm text-slate-600 border-b border-slate-100">¥{(o.quantity > 0 ? o.orderAmount / o.quantity : 0).toLocaleString()}</td>
                   <td className="px-3 py-2.5 text-right text-slate-700 border-b border-slate-100">{o.quantity}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-600 text-slate-800 border-b border-slate-100">¥{o.orderAmount.toLocaleString()}</td>
                 </tr>
@@ -2271,6 +2390,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   lang: Lang; setLang: (l: Lang) => void;
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const canDelete = useCanDelete();
   const isScanRouted = scanRouting.stage === "need-client" && scanRouting.data !== null;
   const sd = scanRouting.data;
 
@@ -2450,7 +2570,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
         <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew || !canDelete} title={canDelete ? undefined : deleteHint(lang)} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2467,6 +2587,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   lang: Lang; setLang: (l: Lang) => void;
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const canDelete = useCanDelete();
   const isScanRouted = scanRouting.stage === "need-product" && scanRouting.data !== null;
   const sd = scanRouting.data;
 
@@ -2503,18 +2624,35 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   // they are now looking at.
   const signToken = useRef(0);
   const [drawingSignError, setDrawingSignError] = useState("");
+  const [drawingError, setDrawingError] = useState("");
 
-  const applySignedDrawings = async (p: Product) => {
+  // The product list is loaded without the 54-row task schedule and the drawing
+  // keys, so opening a product has to pull the full row before it can be shown.
+  // Fetching per selection also keeps the list payload small on the 3s refresh.
+  const openProduct = async (p: Product) => {
     const token = ++signToken.current;
-    setForm(p);
-    if (!p.drawingPaths.some(Boolean)) return;
+    if (isNew) {
+      setForm(p);
+      return;
+    }
+    let full = p;
     try {
-      const urls = await signProductDrawings(p.drawingPaths);
+      const fetched = await fetchProduct(p.id);
+      if (token !== signToken.current) return;
+      if (fetched) full = fetched;
+    } catch (err) {
+      if (token !== signToken.current) return;
+      setDrawingSignError(err instanceof Error ? err.message : String(err));
+    }
+    setForm(full);
+    if (!full.drawingPaths.some(Boolean)) return;
+    try {
+      const urls = await signProductDrawings(full.drawingPaths);
       if (token !== signToken.current) return;
       // Merged into the live form rather than replacing it, so text typed while
       // the sign was in flight is not rolled back. The id check makes this a
       // no-op if the user has since moved to a different product.
-      setForm(prev => prev.id === p.id ? { ...prev, drawings: urls } : prev);
+      setForm(prev => prev.id === full.id ? { ...prev, drawings: urls } : prev);
       setDrawingSignError("");
     } catch (err) {
       if (token !== signToken.current) return;
@@ -2524,20 +2662,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     }
   };
 
-  // useState cannot await, so the product selected on first render is signed
+  // useState cannot await, so the product selected on first render is loaded
   // here instead.
   useEffect(() => {
-    if (isScanRouted || isNew || !form.drawingPaths.some(Boolean)) return;
-    const token = ++signToken.current;
-    void signProductDrawings(form.drawingPaths).then(urls => {
-      if (token !== signToken.current) return;
-      setForm(prev => ({ ...prev, drawings: urls }));
-      setDrawingSignError("");
-    }).catch(err => {
-      if (token !== signToken.current) return;
-      setDrawingSignError(err instanceof Error ? err.message : String(err));
-    });
-    // Intentionally mount-only: later selections go through applySignedDrawings.
+    if (isScanRouted || isNew) return;
+    const initial = products[0];
+    if (!initial) return;
+    void openProduct(initial);
+    // Intentionally mount-only: later selections go through openProduct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2617,6 +2749,18 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && drawingIndex !== null) {
+      // Checked before the read, so an oversized or unexpected file never
+      // becomes a multi-megabyte data URL in component state. The signed URL
+      // for a drawing is served from this project's own storage origin, so an
+      // .svg or .html accepted here would be rendered as active content by
+      // anyone who opened the link.
+      const rejection = validateDrawingFile(file);
+      if (rejection) {
+        setDrawingError(rejection);
+        e.target.value = "";
+        return;
+      }
+      setDrawingError("");
       const reader = new FileReader();
       reader.onload = () => {
         setForm(prev => {
@@ -2671,7 +2815,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       // productFromRow comes back with empty display strings because the stored
       // value is a key, not a URL, so the freshly saved drawings have to be
       // signed again or the slots would blank out under the user.
-      void applySignedDrawings(saved);
+      void openProduct(saved);
       setSelectedId(saved.id);
       setIsNew(false);
       setErrors({});
@@ -2701,7 +2845,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setProducts(rest);
     setDirty(false);
     if (rest[0]) {
-      void applySignedDrawings(rest[0]);
+      void openProduct(rest[0]);
       setSelectedId(rest[0].id);
       setIsNew(false);
     } else {
@@ -2727,7 +2871,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             {filtered.length === 0 ? (
               <div className="px-4 py-6 text-sm text-slate-400 text-center">{t("noProductsFound", lang)}</div>
             ) : filtered.map(p => (
-              <button key={p.id} onClick={() => { void applySignedDrawings(p); setSelectedId(p.id); setIsNew(false); setErrors({}); setDirty(false); }}
+              <button key={p.id} onClick={() => { void openProduct(p); setSelectedId(p.id); setIsNew(false); setErrors({}); setDirty(false); }}
                 className={`w-full text-left px-4 py-3.5 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors ${selectedId === p.id ? "bg-blue-50 border-l-4 border-l-[#1a3458]" : "border-l-4 border-l-transparent"}`}>
                 <div className="font-600 text-base text-slate-800 truncate">{p.productName}</div>
                 <div className="text-sm text-slate-400 font-mono truncate">{p.productNumber}</div>
@@ -2777,6 +2921,12 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("drawings", lang).replace("{n}", String(form.drawings.length))}</p>
+              {drawingError && (
+                <div className="flex items-start gap-2 px-3 py-2 mb-3 bg-red-50 border border-red-200 rounded-sm">
+                  <Icon name="alert-triangle" size={15} className="text-red-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-800">{drawingError}</p>
+                </div>
+              )}
               {drawingSignError && (
                 <div className="flex items-start gap-2 px-3 py-2 mb-3 bg-amber-50 border border-amber-200 rounded-sm">
                   <Icon name="alert-triangle" size={15} className="text-amber-600 mt-0.5 shrink-0" />
@@ -2960,7 +3110,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
         <div className="hidden flex-1 sm:block" />
         <Btn variant="action" size="lg" onClick={handleSave} disabled={!dirty || Object.values(errors).some(v => v)}><Icon name="save" size={15} />{isScanRouted ? t("saveAndContinue", lang) : t("saveButton", lang)}</Btn>
-        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew} onClick={() => void handleDelete()}>
+        <Btn variant="danger" size="lg" className="col-span-2 justify-center min-[390px]:col-span-1" disabled={isNew || !canDelete} title={canDelete ? undefined : deleteHint(lang)} onClick={() => void handleDelete()}>
           <Icon name="trash" size={15} />{t("deleteButton", lang)}
         </Btn>
       </footer>
@@ -2970,19 +3120,30 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
 // ---- Page 6: Delivery slip ----
 
-function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
-  mode: DeliverySlipMode; orders: OrderRecord[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }: {
+  mode: DeliverySlipMode; orders: OrderRecord[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const [inCharge, setInCharge] = useState("");
   const [conditions, setConditions] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
-  const items = mode === "single" ? orders.slice(3, 4) : orders.slice(3, 5);
+
+  // Same defect as the invoice: orders.slice(3, 4) / slice(3, 5) shipped a
+  // fixed pair of rows regardless of what was actually ticked, so the slip
+  // could describe goods nobody ordered. A single slip is one order; a multiple
+  // slip is whatever the operator selected.
+  const selected = useMemo(
+    () => (orderIds.length > 0 ? orderIds.map(id => orders.find(o => o.id === id)).filter((o): o is OrderRecord => !!o) : []),
+    [orderIds, orders],
+  );
+  const items = useMemo(
+    () => (mode === "single" ? selected.slice(0, 1) : selected),
+    [mode, selected],
+  );
   const total = items.reduce((s, o) => s + o.orderAmount, 0);
-  const tax = Math.round(total * 0.1);
-  const today = new Date();
-  const todayStr = lang === "ja"
-    ? `${today.getFullYear()}年${today.getMonth() + 1}月${today.getDate()}日`
-    : today.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const tax = Math.round(total * TAX_RATE);
+  // The delivery date is the day the document is printed, in office time, so
+  // it follows the JST calendar day rather than the viewer's timezone.
+  const todayStr = formatLongJST(new Date(), lang);
   const ph = {
     inCharge: lang === "ja" ? "氏名" : "Name",
     conditions: lang === "ja" ? "条件" : "Conditions",
@@ -2994,12 +3155,19 @@ function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
       <div className="flex items-center justify-between px-4 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0">
         <Btn variant="outline" size="sm" onClick={() => onNavigate("search-billing")}><Icon name="chevron-left" size={14} />{t("returnButton", lang)}</Btn>
         <div className="flex-1" />
-        <Btn variant="primary" size="sm" onClick={() => window.print()}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
+        <Btn variant="primary" size="sm" onClick={() => window.print()} disabled={items.length === 0}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
       <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
         <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
           <p className="text-sm text-slate-500 mb-6"><span className="font-600 text-slate-600">{t("deliveryDateLabel", lang)}:</span><span className="ml-2 font-mono">{todayStr}</span></p>
+          {items.length === 0 ? (
+            <div className="mb-6 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {lang === "ja"
+                ? "出荷伝票を作成する受注が選択されていません。請求検索で対象を選んでから印刷してください。"
+                : "No orders are selected. Tick the orders in the billing search, then print."}
+            </div>
+          ) : null}
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FieldBox label={t("inCharge", lang)}><TextInput value={inCharge} placeholder={ph.inCharge} onChange={setInCharge} /></FieldBox>
             <FieldBox label={t("deliveryConditions", lang)}><TextInput value={conditions} placeholder={ph.conditions} onChange={setConditions} /></FieldBox>
@@ -3426,6 +3594,10 @@ export default function App() {
   const [scanOpen, setScanOpen] = useState(false);
   const [lang, setLang] = useState<"ja" | "en">("ja");
   const [checklistOrderId, setChecklistOrderId] = useState<string | null>(null);
+  // Orders ticked for the invoice and delivery slip. Held at the top level
+  // because the print pages are reached by navigation, not by props from the
+  // search page, and they need to know exactly which rows were selected.
+  const [billingOrderIds, setBillingOrderIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3458,7 +3630,16 @@ export default function App() {
     };
 
     void refreshData();
-    const refreshTimer = window.setInterval(() => void refreshData(), 3000);
+    // The interval used to refetch every table twenty times a minute and
+    // replace all three arrays each time, so a dashboard left open behind an
+    // edit re-rendered the whole app forever and held twenty open connections
+    // per session. It now runs at 60s and stops while the tab is hidden, which
+    // is where the refresh was actually needed least. Focus and visibility
+    // still refresh immediately, so returning to the tab is never stale.
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshData();
+    }, 60000);
     const refreshOnFocus = () => void refreshData();
     const refreshOnVisibility = () => {
       if (document.visibilityState === "visible") void refreshData();
@@ -3535,11 +3716,11 @@ export default function App() {
     <div className="h-full overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
       {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
       {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
-      {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-      {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} lang={lang} setLang={setLang} onNavigate={navigate} />}
+      {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} billingOrderIds={billingOrderIds} setBillingOrderIds={setBillingOrderIds} lang={lang} setLang={setLang} />}
+      {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "client-master"  && <ClientMasterPage clients={clients} setClients={setClients} products={products} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
-      {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
+      {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
       {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}

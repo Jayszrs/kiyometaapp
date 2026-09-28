@@ -50,6 +50,8 @@ interface OrderRow {
   finish_task: boolean;
   has_contact: boolean;
   completed_tasks: boolean[];
+  version: number;
+  inventory_stock_applied: boolean;
 }
 
 function clientFromRow(r: ClientRow): Client {
@@ -77,6 +79,22 @@ function productFromRow(r: ProductRow): Product {
     // signs the ones it needs, and only for the product actually opened.
     drawings: drawings.map(() => ""),
     drawingPaths: drawings.map(d => d?.path ?? ""),
+  };
+}
+
+// Same shape for the list projection, which never carries the heavy columns.
+// The blank placeholders keep a list product distinguishable from an unedited
+// one, and the product form refetches the real row when it is opened.
+function productListFromRow(r: ProductListRow): Product {
+  return {
+    id: r.id,
+    clientName: r.client_name,
+    productName: r.product_name,
+    productNumber: r.product_number,
+    unitPrice: r.unit_price,
+    tasks: [],
+    drawings: [],
+    drawingPaths: [],
   };
 }
 
@@ -110,6 +128,8 @@ function orderFromRow(r: OrderRow): OrderRecord {
     finishTask: r.finish_task,
     hasContact: r.has_contact,
     completedTasks: r.completed_tasks ?? [],
+    version: r.version ?? 1,
+    materialsIssued: r.inventory_stock_applied ?? false,
   };
 }
 
@@ -136,10 +156,21 @@ function orderToRow(o: OrderRecord) {
 
 // ---- Fetch (initial load) ----
 
+// Product lists and the order board never render a drawing or a task schedule,
+// so selecting "*" shipped the 54-entry tasks jsonb and the drawings jsonb for
+// every product on every load. The product form asks for them itself when a
+// product is opened, which is the only place they are displayed.
+const PRODUCT_LIST_COLUMNS =
+  "id, client_name, product_name, product_number, unit_price, updated_at";
+
+// The list projection omits tasks and drawings, so it needs its own row type
+// instead of being forced through ProductRow.
+type ProductListRow = Omit<ProductRow, "tasks" | "drawings">;
+
 export async function fetchAll() {
   const [clientsRes, productsRes, ordersRes] = await Promise.all([
     supabase.from("clients").select("*").order("name"),
-    supabase.from("products").select("*").order("product_name"),
+    supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name"),
     supabase.from("orders").select("*").order("delivery_date"),
   ]);
   if (clientsRes.error) throw clientsRes.error;
@@ -147,9 +178,16 @@ export async function fetchAll() {
   if (ordersRes.error) throw ordersRes.error;
   return {
     clients: (clientsRes.data as ClientRow[]).map(clientFromRow),
-    products: (productsRes.data as ProductRow[]).map(productFromRow),
+    products: (productsRes.data as ProductListRow[]).map(productListFromRow),
     orders: (ordersRes.data as OrderRow[]).map(orderFromRow),
   };
+}
+
+// Full product row including tasks and drawing keys, for the product form only.
+export async function fetchProduct(id: string): Promise<Product | null> {
+  const { data, error } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? productFromRow(data as ProductRow) : null;
 }
 
 // ---- Clients ----
@@ -197,30 +235,77 @@ export function planDrawingSlots(drawings: string[], existingPaths: string[]): D
   });
 }
 
-function drawingExtension(mime: string): string {
-  return mime.split("/")[1]?.split("+")[0] || "png";
-}
-
 // One entry is emitted per slot, including empty ones, so indices keep lining
 // up with the form. Skipping empties would shift every later drawing down a
 // slot and scramble the numbering after a save and reload.
+//
+// The bucket is bounded to 10 MB and a MIME allowlist (migration 010), and the
+// same allowlist is applied here. Accepting a client-declared type unchecked
+// would let an .svg or .html through, and the signed URL then serves it with
+// that content type from the project's own storage origin.
+export const DRAWING_MAX_BYTES = 10 * 1024 * 1024;
+const DRAWING_MIME = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+
+export function validateDrawingFile(file: File): string | null {
+  if (!DRAWING_MIME.has(file.type)) {
+    return `Unsupported file type (${file.type || "unknown"}). Use JPG, PNG, WebP or PDF.`;
+  }
+  if (file.size > DRAWING_MAX_BYTES) {
+    return `File is too large (${(file.size / 1048576).toFixed(1)} MB). The limit is 10 MB.`;
+  }
+  return null;
+}
+
+const EXTENSION_BY_MIME: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+};
+
+export function drawingExtension(mime: string): string {
+  return EXTENSION_BY_MIME[mime] ?? "png";
+}
+
 async function persistDrawings(productId: string, drawings: string[], existingPaths: string[]): Promise<DrawingRef[]> {
-  const out: DrawingRef[] = [];
   const plan = planDrawingSlots(drawings, existingPaths);
+  const out: DrawingRef[] = new Array(plan.length);
+
+  // Uploads are independent, so they run together with a small concurrency cap
+  // instead of one roundtrip after another. Slot order is preserved by writing
+  // into the output array by index rather than pushing.
+  const pending: Promise<void>[] = [];
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i];
     if (step.kind === "keep") {
-      out.push({ path: step.path });
+      out[i] = { path: step.path };
       continue;
     }
     const d = drawings[i];
-    const bytes = Uint8Array.from(atob(d.split(",")[1]), c => c.charCodeAt(0));
     const path = `${productId}/${Date.now()}-${i}.${drawingExtension(step.mime)}`;
-    const { error } = await supabase.storage.from("product-drawings").upload(path, bytes, { contentType: step.mime, upsert: true });
-    if (error) throw error;
-    out.push({ path });
+    pending.push(
+      (async () => {
+        const { error } = await supabase.storage
+          .from("product-drawings")
+          .upload(path, dataUriToBytes(d), { contentType: step.mime, upsert: true });
+        if (error) throw error;
+        out[i] = { path };
+      })(),
+    );
   }
+  await Promise.all(pending);
   return out;
+}
+
+// Uint8Array.from(string, mapFn) invokes the callback once per byte, which is
+// several million calls for a multi-megabyte drawing. A manual loop over a
+// pre-allocated buffer is the same result at a fraction of the cost.
+function dataUriToBytes(dataUri: string): Uint8Array {
+  const base64 = dataUri.slice(dataUri.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 // Mints short lived signed URLs for a product's stored drawings. The bucket is
@@ -240,9 +325,11 @@ export async function signProductDrawings(paths: string[]): Promise<string[]> {
   if (error) throw error;
 
   const out = paths.map(() => "");
+  const byPath = new Map<string, number>(wanted.map(x => [x.p, x.i]));
   for (const signed of data ?? []) {
-    const original = wanted.find(x => x.p === signed.path);
-    if (original && signed.signedUrl) out[original.i] = signed.signedUrl;
+    if (!signed.path) continue;
+    const index = byPath.get(signed.path);
+    if (index !== undefined && signed.signedUrl) out[index] = signed.signedUrl;
   }
   return out;
 }
@@ -265,14 +352,55 @@ export async function deleteProduct(id: string): Promise<void> {
 
 // ---- Orders ----
 
+// Concurrent edit protection.
+//
+// upsertOrder used to write all sixteen columns with no precondition, so two
+// operators editing the same order produced a silent last-write-wins. The
+// worst case was not a lost field: reverting progress made the BOM trigger post
+// a material reversal, handing back stock for goods that had already shipped.
+//
+// The database carries a version column that the trigger bumps on every write.
+// A save sends the version it read and only applies if it still matches. A miss
+// is a conflict the user has to resolve by reloading, never a silent overwrite.
+export class StaleOrderError extends Error {
+  constructor(public readonly orderId: string) {
+    super("This order was changed by someone else while you were editing it. Reload to see the current values, then reapply your change.");
+    this.name = "StaleOrderError";
+  }
+}
+
 export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
+  const expectedVersion = o.version ?? 1;
+
   const { data, error } = await supabase
     .from("orders")
-    .upsert({ id: o.id, ...orderToRow(o) })
+    .update({ ...orderToRow(o), version: expectedVersion + 1 })
+    .eq("id", o.id)
+    .eq("version", expectedVersion)
     .select()
     .single();
-  if (error) throw error;
-  return orderFromRow(data as OrderRow);
+
+  if (error) {
+    // Postgres reports a missing row on .single() as 0 rows. That is either a
+    // genuinely new order or a version that has moved on, so distinguish the
+    // two before deciding to insert.
+    const { data: existing } = await supabase
+      .from("orders")
+      .select("id, version")
+      .eq("id", o.id)
+      .maybeSingle();
+    if (existing) throw new StaleOrderError(o.id);
+  }
+
+  if (data) return orderFromRow(data as OrderRow);
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("orders")
+    .insert({ id: o.id, ...orderToRow(o), version: 1 })
+    .select()
+    .single();
+  if (insertError) throw insertError;
+  return orderFromRow(inserted as OrderRow);
 }
 
 export async function deleteOrder(id: string): Promise<void> {

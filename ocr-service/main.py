@@ -7,21 +7,45 @@ boxes (RapidOCR, ONNX, offline, Japanese-capable).
   GET  /health          -> {"ok": true}
   POST /ocr             multipart file -> { source, lines: [{text,x0,y0,x1,y1,score,page}] }
 
+Both POST routes require a Supabase access token: send `Authorization: Bearer
+<token>`. An unsigned request gets 401, which is what keeps the service from
+being usable as a free OCR backend for anyone who can reach the port. The
+signature is checked against SUPABASE_JWT_SECRET when that is configured, and
+against SUPABASE_JWKS_URL otherwise, so the service can run in front of a
+shared secret or behind asymmetric keys without a code change.
+
 Env:
-  CORS_ORIGINS  comma-separated allowed origins (default: *)
-  MAX_PDF_PAGES max pages to OCR from a PDF (default: 3)
+  CORS_ORIGINS           comma-separated allowed origins. Required: with no
+                         value the middleware is not installed, so the service
+                         only answers same-origin and direct requests, and
+                         a browser on any other site is blocked.
+  MAX_PDF_PAGES          max pages to OCR from a PDF (default: 3)
+  SUPABASE_JWT_SECRET    HS256 shared secret (preferred, no network call)
+  SUPABASE_JWKS_URL      JWKS endpoint, used when the secret is not set
+  SUPABASE_JWT_AUDIENCE  expected aud claim, if the project uses one
+  OCR_REQUIRE_AUTH       "0" disables the check. Only for local debugging: it
+                         re-exposes the service to anyone who can reach it.
 
 Run:  uvicorn main:app --host 0.0.0.0 --port 8787
 """
 
+import base64
+import binascii
+import hashlib
+import hmac
+import json
 import logging
 import os
+import time
+import urllib.error
+import urllib.request
 from threading import Lock, Semaphore
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from rapidocr_onnxruntime import RapidOCR
 from prepare_models import model_path
@@ -38,18 +62,60 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "25")) * 1024 * 1024
 MAX_PAGE_PIXELS = int(os.environ.get("MAX_PAGE_PIXELS", "20000000"))
 LOG_ENDPOINT_ENABLED = os.environ.get("OCR_LOG_ENDPOINT", "0") == "1"
 
+# Authentication. OCR is the most expensive thing this service does, and an open
+# endpoint is both a free compute service for anyone and a way to burn the
+# office's own inference queue. Requiring a Supabase access token ties usage to
+# a real signed-in user.
+JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+JWKS_URL = os.environ.get("SUPABASE_JWKS_URL", "").strip()
+JWT_AUDIENCE = os.environ.get("SUPABASE_JWT_AUDIENCE", "").strip()
+REQUIRE_AUTH = os.environ.get("OCR_REQUIRE_AUTH", "1") != "0"
+REQUIRE_AUTH = REQUIRE_AUTH and bool(JWT_SECRET or JWKS_URL)
+if not REQUIRE_AUTH:
+    # Fail loudly at boot rather than silently serving public requests. The
+    # override exists for local development against a copy of the data.
+    logging.getLogger("kiyometa-ocr").warning(
+        "OCR authentication is disabled. Set SUPABASE_JWT_SECRET or "
+        "SUPABASE_JWKS_URL before exposing this service."
+    )
+
 app = FastAPI(title="Kiyometa Quotation OCR")
 
 _origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+if os.environ.get("CORS_ORIGINS", "").strip() == "*":
+    # A wildcard with credentials is rejected by browsers, so it silently
+    # degraded to "any site may read responses" on the deployments that set it.
+    raise RuntimeError(
+        "CORS_ORIGINS=* is not allowed. List the exact origins, for example "
+        "CORS_ORIGINS=https://kiyometa.app"
+    )
 if _origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
         allow_methods=["POST", "GET", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 # Unset CORS_ORIGINS means no CORS headers at all, so other origins are refused
 # by the browser. The web app proxies same-origin and needs no CORS either.
+
+# The browser sends Content-Length for a multipart upload, so an oversized
+# request is rejected before its body is parsed. Starlette spools the parsed
+# file to a temporary file as part of form handling, which is why checking
+# file.size inside the handler was too late to bound memory: the bytes were
+# already on disk. Content-Length is only a claim, so run_ocr still enforces
+# the limit on the bytes it actually reads.
+if MAX_UPLOAD_BYTES > 0:
+
+    @app.middleware("http")
+    async def reject_oversized_body(request: Request, call_next):
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"File is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."},
+            )
+        return await call_next(request)
 
 _ocr: RapidOCR | None = None
 _preview_ocr: RapidOCR | None = None
@@ -96,6 +162,193 @@ def get_japanese_ocr() -> RapidOCR:
             text_score=0.3, intra_op_num_threads=4, inter_op_num_threads=2,
         )
     return _japanese_ocr
+
+
+# ---- Authentication -------------------------------------------------------
+#
+# The token is a standard Supabase access token: an RS256 (or ES256) JWT signed
+# by the project's key. Verification needs no extra dependency, so the service
+# stays a small offline container.
+
+_jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
+_jwks_lock = Lock()
+JWKS_CACHE_SECONDS = 600
+# A token that was rejected because the signing key had rotated is worth
+# retrying once against fresh keys; a token that is simply malformed is not.
+ALLOWED_ALGS = {"RS256", "RS384", "RS512", "ES256", "ES384", "HS256"}
+
+
+def _b64url_decode(segment: str) -> bytes:
+    padding = "=" * (-len(segment) % 4)
+    return base64.urlsafe_b64decode(segment + padding)
+
+
+def _fetch_jwks() -> dict:
+    """Fetch and briefly cache the signing keys.
+
+    Key rotation is the reason for the cache rather than a fetch per request:
+    a rotated key invalidates existing tokens, and a request arriving in that
+    window would otherwise be rejected until the client refreshed. Keys are
+    refetched on an unknown kid, so the cache only bounds how often the endpoint
+    is called.
+    """
+    now = time.monotonic()
+    if _jwks_cache["keys"] and now - _jwks_cache["fetched_at"] < JWKS_CACHE_SECONDS:
+        return _jwks_cache["keys"]
+    with _jwks_lock:
+        if _jwks_cache["keys"] and time.monotonic() - _jwks_cache["fetched_at"] < JWKS_CACHE_SECONDS:
+            return _jwks_cache["keys"]
+        try:
+            with urllib.request.urlopen(JWKS_URL, timeout=5) as response:
+                keys = json.loads(response.read())
+        except (urllib.error.URLError, ValueError, TimeoutError) as exc:
+            # A stale cache is better than refusing every request while the
+            # endpoint is briefly unreachable.
+            if _jwks_cache["keys"]:
+                log.warning("JWKS fetch failed, reusing cached keys: %s", exc)
+                return _jwks_cache["keys"]
+            raise HTTPException(status_code=503, detail="Cannot verify the session right now.") from exc
+        _jwks_cache["keys"] = keys
+        _jwks_cache["fetched_at"] = time.monotonic()
+        return keys
+
+
+def _verify_rs(token: str, header: dict, payload: dict) -> None:
+    keys = _fetch_jwks()
+    kid = header.get("kid")
+    candidates = [k for k in keys.get("keys", []) if k.get("kid") == kid] if kid else []
+    if not candidates:
+        # An unknown kid usually means a rotation. Drop the cache and try once
+        # more before failing.
+        _jwks_cache["keys"] = None
+        keys = _fetch_jwks()
+        candidates = [k for k in keys.get("keys", []) if k.get("kid") == kid] if kid else keys.get("keys", [])
+    if not candidates:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+
+    signing_input = token.rsplit(".", 1)[0].encode("ascii")
+    for jwk in candidates:
+        try:
+            if jwk.get("kty") == "RSA":
+                _verify_rsa(jwk, signing_input, token)
+                return
+            if jwk.get("kty") == "EC":
+                _verify_ec(jwk, signing_input, token)
+                return
+        except HTTPException:
+            continue
+    raise HTTPException(status_code=401, detail="Invalid session token.")
+
+
+def _int_from_b64url(value: str) -> int:
+    return int.from_bytes(_b64url_decode(value), "big")
+
+
+def _verify_rsa(jwk: dict, signing_input: bytes, token: str) -> None:
+    try:
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+    except ImportError as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=500,
+            detail="JWT verification is unavailable: install cryptography.",
+        ) from exc
+    signature = _b64url_decode(token.split(".")[2])
+    key = rsa.RSAPublicNumbers(
+        e=_int_from_b64url(jwk["e"]), n=_int_from_b64url(jwk["n"])
+    ).public_key()
+    try:
+        key.verify(
+            signature,
+            signing_input,
+            padding.PKCS1v15(),
+            Prehashed(hashlib.sha256()),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid session token.") from exc
+
+
+def _verify_ec(jwk: dict, signing_input: bytes, token: str) -> None:
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+    except ImportError as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=500,
+            detail="JWT verification is unavailable: install cryptography.",
+        ) from exc
+    signature = _b64url_decode(token.split(".")[2])
+    curves = {
+        "P-256": (ec.SECP256R1, hashlib.sha256),
+        "P-384": (ec.SECP384R1, hashlib.sha384),
+        "P-521": (ec.SECP521R1, hashlib.sha512),
+    }
+    curve, digest_fn = curves.get(jwk.get("crv"), (None, None))
+    if curve is None:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+    public_numbers = ec.EllipticCurvePublicNumbers(
+        x=_int_from_b64url(jwk["x"]), y=_int_from_b64url(jwk["y"]), curve=curve()
+    )
+    try:
+        public_numbers.public_key().verify(
+            signature, signing_input, ec.ECDSA(digest_fn())
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid session token.") from exc
+
+
+def verify_access_token(token: str) -> dict:
+    """Verify signature and standard claims, returning the payload."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+    try:
+        header = json.loads(_b64url_decode(parts[0]))
+        payload = json.loads(_b64url_decode(parts[1]))
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=401, detail="Invalid session token.") from exc
+
+    alg = header.get("alg")
+    # "none" and any algorithm the project does not use are rejected outright,
+    # otherwise a caller could present an unsigned token.
+    if alg not in ALLOWED_ALGS:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+
+    now = time.time()
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)) or now >= exp:
+        raise HTTPException(status_code=401, detail="Session expired.")
+    nbf = payload.get("nbf")
+    if isinstance(nbf, (int, float)) and now + 60 < nbf:
+        raise HTTPException(status_code=401, detail="Session is not valid yet.")
+    if JWT_AUDIENCE and payload.get("aud") not in (None, JWT_AUDIENCE):
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+
+    if alg == "HS256":
+        if not JWT_SECRET:
+            raise HTTPException(status_code=500, detail="Token verification is not configured.")
+        expected = hmac.new(JWT_SECRET.encode("utf-8"), f"{parts[0]}.{parts[1]}".encode("ascii"), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64url_decode(parts[2])):
+            raise HTTPException(status_code=401, detail="Invalid session token.")
+    else:
+        _verify_rs(token, header, payload)
+    return payload
+
+
+def require_user(request: Request) -> None:
+    if not REQUIRE_AUTH:
+        return
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Sign in to use OCR.")
+    try:
+        verify_access_token(token.strip())
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise
+        log.info("Rejected OCR request: %s", exc.detail)
+        raise HTTPException(status_code=401, detail="Sign in to use OCR.") from exc
 
 
 class LineOut(BaseModel):
@@ -175,9 +428,12 @@ def health() -> dict:
 
 
 @app.post("/log")
-def log_message(payload: LogIn) -> dict:
+def log_message(request: Request, payload: LogIn) -> dict:
     if not LOG_ENDPOINT_ENABLED:
         raise HTTPException(status_code=404, detail="Not found")
+    # It forwards log text into this service's stdout, so it is authenticated
+    # on the same terms as OCR even though it is cheap.
+    require_user(request)
     lines = payload.message.splitlines()[:200]
     for line in lines:
         log.info("[webapp] %s", line[:500])
@@ -185,7 +441,10 @@ def log_message(payload: LogIn) -> dict:
 
 
 @app.post("/ocr", response_model=OcrResponse)
-def ocr(file: UploadFile = File(...), dpi: int = 300) -> OcrResponse:
+def ocr(request: Request, file: UploadFile = File(...), dpi: int = 300) -> OcrResponse:
+    # The token is checked before the queue slot is taken, so an unauthenticated
+    # request cannot occupy capacity or make the caller wait behind real work.
+    require_user(request)
     if not _slots.acquire(blocking=False):
         raise HTTPException(status_code=429, detail="The OCR service is busy. Try again shortly.")
     try:

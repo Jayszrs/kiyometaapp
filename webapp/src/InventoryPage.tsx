@@ -3,6 +3,7 @@ import { AppShell, type DeliverySlipMode, type Lang, type Page, type Product } f
 import { useAuth } from "./lib/auth";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import { createExcelWorkbook, readExcelRows, type ExcelColumn, type ImportedExcelRow } from "./lib/excel";
+import { isValidISODate, parseNumberStrict, todayJST } from "./lib/date";
 import {
   addStockMovement,
   deleteBomItem,
@@ -31,24 +32,49 @@ interface Props {
 
 type Tab = "inventory" | "purchases" | "movements" | "bom";
 
-const today = () => new Date().toISOString().slice(0, 10);
+// The office runs on Japan time. toISOString() returned the UTC day, so a
+// purchase entered at 08:30 JST was stamped with yesterday.
+const today = () => todayJST();
 const money = (value: number) => `¥${Math.round(value).toLocaleString()}`;
-const number = (value: unknown) => Number(value) || 0;
+
+// Number("") is 0 and Number("abc") is NaN, so the old `Number(value) || 0`
+// turned a blank cell into a real zero and a typo into a price of nothing. The
+// import path now uses requiredNumber, which distinguishes a missing value from
+// a genuine zero, and the form fields keep the coercing version because a
+// number input holding "" has to map onto a numeric state field.
+const number = (value: unknown) => parseNumberStrict(value as string | number | null | undefined) ?? 0;
 const text = (value: unknown) => String(value ?? "").trim();
 const autoNumber = (value: unknown) => {
   const normalized = text(value);
   return /^(auto|generated automatically)$/i.test(normalized) ? "" : normalized;
 };
 
-function excelDate(value: unknown, fallback = "") {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+// Excel dates arrive in three shapes depending on how the cell was authored:
+// a real Date (styled date cell), a serial number (unformatted), or a string.
+// The old version fell through to new Date(normalized), which silently rolled an
+// impossible date such as 2025-02-30 over to March 2 and accepted bare years,
+// so a typo landed in the ledger as a different, valid looking day.
+function excelDate(value: unknown, fallback = ""): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  }
   if (typeof value === "number" && Number.isFinite(value)) {
-    return new Date(Date.UTC(1899, 11, 30) + value * 86_400_000).toISOString().slice(0, 10);
+    // The 1899-12-30 epoch is Excel's day zero, accounting for its own
+    // non-existent 1900-02-29.
+    const serial = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86_400_000);
+    return `${serial.getUTCFullYear()}-${String(serial.getUTCMonth() + 1).padStart(2, "0")}-${String(serial.getUTCDate()).padStart(2, "0")}`;
   }
   const normalized = text(value);
   if (!normalized) return fallback;
-  const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? normalized : date.toISOString().slice(0, 10);
+  // Accept the two shapes people actually type, then validate strictly.
+  const slashed = normalized.replace(/[/.]/g, "-");
+  const isoCandidate = /^\d{4}-\d{1,2}-\d{1,2}$/.test(slashed)
+    ? `${slashed.slice(0, 4)}-${slashed.slice(5, 7).padStart(2, "0")}-${slashed.slice(8, 10).padStart(2, "0")}`
+    : "";
+  if (isValidISODate(isoCandidate)) return isoCandidate;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return normalized;
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
 }
 
 function boolean(value: unknown, fallback = true) {
@@ -181,8 +207,43 @@ function movementTypeFromExcel(value: unknown) {
   return match;
 }
 
+// Deleting an inventory item orphans every stock movement and BOM line that
+// references it, so it stays administrator-only, matching the DELETE policies
+// in migration 010. The row disappears from the ledger's history, which is not
+// a correction an operator should be able to make from the item list.
+const deleteDenied = "Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.";
+
+// Number("") is 0 and Number("abc") is NaN, so the old `Number(value) || 0`
+// turned a blank Excel cell into a real zero and a typo into a price of nothing.
+// The import path uses this, which distinguishes a missing value from a genuine
+// zero, so a quantity that was never filled in is reported instead of quietly
+// becoming "no stock".
+const requiredNumber = (value: unknown) => parseNumberStrict(value as string | number | null | undefined);
+
+// One prepared import row, discriminated by tab so the write phase cannot read
+// the wrong payload shape. The payload types are exactly what the save functions
+// in operations.ts accept.
+type InventoryPayload = Parameters<typeof saveInventoryItem>[0];
+type PurchasePayload = Parameters<typeof savePurchase>[0];
+type MovementPayload = Parameters<typeof addStockMovement>[0];
+
+type PreparedRow =
+  | { kind: "inventory"; existingId: string; payload: InventoryPayload }
+  | { kind: "purchases"; existingId: string; payload: PurchasePayload }
+  | { kind: "movements"; existingId: string; payload: MovementPayload }
+  | { kind: "bom"; existingId: string; payload: BomItem }
+  | { kind: "skip" };
+
+// The identity a row addresses, used to reject a file that sets the same record
+// twice. A row that creates a new record has no identity yet, so it is exempt.
+function duplicateKey(row: PreparedRow): string {
+  if (row.kind === "skip" || !row.existingId) return "";
+  return `${row.kind}:${row.existingId}`;
+}
+
 export default function InventoryPage({ products, onNavigate, lang, setLang }: Props) {
   const { profile } = useAuth();
+  const canDelete = profile.role === "administrator";
   const fileInput = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>("inventory");
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -349,79 +410,165 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     if (missing.length) throw new Error(`Row ${row.rowNumber}: ${missing.map(column => column.header).join(", ")} is required.`);
   };
 
+  // The old loop called saveInventoryItem / savePurchase / addStockMovement once
+  // per row, awaited each one, and threw on the first failure. A 200 row file
+  // with a typo on row 150 left the first 149 rows committed with no way to undo
+  // them from the UI. Every row is now validated and prepared up front, so
+  // nothing is written until the whole file is known to be sound.
+  const prepareRow = (row: ImportedExcelRow): PreparedRow => {
+    validateRequired(row, TAB_EXCEL[tab].columns);
+    if (tab === "inventory") {
+      const itemNo = autoNumber(row.values.itemNo);
+      const current = items.find(item => item.itemCode.toLowerCase() === itemNo.toLowerCase());
+      // A missing or non-numeric quantity is no longer a silent zero. The import
+      // refuses instead, because a zero here reads as "this item is out of
+      // stock" rather than "nobody filled in the cell".
+      const openingQty = requiredNumber(row.values.openingQty);
+      if (openingQty === null) throw new Error("Opening Qty must be a number.");
+      if (openingQty < 0) throw new Error("Opening Qty cannot be negative.");
+      const minimumQty = requiredNumber(row.values.minimumQty) ?? 0;
+      const targetQty = requiredNumber(row.values.targetQty) ?? 0;
+      if (minimumQty < 0 || targetQty < 0) throw new Error("Minimum Qty and Target Qty cannot be negative.");
+      const unitCost = requiredNumber(row.values.unitCost);
+      if (unitCost === null) throw new Error("Unit Cost must be a number.");
+      if (unitCost < 0) throw new Error("Unit Cost cannot be negative.");
+      const itemName = text(row.values.itemName);
+      if (!itemName) throw new Error("Item Name is required.");
+      return {
+        kind: "inventory",
+        existingId: current?.id ?? "",
+        payload: {
+          ...(current ?? blankItem()), itemCode: current?.itemCode ?? "",
+          itemName, category: categoryFromExcel(row.values.category),
+          procurementType: procurementFromExcel(row.values.procurement), unit: text(row.values.unit) || "pcs",
+          openingQty, minimumQty, targetQty, supplierName: text(row.values.supplier),
+          unitCost, active: boolean(row.values.active),
+        },
+      };
+    }
+    if (tab === "purchases") {
+      const purchaseNo = autoNumber(row.values.purchaseNo);
+      const current = purchases.find(purchase => purchase.purchaseNo.toLowerCase() === purchaseNo.toLowerCase());
+      const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
+      if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
+      const status = text(row.values.status).toLowerCase() as Purchase["status"];
+      if (!["ordered", "partial", "received", "cancelled"].includes(status)) throw new Error(`Unknown status "${text(row.values.status)}".`);
+      const orderedQty = requiredNumber(row.values.orderedQty);
+      const receivedQty = requiredNumber(row.values.receivedQty) ?? 0;
+      if (orderedQty === null) throw new Error("Ordered Qty must be a number.");
+      if (orderedQty <= 0 || receivedQty < 0 || receivedQty > orderedQty) throw new Error("Received quantity must be between zero and the ordered quantity.");
+      const unitPrice = requiredNumber(row.values.unitPrice);
+      if (unitPrice === null) throw new Error("Unit Price must be a number.");
+      if (unitPrice < 0) throw new Error("Unit Price cannot be negative.");
+      const purchaseDate = excelDate(row.values.purchaseDate, today());
+      if (!isValidISODate(purchaseDate)) throw new Error(`Purchase Date "${text(row.values.purchaseDate)}" is not a valid date.`);
+      const dueDate = excelDate(row.values.dueDate);
+      if (dueDate && !isValidISODate(dueDate)) throw new Error(`Due Date "${text(row.values.dueDate)}" is not a valid date.`);
+      return {
+        kind: "purchases",
+        existingId: current?.id ?? "",
+        payload: {
+          ...(current ?? blankPurchase()), purchaseNo: current?.purchaseNo ?? "",
+          purchaseDate, supplierName: text(row.values.supplier),
+          itemId: item.id, orderedQty, receivedQty, unitPrice,
+          dueDate, status, pic: text(row.values.pic), notes: text(row.values.notes),
+        },
+      };
+    }
+    if (tab === "movements") {
+      const movementNo = autoNumber(row.values.movementNo);
+      if (movementNo && movements.some(movement => movement.movementNo.toLowerCase() === movementNo.toLowerCase())) {
+        return { kind: "skip" };
+      }
+      const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
+      if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
+      const importedMovementType = movementTypeFromExcel(row.values.movementType);
+      const rawQuantity = requiredNumber(row.values.quantity);
+      if (rawQuantity === null) throw new Error("Quantity must be a number.");
+      if (!rawQuantity) throw new Error("Quantity cannot be zero.");
+      const positive = ["production_output", "subcontract_in", "adjustment_in"].includes(importedMovementType);
+      const quantity = Math.abs(rawQuantity);
+      const movementDate = excelDate(row.values.movementDate, today());
+      if (!isValidISODate(movementDate)) throw new Error(`Movement Date "${text(row.values.movementDate)}" is not a valid date.`);
+      return {
+        kind: "movements",
+        existingId: "",
+        payload: {
+          movementDate, movementType: importedMovementType,
+          referenceType: "manual", referenceId: null, itemId: item.id, quantity,
+          delta: positive ? quantity : -quantity, pic: text(row.values.pic) || profile.displayName || profile.username,
+          notes: text(row.values.notes),
+        },
+      };
+    }
+    const bomNo = autoNumber(row.values.bomNo);
+    const current = bom.find(candidate => candidate.bomNo.toLowerCase() === bomNo.toLowerCase());
+    const product = products.find(candidate => candidate.productNumber.toLowerCase() === text(row.values.productNo).toLowerCase());
+    if (!product) throw new Error(`Product No "${text(row.values.productNo)}" was not found.`);
+    const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
+    if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
+    const quantity = requiredNumber(row.values.quantity);
+    if (quantity === null) throw new Error("Qty per Product must be a number.");
+    if (quantity <= 0) throw new Error("Qty per Product must be greater than zero.");
+    return {
+      kind: "bom",
+      existingId: current?.id ?? "",
+      payload: {
+        id: current?.id ?? genUUID(), bomNo: current?.bomNo ?? "", productId: product.id,
+        inventoryItemId: item.id, quantityPerUnit: quantity, notes: text(row.values.notes),
+      },
+    };
+  };
+
   const importRows = async (rows: ImportedExcelRow[]) => {
-    const config = TAB_EXCEL[tab];
-    let saved = 0;
-    let skipped = 0;
+    // Phase 1: validate and resolve every row against the current state, with no
+    // writes at all.
+    const prepared: PreparedRow[] = [];
     for (const row of rows) {
-      validateRequired(row, config.columns);
       try {
-        if (tab === "inventory") {
-          const itemNo = autoNumber(row.values.itemNo);
-          const current = items.find(item => item.itemCode.toLowerCase() === itemNo.toLowerCase());
-          await saveInventoryItem({
-            ...(current ?? blankItem()), itemCode: current?.itemCode ?? "",
-            itemName: text(row.values.itemName), category: categoryFromExcel(row.values.category),
-            procurementType: procurementFromExcel(row.values.procurement), unit: text(row.values.unit) || "pcs",
-            openingQty: number(row.values.openingQty), minimumQty: number(row.values.minimumQty),
-            targetQty: number(row.values.targetQty), supplierName: text(row.values.supplier),
-            unitCost: number(row.values.unitCost), active: boolean(row.values.active),
-          });
-        } else if (tab === "purchases") {
-          const purchaseNo = autoNumber(row.values.purchaseNo);
-          const current = purchases.find(purchase => purchase.purchaseNo.toLowerCase() === purchaseNo.toLowerCase());
-          const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
-          if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
-          const status = text(row.values.status).toLowerCase() as Purchase["status"];
-          if (!["ordered", "partial", "received", "cancelled"].includes(status)) throw new Error(`Unknown status "${text(row.values.status)}".`);
-          const orderedQty = number(row.values.orderedQty);
-          const receivedQty = number(row.values.receivedQty);
-          if (orderedQty <= 0 || receivedQty < 0 || receivedQty > orderedQty) throw new Error("Received quantity must be between zero and the ordered quantity.");
-          await savePurchase({
-            ...(current ?? blankPurchase()), purchaseNo: current?.purchaseNo ?? "",
-            purchaseDate: excelDate(row.values.purchaseDate, today()), supplierName: text(row.values.supplier),
-            itemId: item.id, orderedQty, receivedQty, unitPrice: number(row.values.unitPrice),
-            dueDate: excelDate(row.values.dueDate), status, pic: text(row.values.pic), notes: text(row.values.notes),
-          });
-        } else if (tab === "movements") {
-          const movementNo = autoNumber(row.values.movementNo);
-          if (movementNo && movements.some(movement => movement.movementNo.toLowerCase() === movementNo.toLowerCase())) {
-            skipped += 1;
-            continue;
-          }
-          const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
-          if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
-          const importedMovementType = movementTypeFromExcel(row.values.movementType);
-          const rawQuantity = number(row.values.quantity);
-          if (!rawQuantity) throw new Error("Quantity cannot be zero.");
-          const positive = ["production_output", "subcontract_in", "adjustment_in"].includes(importedMovementType);
-          const quantity = Math.abs(rawQuantity);
-          await addStockMovement({
-            movementDate: excelDate(row.values.movementDate, today()), movementType: importedMovementType,
-            referenceType: "manual", referenceId: null, itemId: item.id, quantity,
-            delta: positive ? quantity : -quantity, pic: text(row.values.pic) || profile.displayName || profile.username,
-            notes: text(row.values.notes),
-          });
-        } else {
-          const bomNo = autoNumber(row.values.bomNo);
-          const current = bom.find(candidate => candidate.bomNo.toLowerCase() === bomNo.toLowerCase());
-          const product = products.find(candidate => candidate.productNumber.toLowerCase() === text(row.values.productNo).toLowerCase());
-          if (!product) throw new Error(`Product No "${text(row.values.productNo)}" was not found.`);
-          const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
-          if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
-          const quantity = number(row.values.quantity);
-          if (quantity <= 0) throw new Error("Qty per Product must be greater than zero.");
-          await saveBomItem({
-            id: current?.id ?? genUUID(), bomNo: current?.bomNo ?? "", productId: product.id,
-            inventoryItemId: item.id, quantityPerUnit: quantity, notes: text(row.values.notes),
-          });
-        }
-        saved += 1;
+        prepared.push(prepareRow(row));
       } catch (err) {
         throw new Error(`Row ${row.rowNumber}: ${errorMessage(err)}`);
       }
     }
-    if (!saved && !skipped) throw new Error("No data rows were found in the Excel file.");
+    const skipped = prepared.filter(row => row.kind === "skip").length;
+    const writable = prepared.filter((row): row is Exclude<PreparedRow, { kind: "skip" }> => row.kind !== "skip");
+    if (!writable.length && !skipped) throw new Error("No data rows were found in the Excel file.");
+
+    // A second row addressing the same record would silently overwrite the
+    // first, because each one is matched against the state as it was before the
+    // import. That is a spreadsheet mistake, not an intent worth honouring.
+    const collisions = new Map<string, number>();
+    for (const row of writable) {
+      const key = duplicateKey(row);
+      if (!key) continue;
+      const seen = collisions.get(key);
+      if (seen !== undefined) {
+        throw new Error(`The file contains more than one row for ${key}. Merge them into a single row and import again.`);
+      }
+      collisions.set(key, 1);
+    }
+
+    // Phase 2: write. Every row has already passed validation, so a failure
+    // here is a server or permission problem rather than bad input.
+    let saved = 0;
+    try {
+      for (const row of writable) {
+        if (row.kind === "inventory") await saveInventoryItem(row.payload);
+        else if (row.kind === "purchases") await savePurchase(row.payload);
+        else if (row.kind === "movements") await addStockMovement(row.payload);
+        else await saveBomItem(row.payload);
+        saved += 1;
+      }
+    } catch (err) {
+      // The writes above are individual statements, so report exactly how far
+      // the import got instead of implying the whole file landed. The audit log
+      // is what an administrator uses to undo the remainder.
+      throw new Error(
+        `${errorMessage(err)} The import stopped after ${saved} of ${writable.length} rows. ` +
+        `An administrator can undo the saved rows from Activity, or fix the file and re-import.`,
+      );
+    }
     return `${saved} record${saved === 1 ? "" : "s"} imported${skipped ? `, ${skipped} existing journal row${skipped === 1 ? "" : "s"} skipped` : ""}.`;
   };
 
@@ -482,7 +629,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                 <div><h2 className="text-lg font-700 text-[#1a3458]">Inventory master</h2><p className="text-sm text-slate-500">Item numbers are generated automatically and cannot be edited.</p></div>
                 <div className="flex gap-2"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search item..." className="min-w-0 flex-1 rounded border border-slate-300 px-3 py-2 text-sm sm:w-56" /><button onClick={() => setItemForm(blankItem())} className="whitespace-nowrap rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">+ Item</button></div>
               </div>
-              <div className="divide-y divide-slate-100 sm:hidden">{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? "Out of stock" : CATEGORY_LABELS[item.category]}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {item.unit}</p></div><div><p className="text-xs font-600 text-slate-400">Stock value</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">Min / target</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">Supplier</p><p className="break-words">{item.supplierName || "-"}</p></div></div>{item.needsReorder && <p className={`text-xs font-700 ${empty ? "text-red-700" : "text-amber-700"}`}>Suggested purchase +{item.suggestedPurchaseQty.toLocaleString()}</p>}<div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>Edit</button><button onClick={() => askDelete(`Delete ${item.itemCode} · ${item.itemName}?`, () => deleteInventoryItem(item.id), "Inventory item deleted.")} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">Delete</button></div></article>; })}</div>
+              <div className="divide-y divide-slate-100 sm:hidden">{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? "Out of stock" : CATEGORY_LABELS[item.category]}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {item.unit}</p></div><div><p className="text-xs font-600 text-slate-400">Stock value</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">Min / target</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">Supplier</p><p className="break-words">{item.supplierName || "-"}</p></div></div>{item.needsReorder && <p className={`text-xs font-700 ${empty ? "text-red-700" : "text-amber-700"}`}>Suggested purchase +{item.suggestedPurchaseQty.toLocaleString()}</p>}<div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>Edit</button><button onClick={() => askDelete(`Delete ${item.itemCode} · ${item.itemName}?`, () => deleteInventoryItem(item.id), "Inventory item deleted.")} disabled={!canDelete} title={deleteDenied} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 disabled:cursor-not-allowed disabled:opacity-40">Delete</button></div></article>; })}</div>
               <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[1040px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">No / item</th><th className="px-4 py-3">Category</th><th className="px-4 py-3 text-right">Available</th><th className="px-4 py-3 text-right">Min / target</th><th className="px-4 py-3">Supplier</th><th className="px-4 py-3 text-right">Stock value</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">{filteredItems.map(item => <tr key={item.id} className={item.availableQty <= 0 ? "bg-red-50" : item.needsReorder ? "bg-amber-50/60" : "hover:bg-slate-50"}>
@@ -490,7 +637,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                   <td className="px-4 py-3"><p>{CATEGORY_LABELS[item.category]}</p><p className="text-xs capitalize text-slate-500">{item.procurementType}</p></td>
                   <td className="px-4 py-3 text-right"><span className={`font-mono font-700 ${item.availableQty <= 0 ? "text-red-700" : item.needsReorder ? "text-amber-700" : "text-slate-800"}`}>{item.availableQty.toLocaleString()} {item.unit}</span>{item.availableQty <= 0 ? <p className="text-xs font-700 text-red-700">Out of stock</p> : item.needsReorder && <p className="text-xs text-amber-700">Suggest +{item.suggestedPurchaseQty.toLocaleString()}</p>}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</td><td className="px-4 py-3">{item.supplierName || "-"}</td><td className="px-4 py-3 text-right font-mono">{money(item.stockValue)}</td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => setItemForm(item)} className="rounded border border-slate-300 px-3 py-1.5 font-600 hover:bg-white">Edit</button><button onClick={() => askDelete(`Delete ${item.itemCode} · ${item.itemName}?`, () => deleteInventoryItem(item.id), "Inventory item deleted.")} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600 hover:bg-red-50">Delete</button></div></td>
+                  <td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => setItemForm(item)} className="rounded border border-slate-300 px-3 py-1.5 font-600 hover:bg-white">Edit</button><button onClick={() => askDelete(`Delete ${item.itemCode} · ${item.itemName}?`, () => deleteInventoryItem(item.id), "Inventory item deleted.")} disabled={!canDelete} title={deleteDenied} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">Delete</button></div></td>
                 </tr>)}</tbody>
               </table></div>
             </section>
