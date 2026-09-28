@@ -43,6 +43,8 @@ new Supabase project:
 5. `backend/supabase/migrations/005_all_roles_safe_undo.sql`
 6. `backend/supabase/migrations/006_employee_profiles.sql`
 7. `backend/supabase/migrations/007_product_inventory_integration.sql`
+8. `backend/supabase/migrations/008_order_management_constraints.sql`
+9. `backend/supabase/migrations/009_private_product_drawings.sql`
 
 Then link the Supabase CLI to the project and deploy the protected user
 management function:

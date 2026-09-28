@@ -14,7 +14,7 @@ frontend. Nothing in this directory is bundled into the browser application.
 ## Deploy
 
 Run every file in `supabase/migrations/` in numeric order (`001` through
-`007`) in the Supabase SQL Editor, or deploy the linked migrations with the
+`009`) in the Supabase SQL Editor, or deploy the linked migrations with the
 Supabase CLI. Then deploy the Edge Function from this `backend` directory:
 
 ```powershell

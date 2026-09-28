@@ -13,6 +13,15 @@ interface ClientRow {
   address: string;
 }
 
+// A drawing is referenced by its Storage object key and nothing else. The
+// bucket is private, so a key is the only durable handle: a display URL is
+// minted on demand and expires, which makes it unfit for storage. Rows written
+// before migration 009 also carry a "url" key, which is now ignored.
+interface DrawingRef {
+  path: string;
+  url?: string;
+}
+
 interface ProductRow {
   id: string;
   client_name: string;
@@ -20,7 +29,7 @@ interface ProductRow {
   product_number: string;
   unit_price: number;
   tasks: ProductTask[];
-  drawings: { path: string; url: string }[];
+  drawings: DrawingRef[];
 }
 
 interface OrderRow {
@@ -51,10 +60,12 @@ function clientToRow(c: Client) {
   return { name: c.name, phone: c.phone, email: c.email, postal_code: c.postalCode, address: c.address };
 }
 
-// Drawings are stored as Supabase Storage refs ({path, url}); the UI only
-// ever reads/writes a plain string (the <img src> / data URI), so drawing
-// rows are widened to string[] the moment they leave this module.
+// Drawings are stored as Storage refs, one entry per slot, index aligned with
+// the form so that emptying slot 1 does not slide every later drawing down a
+// slot. Only the path round-trips through here; the caller mints display URLs
+// separately because they expire.
 function productFromRow(r: ProductRow): Product {
+  const drawings = r.drawings ?? [];
   return {
     id: r.id,
     clientName: r.client_name,
@@ -62,11 +73,14 @@ function productFromRow(r: ProductRow): Product {
     productNumber: r.product_number,
     unitPrice: r.unit_price,
     tasks: r.tasks ?? [],
-    drawings: (r.drawings ?? []).map(d => d.url),
+    // Deliberately blank: the row holds keys, not displayable URLs. The caller
+    // signs the ones it needs, and only for the product actually opened.
+    drawings: drawings.map(() => ""),
+    drawingPaths: drawings.map(d => d?.path ?? ""),
   };
 }
 
-function productToRow(p: Product, drawingRefs: { path: string; url: string }[]) {
+function productToRow(p: Product, drawingRefs: DrawingRef[]) {
   return {
     client_name: p.clientName,
     product_name: p.productName,
@@ -155,32 +169,86 @@ export async function deleteClient(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// Drawings arrive as data URIs from the UI and are uploaded here; entries that
-// are already storage URLs are passed through.
+// Drawings arrive from the UI as either a data URI for a freshly picked file or
+// a display string for a slot that was never re-edited. Only data URIs are
+// uploaded. Everything else keeps the Storage key recorded in existingPaths,
+// which is why that array has to be threaded through: without it a save would
+// have nothing durable to write and the drawing would be silently lost.
+//
+// What has to happen to each drawing slot on save, decided without touching the
+// network so it can be reasoned about and tested on its own.
+//
+// existingPaths is authoritative for what stays stored, never the display
+// string. A display string can be empty simply because signing has not finished
+// yet, and treating that as a deletion would drop the drawing on a save that
+// happened to land before the signed URLs arrived. The display string only ever
+// decides whether a new file gets uploaded.
+export type DrawingSlotPlan =
+  | { kind: "upload"; mime: string }
+  | { kind: "keep"; path: string };
 
-async function persistDrawings(productId: string, drawings: string[]): Promise<{ path: string; url: string }[]> {
-  const out: { path: string; url: string }[] = [];
-  for (let i = 0; i < drawings.length; i++) {
-    const d = drawings[i];
-    if (!d) continue;
-    if (d.startsWith("data:")) {
+export function planDrawingSlots(drawings: string[], existingPaths: string[]): DrawingSlotPlan[] {
+  return drawings.map((d, i) => {
+    if (d && d.startsWith("data:")) {
       const [, mime = "image/png"] = /^data:([^;]+);base64,/.exec(d) ?? [];
-      const ext = mime.split("/")[1]?.split("+")[0] || "png";
-      const bytes = Uint8Array.from(atob(d.split(",")[1]), c => c.charCodeAt(0));
-      const path = `${productId}/${Date.now()}-${i}.${ext}`;
-      const { error } = await supabase.storage.from("product-drawings").upload(path, bytes, { contentType: mime, upsert: true });
-      if (error) throw error;
-      const { data } = supabase.storage.from("product-drawings").getPublicUrl(path);
-      out.push({ path, url: data.publicUrl });
-    } else {
-      out.push({ path: "", url: d });
+      return { kind: "upload", mime };
     }
+    return { kind: "keep", path: existingPaths[i] ?? "" };
+  });
+}
+
+function drawingExtension(mime: string): string {
+  return mime.split("/")[1]?.split("+")[0] || "png";
+}
+
+// One entry is emitted per slot, including empty ones, so indices keep lining
+// up with the form. Skipping empties would shift every later drawing down a
+// slot and scramble the numbering after a save and reload.
+async function persistDrawings(productId: string, drawings: string[], existingPaths: string[]): Promise<DrawingRef[]> {
+  const out: DrawingRef[] = [];
+  const plan = planDrawingSlots(drawings, existingPaths);
+  for (let i = 0; i < plan.length; i++) {
+    const step = plan[i];
+    if (step.kind === "keep") {
+      out.push({ path: step.path });
+      continue;
+    }
+    const d = drawings[i];
+    const bytes = Uint8Array.from(atob(d.split(",")[1]), c => c.charCodeAt(0));
+    const path = `${productId}/${Date.now()}-${i}.${drawingExtension(step.mime)}`;
+    const { error } = await supabase.storage.from("product-drawings").upload(path, bytes, { contentType: step.mime, upsert: true });
+    if (error) throw error;
+    out.push({ path });
+  }
+  return out;
+}
+
+// Mints short lived signed URLs for a product's stored drawings. The bucket is
+// private (migration 009), so this is the only way to display one. Kept out of
+// fetchAll on purpose: signing every drawing of every product on a three second
+// poll would be pure waste, and the product list does not show images. Callers
+// sign only the product actually opened for editing.
+const SIGNED_URL_TTL_SECONDS = 3600;
+
+export async function signProductDrawings(paths: string[]): Promise<string[]> {
+  const wanted = paths.map((p, i) => ({ p, i })).filter(x => x.p);
+  if (wanted.length === 0) return paths.map(() => "");
+
+  const { data, error } = await supabase.storage
+    .from("product-drawings")
+    .createSignedUrls(wanted.map(x => x.p), SIGNED_URL_TTL_SECONDS);
+  if (error) throw error;
+
+  const out = paths.map(() => "");
+  for (const signed of data ?? []) {
+    const original = wanted.find(x => x.p === signed.path);
+    if (original && signed.signedUrl) out[original.i] = signed.signedUrl;
   }
   return out;
 }
 
 export async function upsertProduct(p: Product): Promise<Product> {
-  const drawingRefs = await persistDrawings(p.id, p.drawings);
+  const drawingRefs = await persistDrawings(p.id, p.drawings, p.drawingPaths);
   const { data, error } = await supabase
     .from("products")
     .upsert({ id: p.id, ...productToRow(p, drawingRefs) })
