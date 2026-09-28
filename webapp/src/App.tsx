@@ -1,11 +1,12 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useAuth } from "./lib/auth";
-import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct } from "./lib/db";
+import { fetchAll, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import { runOcr, sendOcrLog } from "./lib/ocrClient";
 import { parseQuotation, type ParsedQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import UndoButton from "./components/UndoButton";
+import { Icon } from "./components/Icon";
 import {
   deleteBomItem,
   fetchProductMaterialData,
@@ -84,53 +85,22 @@ export interface Product {
   productNumber: string;
   unitPrice: number | "";
   tasks: ProductTask[];
+  // drawings holds what the <img> renders: a data URI while a file is being
+  // picked, otherwise a short lived signed URL, or "" for an empty slot.
+  // drawingPaths holds the durable Storage key for the same slots, index
+  // aligned, and is the only part worth persisting. Keeping them separate is
+  // what stops a save from writing an expired URL to the database.
   drawings: string[];
+  drawingPaths: string[];
 }
 
 type FormErrors = Record<string, string>;
 
 // ---- Icons ----
 
-const PATHS: Record<string, string> = {
-  menu: "M4 6h16M4 12h16M4 18h16",
-  home: "M3 12l9-9 9 9M5 10v10h4v-5h6v5h4V10",
-  close: "M6 6l12 12M6 18L18 6",
-  search: "M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z",
-  "chevron-left": "M15 18l-6-6 6-6",
-  "chevron-right": "M9 18l6-6-6-6",
-  save: "M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2zM17 21v-8H7v8M7 3v5h8",
-  trash: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
-  plus: "M12 5v14M5 12h14",
-  printer: "M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z",
-  "file-text": "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8",
-  scan: "M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 12h10",
-  users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 100 8 4 4 0 000-8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
-  package: "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 001 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16zM3.27 6.96L12 12.01l8.73-5.05M12 22.08V12",
-  "arrow-left": "M19 12H5M12 19l-7-7 7-7",
-  "arrow-right": "M5 12h14M12 5l7 7-7 7",
-  check: "M20 6L9 17l-5-5",
-  share: "M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zM21 19a3 3 0 11-6 0 3 3 0 016 0z",
-  "file-invoice": "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M12 18v-6M9 15h6",
-  truck: "M1 3h15v13H1zM16 8h4l3 3v5h-7V8zM5.5 19a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM18.5 19a1.5 1.5 0 100-3 1.5 1.5 0 000 3z",
-  info: "M12 22a10 10 0 100-20 10 10 0 000 20zM12 8h.01M12 12v4",
-  "alert-triangle": "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
-  image: "M21 15l-5-5L5 21M3 3h18v18H3zM8.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3z",
-  calendar: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z",
-  upload: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12",
-  camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2zM12 17a4 4 0 100-8 4 4 0 000 8z",
-  loader: "M21 12a9 9 0 11-6.22-8.56",
-  user: "M20 21a8 8 0 00-16 0M12 13a5 5 0 100-10 5 5 0 000 10z",
-  database: "M20 6c0 1.66-3.58 3-8 3S4 7.66 4 6s3.58-3 8-3 8 1.34 8 3zM4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6",
-  shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4",
-};
+export { AppShell, Icon };
+export type { Page, DeliverySlipMode, Lang };
 
-export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} fill="none" viewBox="0 0 24 24" className={`shrink-0 ${className}`} aria-hidden>
-      <path stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d={PATHS[name] ?? ""} />
-    </svg>
-  );
-}
 
 // ---- Sample data ----
 
@@ -438,44 +408,50 @@ function ScanBanner({ message }: { message: string }) {
 
 // ---- Shell ----
 
-function AppShell({ children, onNavigate, showBack = false, backTarget = "home" as Page, backLabel = "Home", title, lang, setLang }: {
+function AppShell({ children, onNavigate, showBack = false, backTarget = "home" as Page, backLabel = "Home", title, lang, setLang, noPrint = false, activePage }: {
   children: React.ReactNode; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
   showBack?: boolean; backTarget?: Page; backLabel?: string; title?: string;
+  noPrint?: boolean; activePage?: Page;
   lang?: "ja" | "en"; setLang?: (l: "ja" | "en") => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
-      <header className="app-header flex items-center gap-2 px-3 py-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
-        {showBack ? (
-          <button onClick={() => onNavigate(backTarget)} title={backLabel}
-            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label={backLabel}>
+      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} activePage={activePage} />
+      <header className={`app-header flex items-center gap-1 px-3 py-2 sm:px-4 bg-[#1a3458] text-white shrink-0 ${noPrint ? "print:hidden" : ""}`}>
+        {/* The hamburger used to be swapped out for the back arrow, so entering
+            a submenu locked the operator out of the whole navigation. Both are
+            now always reachable, with the hamburger held at the far left
+            because it is the control they reach for most often. */}
+        <button onClick={() => setMenuOpen(true)} title="Menu" aria-label="Menu" className="header-control is-button">
+          <Icon name="menu" size={20} />
+        </button>
+        {showBack && (
+          <button onClick={() => onNavigate(backTarget)} title={backLabel} aria-label={backLabel} className="header-control is-button">
             <Icon name="arrow-left" size={20} />
-          </button>
-        ) : (
-          <button onClick={() => setMenuOpen(true)}
-            className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer shrink-0" aria-label="Menu">
-            <Icon name="menu" size={20} />
           </button>
         )}
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
-          <span className="truncate text-base font-600">{title ?? "Kiyometa Order Management"}</span>
-        </div>
-        {lang !== undefined && setLang && (
-          <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
-            <ToggleSwitch
-              checked={lang === "en"}
-              onChange={v => setLang(v ? "en" : "ja")}
-              offLabel="日本語"
-              onLabel="English"
-              dark
-            />
+          <div className="min-w-0">
+            <span className="block truncate text-base font-600">{title ?? "Kiyometa Order Management"}</span>
           </div>
-        )}
-        <UndoButton />
-        <UserMenuButton onNavigate={onNavigate} />
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {lang !== undefined && setLang && (
+            <div className="header-control header-language">
+              <ToggleSwitch
+                checked={lang === "en"}
+                onChange={v => setLang(v ? "en" : "ja")}
+                offLabel="日本語"
+                onLabel="English"
+                dark
+              />
+            </div>
+          )}
+          <UndoButton />
+          <UserMenuButton onNavigate={onNavigate} />
+        </div>
       </header>
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
         {children}
@@ -487,21 +463,28 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
 function UserMenuButton({ onNavigate }: { onNavigate: (p: Page) => void }) {
   const { profile, signOut } = useAuth();
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      <button onClick={() => onNavigate("profile")} title="Edit my profile"
-        className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm text-blue-100 transition-colors hover:bg-white/10 hover:text-white">
-        <Icon name="user" size={15} className="shrink-0" />
-        <span className="hidden max-w-[180px] truncate sm:inline">@{profile.username}</span>
-      </button>
-      <button onClick={signOut} title="Sign out" aria-label="Sign out"
-        className="rounded px-2 py-1.5 text-xs text-blue-200 transition-colors hover:bg-white/10 hover:text-white">
-        <span className="hidden sm:inline">Sign out</span><span className="sm:hidden">↪</span>
-      </button>
+    <div className="flex items-center gap-1.5 shrink-0">
+      {/* The operator keeps their username in the header, inside a wrapper so
+          it never reads as text floating next to an icon. The person icon sits
+          in a circle within the same control. */}
+      <div className="header-control" title={`My profile (@${profile.username})`}>
+        <button onClick={() => onNavigate("profile")} className="gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15">
+            <Icon name="user" size={14} />
+          </span>
+          <span className="hidden max-w-[10rem] truncate text-sm font-600 md:inline">{profile.username}</span>
+        </button>
+      </div>
+      <div className="header-control" title="Sign out">
+        <button onClick={signOut} aria-label="Sign out">
+          <Icon name="log-out" size={17} />
+        </button>
+      </div>
     </div>
   );
 }
 
-function NavDrawer({ open, onClose, onNavigate, lang = "en" }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang?: Lang }) {
+function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang?: Lang; activePage?: Page }) {
   const { profile } = useAuth();
   if (!open) return null;
   const items = [
@@ -530,13 +513,27 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en" }: { open: boolean; 
         <div className="flex-1 py-2">
           {items.map(item => (
             <button key={item.key} onClick={() => { onNavigate(item.page); onClose(); }}
-              className="w-full flex items-center gap-4 px-5 py-3 text-left hover:bg-slate-50 border-b border-slate-100 cursor-pointer transition-colors">
-              <span className="flex items-center justify-center w-9 h-9 rounded bg-[#1a3458] text-white shrink-0">
+              className={`w-full flex items-center gap-4 px-5 py-3 text-left border-b border-slate-100 cursor-pointer transition-colors ${item.page === activePage ? "bg-[#1a3458]/10 hover:bg-[#1a3458]/15" : "hover:bg-slate-50"}`}>
+              <span className={`flex items-center justify-center w-9 h-9 rounded text-white shrink-0 ${item.page === activePage ? "bg-[#0d7377]" : "bg-[#1a3458]"}`}>
                 <Icon name={item.icon} size={16} />
               </span>
-              <span className="text-base font-600 text-slate-800">{t(item.key, lang)}</span>
+              <span className={`text-base ${item.page === activePage ? "font-700 text-[#1a3458]" : "font-600 text-slate-800"}`}>{t(item.key, lang)}</span>
             </button>
           ))}
+        </div>
+        {/* The operator identity needs a wrapper with room, not a label squeezed
+            next to an icon in the header. Sitting at the end of the drawer it
+            reads as who this session belongs to. */}
+        <div className="border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a3458] text-white">
+              <Icon name="user" size={16} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-700 text-slate-800">{profile.username}</p>
+              <p className="text-xs text-slate-500">{profile.role === "administrator" ? "Administrator" : "Operator"}</p>
+            </div>
+          </div>
         </div>
       </nav>
     </div>
@@ -813,7 +810,6 @@ return (
 
 function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; onOpenScan: () => void; lang: Lang; setLang: (l: Lang) => void }) {
   const { profile } = useAuth();
-  const [menuOpen, setMenuOpen] = useState(false);
   const nowJst = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
   const dateStr = new Date(nowJst).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const jstHour = new Date(nowJst).getHours();
@@ -821,11 +817,14 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
   const inProd = orders.filter(o => o.progress === "In production").length;
   const shipped = orders.filter(o => o.progress === "Shipped").length;
 
+  // Every module in the drawer belongs here too. Schedule had been left out of
+  // this list, so the sections grid silently offered only 7 of the 8 modules.
   const quickNav = [
     { label: t("orderEntry", lang), desc: "Create and manage orders", page: "order-entry" as Page, icon: "file-text" },
     { label: t("searchBilling", lang), desc: "Search orders, print invoices and delivery slips", page: "search-billing" as Page, icon: "search" },
     { label: t("clientMaster", lang), desc: "View and edit client information", page: "client-master" as Page, icon: "users" },
     { label: t("productMaster", lang), desc: "View and edit product specifications", page: "product-master" as Page, icon: "package" },
+    { label: t("navSchedule", lang), desc: "Production plan and due dates", page: "schedule" as Page, icon: "calendar" },
     { label: t("navInventory", lang), desc: "Materials, purchasing, and stock mutations", page: "inventory" as Page, icon: "database" },
     { label: t("navProfile", lang), desc: "Photo and employee details", page: "profile" as Page, icon: "user" },
     ...(profile.role === "administrator" ? [
@@ -834,29 +833,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
   ];
 
   return (
-    <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} />
-      <header className="app-header flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 bg-[#1a3458] text-white shrink-0">
-        <button onClick={() => setMenuOpen(true)} aria-label="Menu" className="p-1.5 rounded hover:bg-white/15 transition-colors cursor-pointer">
-          <Icon name="menu" size={20} />
-        </button>
-        <div className="flex min-w-0 items-center gap-2.5 flex-1">
-          <img src="/app-logo.png" alt="Kiyometa" className="h-8 w-8 shrink-0 rounded object-cover" />
-          <span className="truncate text-base font-600">{t("appTitle", lang)}</span>
-        </div>
-        <div className="header-language flex items-center gap-1.5 px-2 py-1 rounded-sm bg-white/10 shrink-0">
-          <ToggleSwitch
-            checked={lang === "en"}
-            onChange={v => setLang(v ? "en" : "ja")}
-            offLabel="日本語"
-            onLabel="English"
-            dark
-          />
-        </div>
-        <UndoButton />
-        <UserMenuButton onNavigate={onNavigate} />
-      </header>
-
+    <AppShell onNavigate={onNavigate} title={t("appTitle", lang)} activePage="home" lang={lang} setLang={setLang}>
       <div className="flex-1 overflow-y-auto">
         <div className="border-b border-slate-200 bg-white">
           <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
@@ -890,7 +867,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
           {/* Row 2: Sections */}
           <div>
             <p className="text-xs font-700 text-slate-400 mb-2">{t("sectionsHeader", lang)}</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
               {quickNav.map(item => (
                 <button key={item.label} onClick={() => onNavigate(item.page)}
                   className="flex flex-col items-center gap-2 px-4 py-4 bg-white border border-slate-200 rounded-sm hover:border-[#1a3458] hover:bg-slate-50 cursor-pointer transition-colors text-center">
@@ -926,11 +903,11 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("amountLabel", lang)}</p>
+                        <p className="text-xs font-600 text-slate-400">{t("amountLabel", lang)}</p>
                         <p className="mt-0.5 font-mono font-700 text-slate-700">¥{o.orderAmount.toLocaleString()}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs font-600 uppercase tracking-wide text-slate-400">{t("deliveryLabel", lang)}</p>
+                        <p className="text-xs font-600 text-slate-400">{t("deliveryLabel", lang)}</p>
                         <p className="mt-0.5 font-mono text-slate-600">{o.deliveryDate}</p>
                       </div>
                     </div>
@@ -964,7 +941,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
 
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }
 
@@ -1064,7 +1041,7 @@ const LABELS = {
   addressAutoFill:    { ja: "[自動] 郵便番号 {postal} の住所", en: "[Auto-filled] Address for postal code {postal}" },
   productMaster:      { ja: "製品マスタ",        en: "Product Master" },
   searchItemPlaceholder: { ja: "製品名・品番を検索...", en: "Search items by name or number..." },
-  appTitle:         { ja: "キヨメタ受注管理V2",   en: "Kiyometa Order Management" },
+  appTitle:         { ja: "キヨメタ受注管理",   en: "Kiyometa Order Management" },
   greeting:         { ja: "おはようございます",   en: "Good morning" },
   greetingMorning:  { ja: "おはようございます",   en: "Good morning" },
   greetingDay:      { ja: "こんにちは",          en: "Good afternoon" },
@@ -1135,6 +1112,8 @@ const LABELS = {
   drawingLabel:       { ja: "図面",             en: "Drawing" },
   addImage:           { ja: "クリックして画像を追加", en: "Tap or click to add an image" },
   addDrawingSlots:    { ja: "画像スロットを追加",  en: "Add more drawing slots" },
+  drawingSignFailed:  { ja: "保存済みの画像を読み込めませんでした。触及していない他の項目は保存できます。この製品を開き直すと再試行します。", en: "Stored images could not be loaded. Other untouched fields can still be saved; reopening this product will retry." },
+  drawingUnavailable: { ja: "画像を表示できません", en: "Image unavailable" },
   totalRequiredTime:  { ja: "総必要時間",          en: "Total required time" },
   autoCalculated:     { ja: "自動計算",            en: "Auto-calculated" },
   autoCalcInfo:       { ja: "合計時間は下のタスクから自動計算されます。", en: "Total time is automatically calculated from the tasks below." },
@@ -1203,7 +1182,11 @@ function ToggleSwitch({ checked, onChange, offLabel = "オフ", onLabel = "オ�
 }) {
   return (
     <button type="button" onClick={() => onChange(!checked)}
-      className="flex items-center gap-2 cursor-pointer focus:outline-none group">
+      // The header placement sits inside the shared header-control chip, which
+      // owns size, fill and focus; here we only keep the internal spacing. The
+      // old focus:outline-none left the control unreachable by keyboard without
+      // any replacement indicator.
+      className={dark ? "gap-2 w-full" : "flex items-center gap-2 cursor-pointer group"}>
       <span className={`text-sm font-600 transition-colors ${dark ? (!checked ? "text-white" : "text-white/50") : (!checked ? "text-slate-700" : "text-slate-400")}`}>{offLabel}</span>
       <span className={`relative inline-flex w-11 h-6 rounded-full border-2 transition-colors duration-200 ${dark ? (checked ? "bg-[#0d7377] border-[#0d7377]" : "bg-white/20 border-white/30") : (checked ? "bg-[#1a3458] border-[#1a3458]" : "bg-slate-200 border-slate-300")}`}>
         <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${checked ? "translate-x-5" : "translate-x-0"}`} />
@@ -1394,7 +1377,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const L = (key: keyof typeof LABELS) => t(key, lang);
 
   return (
-    <AppShell onNavigate={onNavigate} title="Kiyometa Order Management V2" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title="Kiyometa Order Management" activePage="order-entry" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
 
       <div className="responsive-workspace flex flex-1 overflow-hidden min-h-0">
 
@@ -1890,7 +1873,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
     popup.opener = null;
     const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
     const rows = filtered.map(order => `<tr><td>${escape(order.deliveryDate)}</td><td>${escape(order.orderNumber)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="num">${escape(order.quantity)}</td><td>${escape(order.progress)}</td></tr>`).join("");
-    popup.document.write(`<!doctype html><html><head><title>Production preparation</title><style>body{font:14px Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px}p{color:#64748b;margin:0 0 24px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #cbd5e1;padding:10px 8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}.num{text-align:right}@media print{body{padding:0}}</style></head><body><h1>Production Preparation List</h1><p>${escape(fromDate)} — ${escape(toDate)} · ${filtered.length} order(s)</p><table><thead><tr><th>Delivery</th><th>Order no.</th><th>Client</th><th>Product</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
+    popup.document.write(`<!doctype html><html><head><title>Production preparation</title><style>body{font:14px Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px}p{color:#64748b;margin:0 0 24px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #cbd5e1;padding:10px 8px;text-align:left}th{background:#f1f5f9;font-size:12px}.num{text-align:right}@media print{body{padding:0}}</style></head><body><h1>Production Preparation List</h1><p>${escape(fromDate)} to ${escape(toDate)} · ${filtered.length} order(s)</p><table><thead><tr><th>Delivery</th><th>Order no.</th><th>Client</th><th>Product</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
     popup.document.close();
   };
 
@@ -1898,7 +1881,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, l
     productByKey.get(`${o.client}|${o.productName}`) ?? null;
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} activePage="search-billing" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       <div className="responsive-workspace flex flex-1 overflow-hidden">
         <aside className="responsive-panel responsive-panel-filter w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
 
@@ -2158,7 +2141,7 @@ function InvoicePage({ orders, clients, lang, setLang, onNavigate }: {
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} activePage="invoice" showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0 sm:gap-3 sm:px-4">
         <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))}><Icon name="chevron-left" size={14} />{t("prevPage", lang)}</Btn>
         <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</span>
@@ -2388,7 +2371,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("clientMaster", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("clientMaster", lang)} activePage="client-master" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
         <ScanBanner message={`Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
@@ -2495,6 +2478,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     unitPrice: sd && isScanRouted ? sd.unitPrice : "",
     tasks: makeTasks(54).map((task, i) => i === 0 && sd && isScanRouted && sd.processName ? { ...task, content: sd.processName } : task),
     drawings: makeDrawings(7),
+    drawingPaths: makeDrawings(7),
   });
 
   const [selectedId, setSelectedId] = useState(isScanRouted ? "" : products[0]?.id ?? "");
@@ -2513,6 +2497,49 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [materialBusy, setMaterialBusy] = useState(false);
   const [materialError, setMaterialError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  // The product-drawings bucket is private, so display URLs are signed per
+  // product on open rather than stored. signToken guards against a slow sign
+  // for a product the user has already navigated away from landing on the form
+  // they are now looking at.
+  const signToken = useRef(0);
+  const [drawingSignError, setDrawingSignError] = useState("");
+
+  const applySignedDrawings = async (p: Product) => {
+    const token = ++signToken.current;
+    setForm(p);
+    if (!p.drawingPaths.some(Boolean)) return;
+    try {
+      const urls = await signProductDrawings(p.drawingPaths);
+      if (token !== signToken.current) return;
+      // Merged into the live form rather than replacing it, so text typed while
+      // the sign was in flight is not rolled back. The id check makes this a
+      // no-op if the user has since moved to a different product.
+      setForm(prev => prev.id === p.id ? { ...prev, drawings: urls } : prev);
+      setDrawingSignError("");
+    } catch (err) {
+      if (token !== signToken.current) return;
+      // The keys are intact, so the next open retries. Losing the rows here
+      // would be worse than showing an empty slot.
+      setDrawingSignError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // useState cannot await, so the product selected on first render is signed
+  // here instead.
+  useEffect(() => {
+    if (isScanRouted || isNew || !form.drawingPaths.some(Boolean)) return;
+    const token = ++signToken.current;
+    void signProductDrawings(form.drawingPaths).then(urls => {
+      if (token !== signToken.current) return;
+      setForm(prev => ({ ...prev, drawings: urls }));
+      setDrawingSignError("");
+    }).catch(err => {
+      if (token !== signToken.current) return;
+      setDrawingSignError(err instanceof Error ? err.message : String(err));
+    });
+    // Intentionally mount-only: later selections go through applySignedDrawings.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const taskErrors = Object.entries(errors).filter(([k, v]) => k.startsWith("task_") && v);
   const filtered = products.filter(p => {
@@ -2578,7 +2605,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   const handleNew = () => {
-    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(7) });
+    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(7), drawingPaths: makeDrawings(7) });
     setIsNew(true); setSelectedId(""); setErrors({}); setDirty(true);
   };
 
@@ -2595,7 +2622,12 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         setForm(prev => {
           const drawings = [...prev.drawings];
           drawings[drawingIndex] = String(reader.result);
-          return { ...prev, drawings };
+          // The slot now holds a new file, so the old Storage key is stale and
+          // must go: leaving it would make the next save re-point the row at
+          // the drawing that was just replaced.
+          const drawingPaths = [...prev.drawingPaths];
+          drawingPaths[drawingIndex] = "";
+          return { ...prev, drawings, drawingPaths };
         });
         setDirty(true);
       };
@@ -2608,13 +2640,19 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setForm(prev => {
       const drawings = [...prev.drawings];
       drawings[i] = "";
-      return { ...prev, drawings };
+      const drawingPaths = [...prev.drawingPaths];
+      drawingPaths[i] = "";
+      return { ...prev, drawings, drawingPaths };
     });
     setDirty(true);
   };
 
   const addDrawingSlots = () => {
-    setForm(prev => ({ ...prev, drawings: [...prev.drawings, "", "", "", ""] }));
+    setForm(prev => ({
+      ...prev,
+      drawings: [...prev.drawings, "", "", "", ""],
+      drawingPaths: [...prev.drawingPaths, "", "", "", ""],
+    }));
     setDirty(true);
   };
 
@@ -2630,7 +2668,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setProducts(prev => prev.some(p => p.id === saved.id)
         ? prev.map(p => p.id === saved.id ? saved : p)
         : [...prev, saved]);
-      setForm(saved);
+      // productFromRow comes back with empty display strings because the stored
+      // value is a key, not a URL, so the freshly saved drawings have to be
+      // signed again or the slots would blank out under the user.
+      void applySignedDrawings(saved);
       setSelectedId(saved.id);
       setIsNew(false);
       setErrors({});
@@ -2660,7 +2701,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setProducts(rest);
     setDirty(false);
     if (rest[0]) {
-      setForm(rest[0]);
+      void applySignedDrawings(rest[0]);
       setSelectedId(rest[0].id);
       setIsNew(false);
     } else {
@@ -2669,7 +2710,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("productMaster", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("productMaster", lang)} activePage="product-master" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
         <ScanBanner message={`Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
@@ -2686,7 +2727,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             {filtered.length === 0 ? (
               <div className="px-4 py-6 text-sm text-slate-400 text-center">{t("noProductsFound", lang)}</div>
             ) : filtered.map(p => (
-              <button key={p.id} onClick={() => { setForm(p); setSelectedId(p.id); setIsNew(false); setErrors({}); setDirty(false); }}
+              <button key={p.id} onClick={() => { void applySignedDrawings(p); setSelectedId(p.id); setIsNew(false); setErrors({}); setDirty(false); }}
                 className={`w-full text-left px-4 py-3.5 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors ${selectedId === p.id ? "bg-blue-50 border-l-4 border-l-[#1a3458]" : "border-l-4 border-l-transparent"}`}>
                 <div className="font-600 text-base text-slate-800 truncate">{p.productName}</div>
                 <div className="text-sm text-slate-400 font-mono truncate">{p.productNumber}</div>
@@ -2736,6 +2777,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("drawings", lang).replace("{n}", String(form.drawings.length))}</p>
+              {drawingSignError && (
+                <div className="flex items-start gap-2 px-3 py-2 mb-3 bg-amber-50 border border-amber-200 rounded-sm">
+                  <Icon name="alert-triangle" size={15} className="text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-800">
+                    {t("drawingSignFailed", lang)}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {form.drawings.map((d, i) => (
                   d ? (
@@ -2745,6 +2794,15 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                         className="absolute top-1 right-1 w-6 h-6 rounded-full bg-white/90 text-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
                         <Icon name="close" size={14} />
                       </button>
+                    </div>
+                  ) : form.drawingPaths[i] ? (
+                    // Stored but not displayable. Shown apart from an empty slot
+                    // so a failed or still pending sign is never mistaken for a
+                    // drawing that was never there, and so the stored key is not
+                    // quietly overwritten by picking a new file for this slot.
+                    <div key={i} className="aspect-video border-2 border-amber-300 bg-amber-50 rounded-sm flex flex-col items-center justify-center gap-1 px-2 text-center">
+                      <Icon name="image" size={20} className="text-amber-400" />
+                      <span className="text-xs text-amber-700">{t("drawingUnavailable", lang)}</span>
                     </div>
                   ) : (
                     <button key={i} onClick={() => handleDrawingClick(i)}
@@ -2825,10 +2883,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                           <p className="font-mono text-xs text-slate-500">{item?.itemCode ?? row.bomNo} · {row.bomNo}</p>
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-sm sm:flex sm:items-center sm:gap-7">
-                          <div><p className="text-xs uppercase text-slate-400">Per unit</p><p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p></div>
-                          <div><p className="text-xs uppercase text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p></div>
+                          <div><p className="text-xs font-600 text-slate-400">Per unit</p><p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p></div>
+                          <div><p className="text-xs font-600 text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p></div>
                         </div>
-                        <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? "OUT OF STOCK" : low ? "LOW STOCK" : "READY"}</span>
+                        <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? "Out of stock" : low ? "Low stock" : "Ready"}</span>
                         <button type="button" disabled={materialBusy} onClick={() => void removeMaterial(row)} className="rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
                       </div>
                     );
@@ -2843,7 +2901,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                 <div className="divide-y divide-slate-100 sm:hidden">
                   {form.tasks.map((task, i) => (
                     <div key={i} className={focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}>
-                      <p className="text-xs font-700 uppercase tracking-wide text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
+                      <p className="text-xs font-700 text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
                       <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => { const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
                       <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskTime", lang)}</span><input type="number" step="0.1" min="0" max="999.9" value={task.time} onFocus={() => setFocusedRow(i)} onChange={e => { const raw = e.target.value.replace(/^0+(?=[1-9])/, ""); const parsed = raw === "" ? ("" as const) : parseFloat(raw); const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-right font-mono text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_time_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_time_${i}`]}</p>}</label>
                     </div>
@@ -2932,7 +2990,7 @@ function DeliverySlipPage({ mode, orders, lang, setLang, onNavigate }: {
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("deliverySlipTitle", lang)} showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("deliverySlipTitle", lang)} activePage="delivery-slip" showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
       <div className="flex items-center justify-between px-4 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0">
         <Btn variant="outline" size="sm" onClick={() => onNavigate("search-billing")}><Icon name="chevron-left" size={14} />{t("returnButton", lang)}</Btn>
         <div className="flex-1" />
@@ -3081,7 +3139,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("scheduleTitle", lang)} showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("scheduleTitle", lang)} activePage="schedule" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       <div className="responsive-workspace schedule-workspace flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
         <aside className="responsive-panel responsive-panel-filter w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
           <p className="mt-1 px-2 text-xs font-700 text-white/60 shrink-0">{t("scheduleFilter", lang)}</p>
@@ -3134,15 +3192,15 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
 
           <div className="flex-1 grid grid-cols-7 overflow-y-auto min-h-0"
-            style={{ gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))` }}>
+            style={{ gridTemplateRows: `repeat(${gridRows}, auto)` }}>
             {visibleDays.map((calDay, i) => {
               const dayOrders = orders.filter(o => o.deliveryDate === calDay.dateStr && statusFilter[o.progress]);
               return (
-                <div key={i} className={`flex flex-col border-r border-b border-slate-200 p-1 ${calDay.isCurrentMonth ? "bg-white" : "bg-slate-50"} overflow-hidden`}>
-                  <span className={`text-xs font-700 mb-1 leading-none ${!calDay.isCurrentMonth ? "text-slate-400" : i % 7 === 0 ? "text-red-600" : i % 7 === 6 ? "text-blue-600" : "text-slate-700"}`}>
+                <div key={i} className={`flex flex-col gap-1 border-r border-b border-slate-200 p-1.5 ${calDay.isCurrentMonth ? "bg-white" : "bg-slate-50"} min-h-[4.5rem]`}>
+                  <span className={`text-xs font-700 leading-none ${!calDay.isCurrentMonth ? "text-slate-400" : i % 7 === 0 ? "text-red-600" : i % 7 === 6 ? "text-blue-600" : "text-slate-700"}`}>
                     {calDay.day}
                   </span>
-                  <div className="flex flex-col gap-1 overflow-y-auto min-h-0 pr-0.5">
+                  <div className="flex flex-col gap-1">
                     {dayOrders.map(o => {
                       const bg = SCHEDULE_STATUS_COLORS[o.progress] || "bg-slate-200 text-slate-800 border-slate-300";
                       const isSelected = selectedId === o.id;
@@ -3484,10 +3542,10 @@ export default function App() {
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
-      {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onBack={() => navigate("home")} /></Suspense>}
-      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading />}><ManagementPage onBack={() => navigate("home")} /></Suspense>}
-      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
-      {page === "profile"        && <Suspense fallback={<PageLoading />}><ProfilePage onBack={() => navigate("home")} /></Suspense>}
+      {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "profile"        && <Suspense fallback={<PageLoading />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>

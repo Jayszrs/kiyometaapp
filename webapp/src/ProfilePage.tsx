@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
-import UndoButton from "./components/UndoButton";
+import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 
-interface Props { onBack: () => void }
+interface Props {
+  onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+  lang: Lang;
+  setLang: (l: Lang) => void;
+}
 
 type ProfileForm = Pick<UserProfile,
   "displayName" | "avatarPath" | "employeeNumber" | "phone" | "department" |
@@ -28,8 +32,8 @@ function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "Unexpected error";
 }
 
-export default function ProfilePage({ onBack }: Props) {
-  const { profile, signOut, updateProfile } = useAuth();
+export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
+  const { profile, updateProfile } = useAuth();
   const [form, setForm] = useState(() => formFromProfile(profile));
   const [avatarUrl, setAvatarUrl] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -148,28 +152,20 @@ export default function ProfilePage({ onBack }: Props) {
   const labelClass = "block text-sm font-600 text-slate-600";
 
   return (
-    <div className="flex h-full flex-col bg-[#f5f6f8] text-slate-800">
-      <header className="flex items-center gap-2 bg-[#1a3458] px-3 py-3 text-white sm:px-4">
-        <button onClick={onBack} className="rounded px-2 py-1.5 text-sm hover:bg-white/10">← Home</button>
-        <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 rounded object-cover" />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-700">My Profile</h1>
-          <p className="truncate text-xs text-blue-200">@{profile.username} · {profile.role}</p>
-        </div>
-        <UndoButton />
-        <button onClick={signOut} className="shrink-0 text-xs text-blue-200 hover:text-white sm:text-sm">Sign out</button>
-      </header>
-
+    <AppShell onNavigate={onNavigate} title="My Profile" activePage="profile" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
       <main className="flex-1 overflow-y-auto p-3 sm:p-6">
         <div className="mx-auto max-w-5xl space-y-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
           {notice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
           <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
-            <div className="bg-gradient-to-r from-[#1a3458] to-[#28517f] px-5 py-7 text-white sm:px-8">
-              <p className="text-xs font-700 uppercase tracking-[0.18em] text-blue-200">Employee profile</p>
-              <h2 className="mt-2 text-2xl font-700">Personal details & work identity</h2>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-blue-100">Keep your employee information accurate. Username and role are controlled by the administrator.</p>
+            {/* Solid navy, no gradient. The gradient ran across the full width
+                and expressed no hierarchy: the band and the title were already
+                at the same level, so the colour change was decoration. The
+                explanatory sentence underneath went with it, since the fields
+                it described are the fields directly below. */}
+            <div className="bg-[#1a3458] px-5 py-5 text-white sm:px-8">
+              <h2 className="text-lg font-700">Personal details</h2>
             </div>
 
             <div className="grid gap-7 p-5 sm:p-8 lg:grid-cols-[220px_1fr]">
@@ -204,6 +200,6 @@ export default function ProfilePage({ onBack }: Props) {
           </section>
         </div>
       </main>
-    </div>
+    </AppShell>
   );
 }

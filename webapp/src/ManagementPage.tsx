@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
-import UndoButton from "./components/UndoButton";
+import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import {
   createManagedUser,
@@ -15,7 +15,9 @@ import {
 } from "./lib/operations";
 
 interface Props {
-  onBack: () => void;
+  onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+  lang: Lang;
+  setLang: (l: Lang) => void;
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -34,8 +36,8 @@ function messageOf(error: unknown) {
   return error instanceof Error ? error.message : "Unexpected error";
 }
 
-export default function ManagementPage({ onBack }: Props) {
-  const { profile, signOut } = useAuth();
+export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
+  const { profile } = useAuth();
   const [tab, setTab] = useState<"users" | "audit">("users");
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -111,18 +113,7 @@ export default function ManagementPage({ onBack }: Props) {
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#f5f6f8] text-slate-800">
-      <header className="flex items-center gap-2 bg-[#1a3458] px-3 py-3 text-white sm:gap-3 sm:px-4">
-        <button onClick={onBack} className="rounded px-2 py-1.5 text-sm hover:bg-white/10">← Home</button>
-        <img src="/app-logo.png" alt="Kiyometa" className="h-7 w-7 shrink-0 rounded object-cover" />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-700">Role Management & Audit</h1>
-          <p className="truncate text-xs text-blue-200">Signed in as {profile.username} · {profile.role}</p>
-        </div>
-        <UndoButton />
-        <button onClick={signOut} className="shrink-0 text-xs text-blue-200 hover:text-white sm:text-sm">Sign out</button>
-      </header>
-
+    <AppShell onNavigate={onNavigate} title="Role Management & Audit" activePage="management" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
       <div className="border-b border-slate-200 bg-white px-4 sm:px-8">
         <div className="mx-auto flex max-w-7xl gap-1 py-2">
           <button onClick={() => setTab("users")} className={`rounded px-4 py-2 text-sm font-600 ${tab === "users" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>Employees</button>
@@ -139,7 +130,7 @@ export default function ManagementPage({ onBack }: Props) {
             <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
               <section className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <div className="mb-5">
-                  <p className="text-xs font-700 uppercase tracking-wider text-[#0d7377]">Administrator</p>
+                  <p className="text-xs font-700 text-[#0d7377]">Administrator</p>
                   <h2 className="mt-1 text-xl font-700 text-[#1a3458]">Add employee account</h2>
                   <p className="mt-1 text-sm text-slate-500">Employees sign in with a username. No personal email is required.</p>
                 </div>
@@ -172,7 +163,7 @@ export default function ManagementPage({ onBack }: Props) {
                         </div>
                         <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-700 ${user.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{user.active ? "Active" : "Inactive"}</span>
                       </div>
-                      <label className="block text-xs font-600 uppercase tracking-wide text-slate-400">
+                      <label className="block text-xs font-600 text-slate-400">
                         Role
                         {profile.role === "administrator" && user.id !== profile.id ? (
                           <select value={user.role} onChange={e => void run(() => updateManagedUser({ userId: user.id, role: e.target.value as UserRole }), "Role updated.")} className="mt-1.5 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm font-500 normal-case text-slate-700"><option value="operator">Operator</option><option value="administrator">Administrator</option></select>
@@ -187,7 +178,7 @@ export default function ManagementPage({ onBack }: Props) {
                 </div>
                 <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[700px] text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Employee</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr></thead>
+                    <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-5 py-3">Employee</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Actions</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {users.map(user => (
                         <tr key={user.id} className="hover:bg-slate-50">
@@ -214,12 +205,12 @@ export default function ManagementPage({ onBack }: Props) {
                 <div className="divide-y divide-slate-100 sm:hidden">
                   {filteredLogs.map(log => {
                     const undoable = isUndoableAuditLog(log);
-                    return <article key={log.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700 text-slate-800">@{log.username}</p><p className="text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs font-700 text-slate-600">{ACTION_LABELS[log.action] ?? log.action}</span></div><div className="rounded bg-slate-50 p-3"><p className="text-xs font-600 uppercase tracking-wide text-slate-400">{log.entity}</p><p className="mt-1 break-all font-mono text-xs text-slate-600">{log.entityId ?? String(log.metadata.target_username ?? "-")}</p></div><div className="flex justify-end">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">Undone</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm("Undo this data change?")) void run(() => undoAuditLog(log.id), "Activity was undone."); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 hover:bg-amber-100">Undo</button> : <span className="text-xs text-slate-400">View only</span>}</div></article>;
+                    return <article key={log.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700 text-slate-800">@{log.username}</p><p className="text-xs text-slate-500">{new Date(log.createdAt).toLocaleString()}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs font-700 text-slate-600">{ACTION_LABELS[log.action] ?? log.action}</span></div><div className="rounded bg-slate-50 p-3"><p className="text-xs font-600 text-slate-400">{log.entity}</p><p className="mt-1 break-all font-mono text-xs text-slate-600">{log.entityId ?? String(log.metadata.target_username ?? "-")}</p></div><div className="flex justify-end">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">Undone</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm("Undo this data change?")) void run(() => undoAuditLog(log.id), "Activity was undone."); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 hover:bg-amber-100">Undo</button> : <span className="text-xs text-slate-400">View only</span>}</div></article>;
                   })}
                 </div>
                 <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[850px] text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Time</th><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Activity</th><th className="px-4 py-3">Record</th><th className="px-5 py-3 text-right">Recovery</th></tr></thead>
+                    <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-5 py-3">Time</th><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Activity</th><th className="px-4 py-3">Record</th><th className="px-5 py-3 text-right">Recovery</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredLogs.map(log => {
                         const undoable = isUndoableAuditLog(log);
@@ -243,6 +234,6 @@ export default function ManagementPage({ onBack }: Props) {
           </div>
         </div>
       )}
-    </div>
+    </AppShell>
   );
 }

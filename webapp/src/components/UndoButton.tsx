@@ -1,12 +1,8 @@
 import { useState } from "react";
 import { fetchAuditLogs, isUndoableAuditLog, undoAuditLog } from "../lib/operations";
+import { Icon } from "./Icon";
 
-interface Props {
-  className?: string;
-  label?: string;
-}
-
-export default function UndoButton({ className = "", label = "Undo" }: Props) {
+export default function UndoButton({ className = "" }: { className?: string }) {
   const [busy, setBusy] = useState(false);
 
   const undoLatest = async () => {
@@ -33,15 +29,20 @@ export default function UndoButton({ className = "", label = "Undo" }: Props) {
   };
 
   return (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={() => void undoLatest()}
-      title="Undo latest activity"
-      className={`flex shrink-0 items-center justify-center gap-1.5 rounded border border-white/25 bg-white/10 px-2.5 py-1.5 text-xs font-700 text-white transition-colors hover:bg-white/20 disabled:cursor-wait disabled:opacity-50 ${className}`}
-    >
-      <span aria-hidden="true" className="text-base leading-none">↶</span>
-      <span className="hidden sm:inline">{busy ? "Undoing..." : label}</span>
-    </button>
+    // Same wrapper as every other header control, so undo and the language
+    // toggle paint one shared surface instead of each carrying its own
+    // border, which is what made the old row look assembled rather than
+    // designed.
+    <div className={`header-control shrink-0 ${className}`}>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void undoLatest()}
+        title="Undo latest activity"
+        aria-label="Undo latest activity"
+      >
+        <Icon name="undo" size={15} />
+      </button>
+    </div>
   );
 }
