@@ -246,8 +246,8 @@ def _int_from_b64url(value: str) -> int:
 
 def _verify_rsa(jwk: dict, signing_input: bytes, token: str) -> None:
     try:
+        from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding, rsa
-        from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
     except ImportError as exc:  # pragma: no cover
         raise HTTPException(
             status_code=500,
@@ -262,7 +262,7 @@ def _verify_rsa(jwk: dict, signing_input: bytes, token: str) -> None:
             signature,
             signing_input,
             padding.PKCS1v15(),
-            Prehashed(hashlib.sha256()),
+            hashes.SHA256(),
         )
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid session token.") from exc
@@ -270,22 +270,29 @@ def _verify_rsa(jwk: dict, signing_input: bytes, token: str) -> None:
 
 def _verify_ec(jwk: dict, signing_input: bytes, token: str) -> None:
     try:
+        from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
     except ImportError as exc:  # pragma: no cover
         raise HTTPException(
             status_code=500,
             detail="JWT verification is unavailable: install cryptography.",
         ) from exc
-    signature = _b64url_decode(token.split(".")[2])
     curves = {
-        "P-256": (ec.SECP256R1, hashlib.sha256),
-        "P-384": (ec.SECP384R1, hashlib.sha384),
-        "P-521": (ec.SECP521R1, hashlib.sha512),
+        "P-256": (ec.SECP256R1, hashes.SHA256, 32),
+        "P-384": (ec.SECP384R1, hashes.SHA384, 48),
+        "P-521": (ec.SECP521R1, hashes.SHA512, 66),
     }
-    curve, digest_fn = curves.get(jwk.get("crv"), (None, None))
+    curve, digest_fn, size = curves.get(jwk.get("crv"), (None, None, 0))
     if curve is None:
         raise HTTPException(status_code=401, detail="Invalid session token.")
+    # JWS carries ECDSA signatures as raw r||s; cryptography expects DER.
+    raw = _b64url_decode(token.split(".")[2])
+    if len(raw) != 2 * size:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+    signature = encode_dss_signature(
+        int.from_bytes(raw[:size], "big"), int.from_bytes(raw[size:], "big")
+    )
     public_numbers = ec.EllipticCurvePublicNumbers(
         x=_int_from_b64url(jwk["x"]), y=_int_from_b64url(jwk["y"]), curve=curve()
     )
