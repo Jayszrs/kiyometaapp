@@ -4,7 +4,6 @@ import { supabase } from "./supabaseClient";
 import {
   getOperationsBackendStatus,
   isMissingOperationsSchema,
-  markOperationsBackendReady,
   markOperationsMigrationRequired,
 } from "./backendStatus";
 
@@ -117,8 +116,6 @@ export function useSession() {
       data = result.data;
       if (result.error && isMissingOperationsSchema(result.error)) {
         markOperationsMigrationRequired();
-      } else if (!result.error) {
-        markOperationsBackendReady();
       }
 
       if (!cancelled) {

@@ -4,11 +4,12 @@ import { fetchAll, fetchProduct, upsertOrder, deleteOrder, upsertClient, deleteC
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, formatLongJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
-import { runOcr, sendOcrLog } from "./lib/ocrClient";
-import { parseQuotation, type ParsedQuotation, type ScanFillData } from "./lib/parseQuotation";
+import { runOcr, sendOcrLog, type OcrLine } from "./lib/ocrClient";
+import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import UndoButton from "./components/UndoButton";
 import { Icon } from "./components/Icon";
+import LoadingDialog from "./components/LoadingDialog";
 import {
   deleteBomItem,
   fetchProductMaterialData,
@@ -450,7 +451,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
             a submenu locked the operator out of the whole navigation. Both are
             now always reachable, with the hamburger held at the far left
             because it is the control they reach for most often. */}
-        <button onClick={() => setMenuOpen(true)} title="Menu" aria-label="Menu" className="header-control is-button">
+        <button onClick={() => setMenuOpen(true)} title={lang === "ja" ? "メニュー" : "Menu"} aria-label={lang === "ja" ? "メニュー" : "Menu"} className="header-control is-button">
           <Icon name="menu" size={20} />
         </button>
         {showBack && (
@@ -477,7 +478,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
             </div>
           )}
           <UndoButton />
-          <UserMenuButton onNavigate={onNavigate} />
+          <UserMenuButton onNavigate={onNavigate} lang={lang ?? "ja"} />
         </div>
       </header>
       <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
@@ -487,14 +488,14 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   );
 }
 
-function UserMenuButton({ onNavigate }: { onNavigate: (p: Page) => void }) {
+function UserMenuButton({ onNavigate, lang }: { onNavigate: (p: Page) => void; lang: Lang }) {
   const { profile, signOut } = useAuth();
   return (
     <div className="flex items-center gap-1.5 shrink-0">
       {/* The operator keeps their username in the header, inside a wrapper so
           it never reads as text floating next to an icon. The person icon sits
           in a circle within the same control. */}
-      <div className="header-control" title={`My profile (@${profile.username})`}>
+      <div className="header-control" title={`${lang === "ja" ? "プロフィール" : "My profile"} (@${profile.username})`}>
         <button onClick={() => onNavigate("profile")} className="gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15">
             <Icon name="user" size={14} />
@@ -502,8 +503,8 @@ function UserMenuButton({ onNavigate }: { onNavigate: (p: Page) => void }) {
           <span className="hidden max-w-[10rem] truncate text-sm font-600 md:inline">{profile.username}</span>
         </button>
       </div>
-      <div className="header-control" title="Sign out">
-        <button onClick={signOut} aria-label="Sign out">
+      <div className="header-control" title={lang === "ja" ? "ログアウト" : "Sign out"}>
+        <button onClick={signOut} aria-label={lang === "ja" ? "ログアウト" : "Sign out"}>
           <Icon name="log-out" size={17} />
         </button>
       </div>
@@ -533,7 +534,7 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
        <nav className="relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
           <span className="font-600 text-base">{t("navTitle", lang)}</span>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label="Close">
+          <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label={lang === "ja" ? "閉じる" : "Close"}>
             <Icon name="close" size={18} />
           </button>
         </div>
@@ -594,12 +595,16 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   onApply: (data: ScanFillData, clientExists: boolean, productExists: boolean) => void;
   lang: Lang;
 }) {
-  const [custom, setCustom] = useState<ParsedQuotation | null>(null);
+  const [ocrLines, setOcrLines] = useState<OcrLine[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editedData, setEditedData] = useState<ScanFillData | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const custom = useMemo(
+    () => ocrLines ? parseQuotation(ocrLines, lang) : null,
+    [ocrLines, lang],
+  );
 
   const [loadingStep, setLoadingStep] = useState(0);
   useEffect(() => {
@@ -617,7 +622,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     if (!file) return;
     setBusy(true);
     setError(null);
-    setCustom(null);
+    setOcrLines(null);
     setEditedData(null);
     try {
       const lines = await runOcr(file);
@@ -627,7 +632,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         setError(t("scanErrNoFields", lang));
         return;
       }
-      setCustom(parsed);
+      setOcrLines(lines);
       const matchedClient = findClientMatch(clients, parsed.data.client);
       const client = matchedClient?.name ?? parsed.data.client;
       const matchedProduct = findProductMatch(products, client, parsed.data.productName, parsed.data.productNumber);
@@ -645,7 +650,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   };
 
   const clearCustom = () => {
-    setCustom(null);
+    setOcrLines(null);
     setError(null);
     setEditedData(null);
   };
@@ -819,7 +824,7 @@ return (
         </div>
 
         <div className="flex items-center gap-3 px-5 py-4 border-t border-slate-200">
-          <Btn variant="outline" onClick={onClose}>Cancel</Btn>
+          <Btn variant="outline" onClick={onClose}>{t("scanCancel", lang)}</Btn>
           <div className="flex-1" />
           {custom && (
             <Btn variant="primary" size="lg" onClick={() => editedData && onApply(editedData, clientExists, productExists)}>
@@ -1167,6 +1172,7 @@ const LABELS = {
   scanNoDocBody:      { ja: "スキャンしたPDFまたは画像、見積書の写真をアップロードしてください。", en: "Upload a scanned PDF or image, or take a photo of the quotation." },
   scanParsedAs:       { ja: "解析結果",          en: "Parsed as" },
   scanDiscard:        { ja: "破棄",            en: "Discard" },
+  scanCancel:         { ja: "キャンセル",         en: "Cancel" },
   scanClientFound:    { ja: "取引先に登録あり",     en: "Client found" },
   scanClientNotFound: { ja: "取引先に未登録",      en: "Client not in master" },
   scanProductFound:   { ja: "製品に登録あり",      en: "Product found" },
@@ -1238,7 +1244,7 @@ function TimeStack({ titleJa, titleEn, values, lang }: {
           <div key={label} className="flex items-center gap-1.5">
             <span className="w-9 shrink-0 text-xs font-700 text-slate-500">{label}</span>
             <output
-              title="Calculated automatically"
+              title={lang === "ja" ? "自動計算" : "Calculated automatically"}
               className="flex min-w-0 flex-1 items-center justify-center rounded-sm border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-base text-slate-600"
             >{v}</output>
           </div>
@@ -1351,7 +1357,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       setSelectedId(saved.id);
       setIsNew(false);
     } catch (err) {
-      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     setErrors({});
@@ -1363,7 +1369,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     try {
       await deleteOrder(deletedId);
     } catch (err) {
-      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = orders.filter(o => o.id !== deletedId);
@@ -1405,7 +1411,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const L = (key: keyof typeof LABELS) => t(key, lang);
 
   return (
-    <AppShell onNavigate={onNavigate} title="Kiyometa Order Management" activePage="order-entry" showBack backTarget="home" backLabel="Home" lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("appTitle", lang)} activePage="order-entry" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
 
       <div className="responsive-workspace flex flex-1 overflow-hidden min-h-0">
 
@@ -1509,7 +1515,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               </button>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-sm text-slate-400">No records found</div>
+              <div className="px-3 py-6 text-center text-sm text-slate-400">{lang === "ja" ? "データが見つかりません" : "No records found"}</div>
             )}
           </div>
         </aside>
@@ -1661,9 +1667,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("requiredManhours")} ({L("minUnit")})</label>
                   <output
-                    title="Calculated automatically from product task time × order quantity"
+                    title={lang === "ja" ? "製品の作業時間 × 受注数量から自動計算" : "Calculated automatically from product task time × order quantity"}
                     className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{form.requiredManhours || 0}</output>
-                  <p className="mt-1 text-xs text-slate-400">Auto: product time × quantity</p>
+                  <p className="mt-1 text-xs text-slate-400">{lang === "ja" ? "自動計算：製品の作業時間 × 数量" : "Auto: product time × quantity"}</p>
                 </div>
                 <div className="self-center text-3xl font-900 text-[#1a3458] select-none">-</div>
                 <div>
@@ -1677,7 +1683,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <div>
                   <label className="block text-sm font-700 text-[#1a3458] mb-2">{L("remainingManhours")} ({L("minUnit")})</label>
                   <output
-                    title="Calculated automatically from required time minus worked time"
+                    title={lang === "ja" ? "必要工数から実績工数を差し引いて自動計算" : "Calculated automatically from required time minus worked time"}
                     className="flex min-h-10 w-full items-center rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-base text-slate-500">{remaining}</output>
                 </div>
               </div>
@@ -1855,7 +1861,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
       setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
       setPanelForm(saved);
     } catch (err) {
-      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -1863,7 +1869,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     try {
       await deleteOrder(id);
     } catch (err) {
-      alert(`Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     setOrders(prev => prev.filter(o => o.id !== id));
@@ -1919,7 +1925,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   const printPreparation = () => {
     const popup = window.open("", "_blank", "width=960,height=720");
     if (!popup) {
-      alert("The print window was blocked. Allow pop-ups for this application and try again.");
+      alert(lang === "ja" ? "印刷画面がブロックされました。このアプリのポップアップを許可して、もう一度お試しください。" : "The print window was blocked. Allow pop-ups for this application and try again.");
       return;
     }
     popup.opener = null;
@@ -2061,7 +2067,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
             <div className="flex flex-col h-full min-h-0">
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 shrink-0">
                 <span className="text-base font-700 text-slate-800">{lang === "ja" ? "受注詳細" : "Order Details"}</span>
-                <button onClick={resetSelection} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors" aria-label="Close">
+                <button onClick={resetSelection} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors" aria-label={lang === "ja" ? "閉じる" : "Close"}>
                   <Icon name="close" size={17} />
                 </button>
               </div>
@@ -2428,7 +2434,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
       saved = await upsertClient(candidate);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      alert(`Failed to save client: ${message}`);
+      alert(lang === "ja" ? `取引先の保存に失敗しました: ${message}` : `Failed to save client: ${message}`);
       return;
     }
 
@@ -2475,7 +2481,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     try {
       await deleteClient(deletedId);
     } catch (err) {
-      alert(`Failed to delete client: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `取引先の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete client: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = clients.filter(client => client.id !== deletedId);
@@ -2821,7 +2827,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setErrors({});
       setDirty(false);
     } catch (err) {
-      alert(`Failed to save product: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `製品の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save product: ${err instanceof Error ? err.message : err}`);
       return;
     }
 
@@ -2838,7 +2844,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     try {
       await deleteProduct(deletedId);
     } catch (err) {
-      alert(`Failed to delete product: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `製品の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete product: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = products.filter(product => product.id !== deletedId);
@@ -3001,25 +3007,25 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
               <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[1fr_150px_auto]">
                 <label className="block text-sm font-600 text-slate-600">
-                  Inventory material
+                  {lang === "ja" ? "在庫材料" : "Inventory material"}
                   <select value={materialItemId} disabled={isNew || materialBusy} onChange={event => setMaterialItemId(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-base disabled:bg-slate-100">
-                    <option value="">Select material / component</option>
+                    <option value="">{lang === "ja" ? "材料 / 部品を選択" : "Select material / component"}</option>
                     {inventoryItems.filter(item => item.category !== "finished_good" && !productMaterials.some(row => row.inventoryItemId === item.id)).map(item => (
-                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · stock {item.availableQty.toLocaleString()} {item.unit}</option>
+                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · {lang === "ja" ? "在庫" : "stock"} {item.availableQty.toLocaleString()} {item.unit}</option>
                     ))}
                   </select>
                 </label>
                 <label className="block text-sm font-600 text-slate-600">
-                  Qty per product
+                  {lang === "ja" ? "製品あたりの数量" : "Qty per product"}
                   <input type="number" min="0.001" step="0.001" value={materialQty} disabled={isNew || materialBusy} onChange={event => setMaterialQty(Math.max(0, Number(event.target.value)))} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 text-base disabled:bg-slate-100" />
                 </label>
-                <button type="button" disabled={isNew || materialBusy || !materialItemId || materialQty <= 0} onClick={() => void addMaterial()} className="self-end rounded bg-[#1a3458] px-5 py-2.5 font-700 text-white disabled:cursor-not-allowed disabled:opacity-40">{materialBusy ? "Saving..." : "Add material"}</button>
+                <button type="button" disabled={isNew || materialBusy || !materialItemId || materialQty <= 0} onClick={() => void addMaterial()} className="self-end rounded bg-[#1a3458] px-5 py-2.5 font-700 text-white disabled:cursor-not-allowed disabled:opacity-40">{materialBusy ? (lang === "ja" ? "保存中…" : "Saving…") : (lang === "ja" ? "材料を追加" : "Add material")}</button>
               </div>
 
               {isNew ? (
-                <p className="p-4 text-sm text-amber-700">Save this product first, then its material requirements can be configured.</p>
+                <p className="p-4 text-sm text-amber-700">{lang === "ja" ? "先に製品を保存すると、必要材料を設定できます。" : "Save this product first, then its material requirements can be configured."}</p>
               ) : productMaterials.length === 0 ? (
-                <p className="p-4 text-sm text-amber-700">No materials configured. This product cannot enter production until its BOM is added.</p>
+                <p className="p-4 text-sm text-amber-700">{lang === "ja" ? "材料が登録されていません。BOMを追加するまで、この製品は製作工程に進めません。" : "No materials configured. This product cannot enter production until its BOM is added."}</p>
               ) : (
                 <div className="divide-y divide-slate-100">
                   {productMaterials.map(row => {
@@ -3302,7 +3308,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      alert(`Failed to save order: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -3504,7 +3510,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
       const persisted = await upsertOrder(updated);
       setOrders(prev => prev.map(o => o.id === order.id ? persisted : o));
     } catch (err) {
-      alert(`Failed to save task progress: ${err instanceof Error ? err.message : err}`);
+      alert(lang === "ja" ? `作業の進捗保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save task progress: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -3581,7 +3587,20 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
 
 // ---- Root ----
 
-export default function App() {
+function sameRows<T extends object>(previous: T[], next: T[]): boolean {
+  return previous.length === next.length && previous.every((row, index) => {
+    const fresh = next[index];
+    return Object.keys(row).every(key => {
+      const oldValue = row[key as keyof T];
+      const newValue = fresh[key as keyof T];
+      return Array.isArray(oldValue) && Array.isArray(newValue)
+        ? oldValue.length === newValue.length && oldValue.every((value, i) => value === newValue[i])
+        : oldValue === newValue;
+    });
+  });
+}
+
+export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lang) => void }) {
   const { profile, signOut } = useAuth();
   const [page, setPage] = useState<Page>("home");
   const [deliveryMode, setDeliveryMode] = useState<DeliverySlipMode>("single");
@@ -3592,7 +3611,6 @@ export default function App() {
   const [dataError, setDataError] = useState("");
   const [scanRouting, setScanRouting] = useState<ScanRouting>({ stage: "idle", data: null });
   const [scanOpen, setScanOpen] = useState(false);
-  const [lang, setLang] = useState<"ja" | "en">("ja");
   const [checklistOrderId, setChecklistOrderId] = useState<string | null>(null);
   // Orders ticked for the invoice and delivery slip. Held at the top level
   // because the print pages are reached by navigation, not by props from the
@@ -3612,9 +3630,9 @@ export default function App() {
       try {
         const data = await fetchAll();
         if (cancelled) return;
-        setClients(data.clients);
-        setProducts(data.products);
-        setOrders(data.orders);
+        setClients(previous => sameRows(previous, data.clients) ? previous : data.clients);
+        setProducts(previous => sameRows(previous, data.products) ? previous : data.products);
+        setOrders(previous => sameRows(previous, data.orders) ? previous : data.orders);
         setDataState("ready");
         setDataError("");
         initialLoadComplete = true;
@@ -3685,8 +3703,8 @@ export default function App() {
 
   if (dataState === "loading") {
     return (
-      <div className="flex items-center justify-center h-full bg-[#f5f6f8] text-slate-400 text-sm" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-        Loading...
+      <div className="relative flex h-full items-center justify-center bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
+        <LoadingDialog active lang={lang} label={lang === "ja" ? "データを読み込んでいます…" : "Loading data…"} />
       </div>
     );
   }
@@ -3698,14 +3716,15 @@ export default function App() {
           <div className="flex items-start gap-3">
             <Icon name="alert-triangle" size={20} className="mt-0.5 shrink-0 text-red-600" />
             <div>
-              <h1 className="font-700 text-slate-800">Data could not be loaded</h1>
-              <p className="mt-1 text-sm leading-6 text-red-700">{dataError}</p>
-              <p className="mt-2 text-xs leading-5 text-slate-500">If the console shows 401, sign out and log in again. If it shows 404 for profiles or inventory tables, deploy backend migration 002 first.</p>
+              <h1 className="font-700 text-slate-800">{lang === "ja" ? "データを読み込めませんでした" : "Data could not be loaded"}</h1>
+              <p className="mt-1 text-sm leading-6 text-red-700">{lang === "ja" ? "通信状態とデータベース設定を確認して、再試行してください。" : dataError}</p>
+              {lang === "ja" && <details className="mt-2 text-xs leading-5 text-slate-500"><summary className="cursor-pointer">エラー詳細</summary><pre className="mt-1 whitespace-pre-wrap">{dataError}</pre></details>}
+              <p className="mt-2 text-xs leading-5 text-slate-500">{lang === "ja" ? "401エラーの場合は再ログインしてください。profilesまたはinventoryの404エラーの場合は、バックエンドのmigration 002を適用してください。" : "If the console shows 401, sign out and log in again. If it shows 404 for profiles or inventory tables, deploy backend migration 002 first."}</p>
             </div>
           </div>
           <div className="mt-5 flex flex-wrap justify-end gap-2">
-            <button onClick={() => void signOut()} className="rounded border border-slate-300 px-4 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50">Sign out</button>
-            <button onClick={() => window.location.reload()} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">Retry</button>
+            <button onClick={() => void signOut()} className="rounded border border-slate-300 px-4 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50">{lang === "ja" ? "ログアウト" : "Sign out"}</button>
+            <button onClick={() => window.location.reload()} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">{lang === "ja" ? "再試行" : "Retry"}</button>
           </div>
         </div>
       </div>
@@ -3723,16 +3742,16 @@ export default function App() {
       {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
       {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
       {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
-      {page === "inventory"      && <Suspense fallback={<PageLoading />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "profile"        && <Suspense fallback={<PageLoading />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "inventory"       && <Suspense fallback={<PageLoading lang={lang} />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      {page === "profile"        && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>
   );
 }
 
-function PageLoading() {
-  return <div className="flex h-full items-center justify-center bg-[#f5f6f8] text-sm text-slate-500">Loading module...</div>;
+function PageLoading({ lang }: { lang: Lang }) {
+  return <div className="flex h-full items-center justify-center bg-[#f5f6f8] text-sm text-slate-500">{lang === "ja" ? "モジュールを読み込んでいます…" : "Loading module…"}</div>;
 }

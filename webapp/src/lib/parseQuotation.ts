@@ -69,6 +69,21 @@ const LABELS_JA: Record<Key, string> = {
   orderAmount: "金額 (税抜)", processName: "工程", clientPostalCode: "郵便番号",
   clientAddress: "住所", clientPhone: "電話番号",
 };
+const TARGETS_JA: Record<Key, string> = {
+  orderDate: "受注データ：受注日",
+  deliveryDate: "受注データ：納期",
+  client: "受注データ：取引先 / 取引先マスタ：名称",
+  orderNumber: "受注データ：注文番号",
+  productNumber: "製品マスタ：図面 / 品目番号",
+  productName: "受注データ：製品名 / 製品マスタ：名称",
+  quantity: "受注データ：数量",
+  unitPrice: "製品マスタ：単価",
+  orderAmount: "受注データ：金額",
+  processName: "製品マスタ：工程",
+  clientPostalCode: "取引先マスタ：郵便番号",
+  clientAddress: "取引先マスタ：住所",
+  clientPhone: "取引先マスタ：電話番号",
+};
 const fieldName = (key: Key, lang: "ja" | "en"): string => lang === "ja" ? LABELS_JA[key] : LABELS[key][0];
 const keys = Object.keys(LABELS) as Key[];
 const numeric = new Set<Key>(["quantity", "unitPrice", "orderAmount"]);
@@ -300,14 +315,14 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   const text = compact(lines.map(l => l.text).join(" "));
   const template: ScanTemplate = text.includes("注文書") ? "order-sheet" : text.includes("発注書") ? "purchase-order" : "unnamed";
   const title = template === "order-sheet"
-    ? (lang === "ja" ? "注文書" : "Order sheet (注文書)")
+    ? (lang === "ja" ? "注文書" : "Order sheet")
     : template === "purchase-order"
-      ? (lang === "ja" ? "発注書" : "Purchase order (発注書)")
+      ? (lang === "ja" ? "発注書" : "Purchase order")
       : (lang === "ja" ? "見積書 / 発注書" : "Quotation / order document");
   const fields = keys.map(key => {
     const hit = hits[key];
     trace.push(`${key}: ${hit ? `${hit.value} [${hit.label}, page ${hit.box.page+1}, confidence ${hit.confidence.toFixed(2)}]` : "not found"}`);
-    return { key,label:LABELS[key][0],target:LABELS[key][1],source:hit ? String(data[key]) : "",page:hit ? `P${hit.box.page+1}` : "",
+    return { key,label:fieldName(key, lang),target:lang === "ja" ? TARGETS_JA[key] : LABELS[key][1],source:hit ? String(data[key]) : "",page:hit ? `P${hit.box.page+1}` : "",
       sourceLabel:hit?.label ?? "",confidence:hit?.confidence ?? 0,status:!hit ? "missing" as const : hit.confidence<0.75 ? "review" as const : "found" as const };
   });
   return { template,title,data,fields,warnings,debug:trace.concat(warnings).join("\n") };

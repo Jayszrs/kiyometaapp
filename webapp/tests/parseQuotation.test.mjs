@@ -62,6 +62,22 @@ test('missing labels, invalid dates and tax totals never become fabricated value
   assert.equal(parseQuotation([]).fields.filter(f=>f.status==='found').length,0);
 });
 
+test('scan presentation stays in the selected language without translating OCR values', () => {
+  const lines=[box('注文書',0,0,120),...pairs([['発注日','2026/08/17'],['発行者','株式会社テスト']])];
+  const ja=parseQuotation(lines,'ja');
+  const en=parseQuotation(lines,'en');
+  assert.equal(ja.title,'注文書');
+  assert.equal(en.title,'Order sheet');
+  assert.match(ja.warnings.join(' '),/[ぁ-んァ-ヶ一-龯]/);
+  assert.match(en.warnings.join(' '),/Not found:/);
+  assert.equal(ja.fields.find(f=>f.key==='orderDate').label,'受注日');
+  assert.equal(en.fields.find(f=>f.key==='orderDate').label,'Order date');
+  assert.match(ja.fields.find(f=>f.key==='orderDate').target,/受注データ/);
+  assert.match(en.fields.find(f=>f.key==='orderDate').target,/Order entry/);
+  assert.equal(ja.data.client,'株式会社テスト');
+  assert.deepEqual(ja.data,en.data);
+});
+
 test('values cannot jump across pages or fields, and decimals are preserved', () => {
   const p=parseQuotation([box('数量',0,0),box('99',0,40,100,1),box('発注単価:1,234.50',300,0,250),box('発注金額:2,469.00',300,40,250)]);
   assert.equal(p.data.quantity,0);assert.equal(p.data.unitPrice,1234.5);assert.equal(p.data.orderAmount,2469);
