@@ -31,6 +31,81 @@ body {
   box-sizing: border-box;
 }
 
+.page-enter {
+  animation: page-enter 140ms ease-out;
+}
+
+.language-change {
+  animation: language-change 120ms ease-out both;
+}
+
+.popup-backdrop {
+  animation: popup-fade-in 120ms ease-out both;
+}
+
+.popup-panel {
+  animation: popup-enter 140ms ease-out both;
+}
+
+.nav-drawer-panel {
+  animation: drawer-enter 150ms ease-out both;
+}
+
+.nav-item {
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+@keyframes page-enter {
+  from { opacity: 0.82; }
+  to { opacity: 1; }
+}
+
+@keyframes language-change {
+  from { opacity: 0.88; }
+  to { opacity: 1; }
+}
+
+@keyframes popup-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes popup-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes drawer-enter {
+  from { transform: translateX(-8px); }
+  to { transform: translateX(0); }
+}
+
+@media (hover: hover) {
+  .nav-item:hover {
+    transform: translateX(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .language-change,
+  .popup-backdrop,
+  .popup-panel,
+  .nav-drawer-panel {
+    animation: none;
+  }
+
+  .nav-item {
+    transition: none;
+  }
+}
+
 input, select, textarea {
   min-width: 0;
   max-width: 100%;

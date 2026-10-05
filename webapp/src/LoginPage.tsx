@@ -47,8 +47,8 @@ export default function LoginPage({ lang, setLang }: { lang: Lang; setLang: (lan
             </div>
           </div>
           <div className="inline-flex shrink-0 rounded border border-slate-200 p-0.5" role="group" aria-label={lang === "ja" ? "表示言語" : "Display language"}>
-            <button type="button" aria-pressed={lang === "ja"} onClick={() => setLang("ja")} className={`rounded px-2 py-1.5 text-xs font-600 ${lang === "ja" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{lang === "ja" ? "日本語" : "Japanese"}</button>
-            <button type="button" aria-pressed={lang === "en"} onClick={() => setLang("en")} className={`rounded px-2 py-1.5 text-xs font-600 ${lang === "en" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{lang === "ja" ? "英語" : "English"}</button>
+            <button type="button" aria-pressed={lang === "ja"} onClick={() => setLang("ja")} className={`rounded px-2 py-1.5 text-xs font-600 transition-colors duration-150 ${lang === "ja" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{lang === "ja" ? "日本語" : "Japanese"}</button>
+            <button type="button" aria-pressed={lang === "en"} onClick={() => setLang("en")} className={`rounded px-2 py-1.5 text-xs font-600 transition-colors duration-150 ${lang === "en" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{lang === "ja" ? "英語" : "English"}</button>
           </div>
         </div>
 

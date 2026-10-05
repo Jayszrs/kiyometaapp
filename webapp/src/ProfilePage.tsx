@@ -154,7 +154,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
 
   return (
     <AppShell onNavigate={onNavigate} title={lang === "ja" ? "プロフィール" : "My Profile"} activePage="profile" showBack backTarget="home" backLabel={lang === "ja" ? "ホーム" : "Home"} lang={lang} setLang={setLang}>
-      <main className="flex-1 overflow-y-auto p-3 sm:p-6">
+      <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6">
         <div className="mx-auto max-w-5xl space-y-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
           {notice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}

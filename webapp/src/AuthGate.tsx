@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import App from "./App";
 import LoginPage from "./LoginPage";
 import { AuthContext, useSession, signOut } from "./lib/auth";
@@ -8,9 +8,19 @@ import LoadingDialog from "./components/LoadingDialog";
 export default function AuthGate() {
   const { session, profile, loading, updateProfile } = useSession();
   const [lang, setLang] = useState<Lang>(() => localStorage.getItem("kiyometa-language") === "en" ? "en" : "ja");
+  const previousLang = useRef(lang);
+  const [languageChanging, setLanguageChanging] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("kiyometa-language", lang);
+  }, [lang]);
+
+  useEffect(() => {
+    if (previousLang.current === lang) return;
+    previousLang.current = lang;
+    setLanguageChanging(true);
+    const timer = window.setTimeout(() => setLanguageChanging(false), 130);
+    return () => window.clearTimeout(timer);
   }, [lang]);
 
   if (loading) {
@@ -21,7 +31,7 @@ export default function AuthGate() {
     );
   }
 
-  if (!session) return <LoginPage lang={lang} setLang={setLang} />;
+  if (!session) return <div className={`h-full ${languageChanging ? "language-change" : ""}`}><LoginPage lang={lang} setLang={setLang} /></div>;
 
   if (!profile.active) {
     return (
@@ -41,7 +51,9 @@ export default function AuthGate() {
 
   return (
     <AuthContext.Provider value={{ email: session.user.email ?? "", profile, signOut, updateProfile }}>
-      <App lang={lang} setLang={setLang} />
+      <div className={`h-full ${languageChanging ? "language-change" : ""}`}>
+        <App lang={lang} setLang={setLang} />
+      </div>
     </AuthContext.Provider>
   );
 }

@@ -135,7 +135,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
         </div>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-3 sm:p-6">
+      <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6">
         <div className="mx-auto max-w-7xl space-y-4">
           {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load(true)} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? text("Checking...", "確認中…") : text("Check again", "再確認")}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
@@ -239,8 +239,8 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
       </main>
 
       {resetTarget && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 pt-4 sm:items-center sm:p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-2xl sm:p-6">
+        <div className="popup-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 pt-4 sm:items-center sm:p-4">
+          <div className="popup-panel w-full max-w-md rounded-lg bg-white p-4 shadow-2xl sm:p-6">
             <h2 className="text-xl font-700 text-[#1a3458]">{text("Reset operator password", "オペレーターのパスワードを再設定")}</h2>
             <p className="mt-1 text-sm text-slate-500">{text(`Set a new password for @${resetTarget.username}.`, `@${resetTarget.username} の新しいパスワードを設定します。`)}</p>
             <input type="password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} className="mt-5 w-full rounded border border-slate-300 px-3 py-2.5" />

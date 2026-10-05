@@ -52,3 +52,17 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# AI agent tooling (opencode / claude / agents spec) — machine-local, never commit
+# The agent-skills pack is installed globally at ~/.config/opencode/skills/
+.opencode/
+.claude/
+.agents/
+
+# Agent working notes (specs, plans, constraint files)
+CONSTRAINTS.md
+
+# Local env outside webapp/ (real values stay out of git)
+/server/.env.local
+/server/.env.local.*
+!/server/.env.local.example

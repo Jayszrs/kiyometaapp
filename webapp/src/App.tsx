@@ -529,9 +529,9 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
       : []),
   ];
   return (
-    <div className="fixed inset-0 z-50 flex">
+    <div className="popup-backdrop fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-       <nav className="relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
+       <nav className="nav-drawer-panel relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
           <span className="font-600 text-base">{t("navTitle", lang)}</span>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label={lang === "ja" ? "閉じる" : "Close"}>
@@ -541,7 +541,7 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
         <div className="flex-1 py-2">
           {items.map(item => (
             <button key={item.key} onClick={() => { onNavigate(item.page); onClose(); }}
-              className={`w-full flex items-center gap-4 px-5 py-3 text-left border-b border-slate-100 cursor-pointer transition-colors ${item.page === activePage ? "bg-[#1a3458]/10 hover:bg-[#1a3458]/15" : "hover:bg-slate-50"}`}>
+              className={`nav-item w-full flex items-center gap-4 px-5 py-3 text-left border-b border-slate-100 cursor-pointer ${item.page === activePage ? "bg-[#1a3458]/10 hover:bg-[#1a3458]/15" : "hover:bg-slate-50"}`}>
               <span className={`flex items-center justify-center w-9 h-9 rounded text-white shrink-0 ${item.page === activePage ? "bg-[#0d7377]" : "bg-[#1a3458]"}`}>
                 <Icon name={item.icon} size={16} />
               </span>
@@ -672,9 +672,9 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     : false;
 
 return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="popup-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full max-w-4xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
+      <div className="popup-panel relative w-full max-w-4xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
             <Icon name="scan" size={20} className="text-[#1a3458]" />
@@ -866,7 +866,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
 
   return (
     <AppShell onNavigate={onNavigate} title={t("appTitle", lang)} activePage="home" lang={lang} setLang={setLang}>
-      <div className="flex-1 overflow-y-auto">
+      <div className="page-enter flex-1 overflow-y-auto">
         <div className="border-b border-slate-200 bg-white">
           <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
             <div>
@@ -1521,7 +1521,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         </aside>
 
         {/* Column 3: Main Activity Form */}
-        <main className="responsive-main flex-1 overflow-y-auto min-h-0 bg-white">
+        <main className="page-enter responsive-main flex-1 overflow-y-auto min-h-0 bg-white">
 
           {/* Scan bar */}
           <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 shrink-0">
@@ -2004,7 +2004,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
           </div>
         </aside>
 
-        <main className="responsive-main flex-1 overflow-y-auto">
+        <main className="page-enter responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
             {filtered.map(o => {
               const prod = productInfo(o);
@@ -2314,7 +2314,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
               {dateField && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setDateField(null)} />
-                  <div className="absolute right-0 top-[150px] z-50 w-64 bg-white border border-slate-200 rounded-sm shadow-lg overflow-hidden">
+                  <div className="popup-panel absolute right-0 top-[150px] z-50 w-64 bg-white border border-slate-200 rounded-sm shadow-lg overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 bg-[#1a3458] text-white">
                       <button type="button" onClick={() => setCalCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))} className="p-1 rounded hover:bg-white/20 cursor-pointer transition-colors"><Icon name="chevron-left" size={14} /></button>
                       <span className="text-sm font-600">{calTitle}</span>
@@ -2523,7 +2523,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
           </div>
         </aside>
 
-        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-7">
+        <main className="page-enter responsive-main flex-1 overflow-y-auto p-4 sm:p-7">
           {Object.values(errors).some(v => v) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm max-w-lg">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2887,7 +2887,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
           </div>
         </aside>
 
-        <main className="responsive-main flex-1 overflow-y-auto p-4 sm:p-5">
+        <main className="page-enter responsive-main flex-1 overflow-y-auto p-4 sm:p-5">
           {(Object.entries(errors).some(([k, v]) => v && !k.startsWith("task_")) || taskErrors.length > 0) && (
             <div className="flex items-start gap-3 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-sm">
               <Icon name="alert-triangle" size={17} className="text-red-600 mt-0.5 shrink-0" />
@@ -2987,7 +2987,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               {showCalcInfo && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowCalcInfo(false)} />
-                  <div className="absolute left-3 top-full mt-2 z-50 w-72 bg-white border border-slate-200 rounded-sm shadow-lg px-4 py-3 text-sm text-slate-600">
+                  <div className="popup-panel absolute left-3 top-full mt-2 z-50 w-72 bg-white border border-slate-200 rounded-sm shadow-lg px-4 py-3 text-sm text-slate-600">
                     {t("autoCalcInfo", lang)}
                   </div>
                 </>
@@ -3330,7 +3330,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </aside>
 
-        <main className="responsive-calendar flex-1 flex flex-col min-h-0 bg-white">
+        <main className="page-enter responsive-calendar flex-1 flex flex-col min-h-0 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#f0f4f8] px-2 py-2 shrink-0 sm:flex-nowrap sm:px-4">
             <div className="flex items-center gap-1 sm:gap-4">
               <div className="flex items-center gap-2 bg-slate-800 text-white px-3 py-1 rounded-sm text-sm">
@@ -3733,19 +3733,21 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
 
   return (
     <div className="h-full overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
-      {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
-      {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
-      {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} billingOrderIds={billingOrderIds} setBillingOrderIds={setBillingOrderIds} lang={lang} setLang={setLang} />}
-      {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
-      {page === "client-master"  && <ClientMasterPage clients={clients} setClients={setClients} products={products} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
-      {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
-      {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
-      {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-      {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
-      {page === "inventory"       && <Suspense fallback={<PageLoading lang={lang} />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-      {page === "profile"        && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      <div className="h-full min-h-0 overflow-hidden">
+        {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
+        {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
+        {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} billingOrderIds={billingOrderIds} setBillingOrderIds={setBillingOrderIds} lang={lang} setLang={setLang} />}
+        {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
+        {page === "client-master"  && <ClientMasterPage clients={clients} setClients={setClients} products={products} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
+        {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
+        {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
+        {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
+        {page === "inventory"       && <Suspense fallback={<PageLoading lang={lang} />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+        {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+        {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+        {page === "profile"        && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+      </div>
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>
