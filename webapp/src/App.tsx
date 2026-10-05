@@ -7,6 +7,7 @@ import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./l
 import { runOcr, sendOcrLog, type OcrLine } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
+import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import UndoButton from "./components/UndoButton";
 import { Icon } from "./components/Icon";
 import LoadingDialog from "./components/LoadingDialog";
@@ -665,11 +666,20 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     });
   };
 
-  const matchedClient = editedData ? findClientMatch(clients, editedData.client) : undefined;
+  // Both matchers normalise every candidate string, so recomputing them on each
+  // keystroke in the editable fields made typing in this dialog scan the whole
+  // client and product tables per character.
+  const matchedClient = useMemo(
+    () => editedData ? findClientMatch(clients, editedData.client) : undefined,
+    [clients, editedData?.client],
+  );
   const clientExists = !!matchedClient;
-  const productExists = editedData
-    ? !!findProductMatch(products, matchedClient?.name ?? editedData.client, editedData.productName, editedData.productNumber)
-    : false;
+  const productExists = useMemo(
+    () => editedData
+      ? !!findProductMatch(products, matchedClient?.name ?? editedData.client, editedData.productName, editedData.productNumber)
+      : false,
+    [products, matchedClient?.name, editedData?.client, editedData?.productName, editedData?.productNumber, editedData],
+  );
 
 return (
     <div className="popup-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -842,6 +852,7 @@ return (
 
 function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: OrderRecord[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; onOpenScan: () => void; lang: Lang; setLang: (l: Lang) => void }) {
   const { profile } = useAuth();
+  const isWide = useIsTabletOrWider();
   const nowJst = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
   const dateStr = new Date(nowJst).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const jstHour = new Date(nowJst).getHours();
@@ -922,10 +933,15 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
               </button>
             </div>
             <div className="overflow-hidden rounded-sm border border-slate-200 bg-white">
-              <div className="divide-y divide-slate-100 sm:hidden">
+              {/* Both layouts used to be built at once, with CSS hiding one of
+                  them. That doubled the rows and event props for every list on
+                  the page. Now only the layout that matches the screen is
+                  rendered. `isWide` is exactly Tailwind's sm breakpoint. */}
+              {!isWide && (
+              <div className="divide-y divide-slate-100">
                 {orders.map(o => (
-                  <button key={o.id} type="button" onClick={() => onNavigate("order-entry")}
-                    className="block w-full space-y-3 p-4 text-left transition-colors hover:bg-slate-50">
+                    <button key={o.id} type="button" onClick={() => onNavigate("order-entry")}
+                      className="row-culled block w-full space-y-3 p-4 text-left transition-colors hover:bg-slate-50">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="break-words font-700 text-slate-800">{o.productName}</p>
@@ -946,7 +962,9 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
                   </button>
                 ))}
               </div>
-              <table className="hidden w-full border-collapse text-base sm:table">
+              )}
+              {isWide && (
+              <table className="w-full border-collapse text-base">
                 <thead>
                   <tr className="border-b border-slate-200">
                     <th className="text-left px-4 py-2.5 text-sm font-600 text-slate-500">{t("productNameLabel", lang)}</th>
@@ -968,6 +986,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
           </section>
 
@@ -1317,7 +1336,12 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     const seen = new Set<string>();
     return orders
       .filter(o => { if (seen.has(o.id)) return false; seen.add(o.id); return true; })
-      .filter(o => !searchText || o.productName.toLowerCase().includes(searchText.toLowerCase()) || o.client.toLowerCase().includes(searchText.toLowerCase()))
+      // searchText.toLowerCase() was evaluated twice per order.
+      .filter(o => {
+        if (!searchText) return true;
+        const needle = searchText.toLowerCase();
+        return o.productName.toLowerCase().includes(needle) || o.client.toLowerCase().includes(needle);
+      })
       .filter(o => progressFilter[o.progress])
       .filter(o => !deliveryFilterOn || o.deliveryDate >= deliveryFilterDate)
       .sort((a, b) => {
@@ -1883,14 +1907,25 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     setPanelForm(prev => ({ ...prev, [k]: clean === "" ? 0 : parseInt(clean, 10) }));
   };
 
-  const filtered = orders.filter(o => {
-    const clientOk = !Object.values(clientFilter).some(Boolean) || clientFilter[o.client];
+  // These run on every keystroke in this page's form fields, so the filter and
+  // the selection check are memoised. `anyClientSelected` was previously
+  // recomputed by Object.values(...).some(Boolean) once per order, and
+  // `billingOrderIds.includes` rescanned the array once per order and again in
+  // `every` - both quadratic in the order count.
+  const anyClientSelected = useMemo(() => Object.values(clientFilter).some(Boolean), [clientFilter]);
+  const selectedBillingIds = useMemo(() => new Set(billingOrderIds), [billingOrderIds]);
+
+  const filtered = useMemo(() => orders.filter(o => {
+    const clientOk = !anyClientSelected || clientFilter[o.client];
     const dateOk = (!fromDate || !toDate) || (o.deliveryDate >= fromDate && o.deliveryDate <= toDate);
     return clientOk && (statusFilter[o.progress] ?? o.progress === PROGRESS_CANCELLED) && dateOk;
-  }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
+  }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)), [orders, anyClientSelected, clientFilter, fromDate, toDate, statusFilter]);
 
-  const billableInView = filtered.filter(isBillable);
-  const allBillableSelected = billableInView.length > 0 && billableInView.every(o => billingOrderIds.includes(o.id));
+  const billableInView = useMemo(() => filtered.filter(isBillable), [filtered]);
+  const allBillableSelected = useMemo(
+    () => billableInView.length > 0 && billableInView.every(o => selectedBillingIds.has(o.id)),
+    [billableInView, selectedBillingIds],
+  );
   const toggleAllBillable = () => {
     setBillingOrderIds(prev => {
       if (allBillableSelected) return prev.filter(id => !billableInView.some(o => o.id === id));
@@ -2012,10 +2047,10 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
               const unitPrice = prod ? prod.unitPrice : (o.quantity > 0 ? Math.round(o.orderAmount / o.quantity) : 0);
               return (
                 <div key={o.id} onClick={() => selectOrder(o)}
-                  className={`flex items-center gap-3 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
+                  className={`row-culled flex items-center gap-3 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
                   <input
                     type="checkbox"
-                    checked={billingOrderIds.includes(o.id)}
+                    checked={selectedBillingIds.has(o.id)}
                     disabled={!isBillable(o)}
                     onClick={e => e.stopPropagation()}
                     onChange={() => toggleBillable(o)}
@@ -2611,6 +2646,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [selectedId, setSelectedId] = useState(isScanRouted ? "" : products[0]?.id ?? "");
   const [form, setForm] = useState<Product>(isScanRouted ? blankForm() : products[0] ?? blankForm());
   const [isNew, setIsNew] = useState(isScanRouted);
+  const isWide = useIsTabletOrWider();
   const [dirty, setDirty] = useState(isScanRouted);
   const [errors, setErrors] = useState<FormErrors>({});
   const [search, setSearch] = useState("");
@@ -2686,8 +2722,19 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q);
   });
   const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
-  const productMaterials = allBom.filter(row => row.productId === form.id);
-  const inventoryById = (id: string) => inventoryItems.find(item => item.id === id);
+  // These three were rebuilt from scratch on every render: productMaterials
+  // scanned the whole BOM table, inventoryById ran a linear .find() per call
+  // (once per material row), and the material picker ran a nested
+  // inventory x BOM filter for every option. Same results, built once.
+  const productMaterials = useMemo(() => allBom.filter(row => row.productId === form.id), [allBom, form.id]);
+  const inventoryById = useMemo(() => {
+    const byId = new Map(inventoryItems.map(item => [item.id, item]));
+    return (id: string) => byId.get(id);
+  }, [inventoryItems]);
+  const availableMaterialItems = useMemo(() => {
+    const used = new Set(productMaterials.map(row => row.inventoryItemId));
+    return inventoryItems.filter(item => item.category !== "finished_good" && !used.has(item.id));
+  }, [inventoryItems, productMaterials]);
 
   const reloadMaterials = async () => {
     const data = await fetchProductMaterialData();
@@ -3010,7 +3057,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                   {lang === "ja" ? "在庫材料" : "Inventory material"}
                   <select value={materialItemId} disabled={isNew || materialBusy} onChange={event => setMaterialItemId(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-base disabled:bg-slate-100">
                     <option value="">{lang === "ja" ? "材料 / 部品を選択" : "Select material / component"}</option>
-                    {inventoryItems.filter(item => item.category !== "finished_good" && !productMaterials.some(row => row.inventoryItemId === item.id)).map(item => (
+                    {availableMaterialItems.map(item => (
                       <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · {lang === "ja" ? "在庫" : "stock"} {item.availableQty.toLocaleString()} {item.unit}</option>
                     ))}
                   </select>
@@ -3054,16 +3101,19 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("manufacturingTasks", lang)}</p>
               <div className="task-scroll border border-slate-200 rounded-sm max-h-[420px] overflow-y-scroll overscroll-contain">
-                <div className="divide-y divide-slate-100 sm:hidden">
+                {!isWide && (
+                <div className="divide-y divide-slate-100">
                   {form.tasks.map((task, i) => (
-                    <div key={i} className={focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}>
+                    <div key={i} className={`row-culled ${focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}`}>
                       <p className="text-xs font-700 text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
                       <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => { const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
                       <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskTime", lang)}</span><input type="number" step="0.1" min="0" max="999.9" value={task.time} onFocus={() => setFocusedRow(i)} onChange={e => { const raw = e.target.value.replace(/^0+(?=[1-9])/, ""); const parsed = raw === "" ? ("" as const) : parseFloat(raw); const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-right font-mono text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_time_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_time_${i}`]}</p>}</label>
                     </div>
                   ))}
                 </div>
-                <table className="hidden w-full border-collapse text-base sm:table">
+                )}
+                {isWide && (
+                <table className="w-full border-collapse text-base">
                   <thead className="bg-[#f5f6f8] sticky top-0 z-10">
                     <tr className="border-b border-slate-200">
                       <th className="text-center px-3 py-2 text-sm font-600 text-slate-400 w-14">{t("taskNoHeader", lang)}</th>
@@ -3106,6 +3156,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                     ))}
                   </tbody>
                 </table>
+                )}
               </div>
             </div>
           </div>
@@ -3220,6 +3271,9 @@ function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }:
 
 // ---- Page 7: Schedule & capacity ----
 
+// Stable empty result, so a day with no orders keeps its identity across renders.
+const NO_ORDERS: OrderRecord[] = [];
+
 function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }: {
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
@@ -3240,6 +3294,19 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
     products.forEach(p => m.set(`${p.clientName}|${p.productName}`, p));
     return m;
   }, [products]);
+
+  // Each of the 42 day cells used to run orders.filter(...) for itself, so a
+  // single render scanned the order table 42 times. One grouped pass instead;
+  // insertion order keeps each cell's orders in their original sequence.
+  const ordersByDay = useMemo(() => {
+    const m = new Map<string, OrderRecord[]>();
+    for (const o of orders) {
+      if (!statusFilter[o.progress]) continue;
+      const list = m.get(o.deliveryDate);
+      if (list) list.push(o); else m.set(o.deliveryDate, [o]);
+    }
+    return m;
+  }, [orders, statusFilter]);
 
   const clearSelection = () => { setSelectedId(null); setPanelForm(null); setSaved(false); setDirty(false); };
 
@@ -3368,7 +3435,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           <div className="flex-1 grid grid-cols-7 overflow-y-auto min-h-0"
             style={{ gridTemplateRows: `repeat(${gridRows}, auto)` }}>
             {visibleDays.map((calDay, i) => {
-              const dayOrders = orders.filter(o => o.deliveryDate === calDay.dateStr && statusFilter[o.progress]);
+              const dayOrders = ordersByDay.get(calDay.dateStr) ?? NO_ORDERS;
               return (
                 <div key={i} className={`flex flex-col gap-1 border-r border-b border-slate-200 p-1.5 ${calDay.isCurrentMonth ? "bg-white" : "bg-slate-50"} min-h-[4.5rem]`}>
                   <span className={`text-xs font-700 leading-none ${!calDay.isCurrentMonth ? "text-slate-400" : i % 7 === 0 ? "text-red-600" : i % 7 === 6 ? "text-blue-600" : "text-slate-700"}`}>

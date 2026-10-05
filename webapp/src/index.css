@@ -293,3 +293,18 @@ img, svg {
 .task-scroll::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* Long card-style lists laid out and painted every row, including rows far
+   below the fold. Letting the browser skip layout/paint for off-screen rows
+   keeps the rendered output identical while removing that cost. `auto` on
+   contain-intrinsic-size makes the browser remember each row's real height
+   after first paint, so scrollbar length and scroll position stay correct.
+
+   Deliberately NOT applied to <tr>. Column widths in a table are decided by
+   every cell in the column, so skipped rows would let the columns collapse and
+   re-expand while scrolling. That is a visible change to the layout, and the
+   table variants already get their saving from rendering only one layout. */
+.row-culled {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 88px;
+}

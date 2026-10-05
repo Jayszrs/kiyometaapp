@@ -18,6 +18,13 @@
 --
 -- Fixed UUIDs (only 0-9 a-f are valid hex) so every relationship is readable:
 --   a- inventory items   b- products   c- clients   d- orders   e- BOM rows   f- purchases
+--
+-- Dates are relative to the day the seed is run, never hard-coded. Search &
+-- Billing opens on a window of "last 30 days through the end of this month", so
+-- fixed dates drift out of that window and the page looks empty even though the
+-- rows exist. Every delivery date below sits between today-26 and today-2, which
+-- is inside the default window on any day of any month. The offset is taken in
+-- Asia/Tokyo to match the app's todayJST(), not the database's UTC.
 -- =============================================================================
 
 -- 1. Clear operational and master tables (FK-safe order) ---------------------
@@ -67,30 +74,128 @@ insert into public.product_materials (id, product_id, inventory_item_id, quantit
 on conflict (product_id, inventory_item_id) do nothing;
 
 -- 6. Orders ---------------------------------------------------------------------
--- Production-stage orders auto-post their BOM material issue (negative stock
--- movements); the progress check in migration 007 requires the Shinwa product
--- AND its BOM to exist, so this block is placed after steps 4-5. No Masuda order
--- is seeded on purpose: its product is not registered yet.
--- 210266 matches the actual Shinwa OCR quotation.
-insert into public.orders (id, order_date, delivery_date, client, order_number, product_name, quantity, order_amount, progress, required_manhours, worked_manhours, production_end_date, order_contact, contact_contents, finish_task, has_contact, completed_tasks) values
-('d1111111-1111-1111-1111-111111111111', '2026-08-17', '2026-08-20', '伸和テクノス株式会社', '210266', 'タンク', 3, 15000, 'Shipped',       90, 90, '2026-08-19', '', '', false, false, '[true]'::jsonb),
-('d2222222-2222-2222-2222-222222222222', '2026-08-18', '2026-08-22', '伸和テクノス株式会社', '210267', 'タンク', 2, 10000, 'Complete',      60, 60, '2026-08-21', '', '', false, false, '[true]'::jsonb),
-('d3333333-3333-3333-3333-333333333333', '2026-08-19', '2026-08-25', '伸和テクノス株式会社', '210268', 'タンク', 1,  5000, 'In production', 30, 10, '2026-08-24', '', '', false, false, '[false]'::jsonb),
-('d4444444-4444-4444-4444-444444444444', '2026-08-19', '2026-08-29', '伸和テクノス株式会社', '210269', 'タンク', 1,  5000, 'Order request', 30,  0, null,         '', '', false, false, '[]'::jsonb)
+-- 210266 matches the actual Shinwa OCR quotation. No Masuda order is seeded on
+-- purpose: its product is not registered yet.
+--
+-- The jst CTE is the Asia/Tokyo calendar day, matching todayJST() in the webapp.
+-- Offsets keep order_date < production_end_date <= delivery_date, which is what
+-- the migration 008 checks require, and keep every delivery inside the Search &
+-- Billing default window.
+--
+-- Every order is INSERTed as 'Order request' and only then moved to its target
+-- stage, exactly like the app does it. That is not cosmetic: migration 011 runs
+-- apply_order_materials as a BEFORE trigger, and that function snapshots the BOM
+-- into order_material_issues, whose order_id references orders(id). On INSERT the
+-- order row does not exist yet, so a row inserted directly at 'In production' or
+-- later fails with 23503 on order_material_issues_order_id_fkey. On UPDATE the
+-- row is there, which is why the app never hits this.
+with jst as (
+  select ((now() at time zone 'Asia/Tokyo')::date) as d
+), seeded as (
+  select
+    v.id,
+    j.d + v.order_offset as order_date,
+    j.d + v.delivery_offset as delivery_date,
+    v.client,
+    v.order_number,
+    v.product_name,
+    v.quantity,
+    v.order_amount,
+    v.required_manhours,
+    v.target_progress,
+    v.worked_manhours,
+    v.production_end_offset,
+    v.finish_task,
+    v.has_contact,
+    v.completed_tasks
+  from (values
+    ('d1111111-1111-1111-1111-111111111111'::uuid, -26, -23, '伸和テクノス株式会社', '210266', 'タンク', 3, 15000, 'Shipped',       90, 90, -24, false, false, '[true]'::jsonb),
+    ('d2222222-2222-2222-2222-222222222222'::uuid, -21, -18, '伸和テクノス株式会社', '210267', 'タンク', 2, 10000, 'Complete',      60, 60, -19, false, false, '[true]'::jsonb),
+    ('d3333333-3333-3333-3333-333333333333'::uuid, -16, -11, '伸和テクノス株式会社', '210268', 'タンク', 1,  5000, 'In production', 30, 10, -12, false, false, '[false]'::jsonb),
+    ('d4444444-4444-4444-4444-444444444444'::uuid,  -6,  -2, '伸和テクノス株式会社', '210269', 'タンク', 1,  5000, 'Order request', 30,  0, null, false, false, '[]'::jsonb)
+  ) as v (
+    id, order_offset, delivery_offset, client, order_number, product_name, quantity,
+    order_amount, target_progress, required_manhours, worked_manhours, production_end_offset,
+    finish_task, has_contact, completed_tasks
+  )
+  cross join jst j
+)
+insert into public.orders (id, order_date, delivery_date, client, order_number, product_name, quantity, order_amount, progress, required_manhours, worked_manhours, production_end_date, order_contact, contact_contents, finish_task, has_contact, completed_tasks)
+select
+  s.id,
+  s.order_date,
+  s.delivery_date,
+  s.client,
+  s.order_number,
+  s.product_name,
+  s.quantity,
+  s.order_amount,
+  'Order request',
+  s.required_manhours,
+  0,
+  null,
+  '',
+  '',
+  s.finish_task,
+  s.has_contact,
+  s.completed_tasks
+from seeded s
 on conflict (id) do nothing;
+
+-- Now move each order forward to its target stage. The BEFORE UPDATE triggers
+-- fire here: enforce_order_progress_transition validates the move, and
+-- apply_order_materials captures the BOM snapshot plus posts the stock issue.
+-- The shipped/complete orders run low enough to stay inside the opening stock,
+-- so stock_movements_prevent_negative stays satisfied.
+with jst as (
+  select ((now() at time zone 'Asia/Tokyo')::date) as d
+), targets as (
+  select
+    'd1111111-1111-1111-1111-111111111111'::uuid as id, 'Shipped'::text as progress, 90::numeric as worked, -24 as prod_end_offset
+  union all select 'd2222222-2222-2222-2222-222222222222', 'Complete',      60, -19
+  union all select 'd3333333-3333-3333-3333-333333333333', 'In production', 10, -12
+)
+update public.orders o
+set progress = t.progress,
+    worked_manhours = t.worked,
+    production_end_date = (select j.d + t.prod_end_offset from jst j)
+from targets t
+where o.id = t.id
+  and o.progress is distinct from t.progress;
 
 -- 7. Purchasing (posting receipts against the inventory master) ------------------
 -- Seeded rows are attributed to the @operator account (the one we log in with);
 -- the subqueries resolve its profile so the PIC and created_by look natural.
-insert into public.purchases (id, purchase_no, purchase_date, supplier_name, item_id, ordered_qty, received_qty, unit_price, due_date, status, pic, notes, created_by) values
-('f1111111-1111-1111-1111-111111111111', 'PUR-2026-000001', '2026-08-05', '信州鋼材センター株式会社', 'a1111111-1111-1111-1111-111111111111', 60, 60, 4500, '2026-08-12', 'received', (select username from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1), 'Opening stock SPCC',
-  (select id from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1)),
-('f2222222-2222-2222-2222-222222222222', 'PUR-2026-000002', '2026-08-06', '信州鋼材センター株式会社', 'a2222222-2222-2222-2222-222222222222', 40, 40, 8200, '2026-08-15', 'received', (select username from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1), 'Opening stock SUS304',
-  (select id from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1)),
-('f3333333-3333-3333-3333-333333333333', 'PUR-2026-000003', '2026-08-20', 'ナガノケミカル株式会社',      'a4444444-4444-4444-4444-444444444444', 20, 10, 3500, '2026-08-28', 'partial',  (select username from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1), 'Partial delivery',
-  (select id from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1)),
-('f4444444-4444-4444-4444-444444444444', 'PUR-2026-000004', '2026-08-25', 'ナガノ溶材株式会社',            'a3333333-3333-3333-3333-333333333333', 100, 0, 420,  '2026-09-05', 'ordered',  (select username from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1), 'TIG rod restock',
-  (select id from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1))
+-- Purchase dates are relative to the JST day for the same reason as the orders:
+-- a fixed date would make the Purchasing tab look empty a month later.
+with jst as (
+  select ((now() at time zone 'Asia/Tokyo')::date) as d
+)
+insert into public.purchases (id, purchase_no, purchase_date, supplier_name, item_id, ordered_qty, received_qty, unit_price, due_date, status, pic, notes, created_by)
+select
+  v.id,
+  v.purchase_no,
+  j.d + v.purchase_offset,
+  v.supplier_name,
+  v.item_id,
+  v.ordered_qty,
+  v.received_qty,
+  v.unit_price,
+  j.d + v.due_offset,
+  v.status,
+  (select username from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1),
+  v.notes,
+  (select id from public.profiles where login_email = 'operator@kiyometa.app' and active limit 1)
+from (values
+  ('f1111111-1111-1111-1111-111111111111'::uuid, 'PUR-2026-000001', -30, '信州鋼材センター株式会社', 'a1111111-1111-1111-1111-111111111111'::uuid, 60,  60, 4500, -23, 'received', 'Opening stock SPCC'),
+  ('f2222222-2222-2222-2222-222222222222'::uuid, 'PUR-2026-000002', -29, '信州鋼材センター株式会社', 'a2222222-2222-2222-2222-222222222222'::uuid, 40,  40, 8200, -22, 'received', 'Opening stock SUS304'),
+  ('f3333333-3333-3333-3333-333333333333'::uuid, 'PUR-2026-000003', -15, 'ナガノケミカル株式会社',   'a4444444-4444-4444-4444-444444444444'::uuid, 20,  10, 3500,  -7, 'partial',  'Partial delivery'),
+  ('f4444444-4444-4444-4444-444444444444'::uuid, 'PUR-2026-000004', -10, 'ナガノ溶材株式会社',       'a3333333-3333-3333-3333-333333333333'::uuid, 100,  0, 420,   4, 'ordered',  'TIG rod restock')
+) as v (
+  id, purchase_no, purchase_offset, supplier_name, item_id, ordered_qty,
+  received_qty, unit_price, due_offset, status, notes
+)
+cross join jst j
 on conflict (purchase_no) do nothing;
 
 -- 8. Re-sync the auto-number sequences past the seeded business numbers ----------
@@ -124,3 +229,20 @@ union all select 'stock movements', count(*) from public.stock_movements;
 
 select item_code, item_name, available_qty, needs_reorder, suggested_purchase_qty, stock_value
 from public.inventory_balances order by item_code;
+
+-- Mirror of the Search & Billing default window (today-30 .. end of this month,
+-- JST) so the emptiness this seed was blamed for is visible as a pass/fail here
+-- instead of only in the browser. 'orders in default window' must equal the
+-- total order count.
+with win as (
+  select
+    ((now() at time zone 'Asia/Tokyo')::date - 30) as from_date,
+    (date_trunc('month', (now() at time zone 'Asia/Tokyo')::date)
+      + interval '1 month' - interval '1 day')::date as to_date
+)
+select
+  'default window' as what,
+  (select from_date from win)::text || ' .. ' || (select to_date from win)::text as detail,
+  count(*) filter (where o.delivery_date between (select from_date from win) and (select to_date from win)) as orders_in_window,
+  count(*) as orders_total
+from public.orders o;

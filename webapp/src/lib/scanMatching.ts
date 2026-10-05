@@ -27,7 +27,13 @@ export function findClientMatch<T extends ClientRecord>(clients: T[], name: stri
 export function findProductMatch<T extends ProductRecord>(products: T[], client: string, productName: string, productNumber: string): T | undefined {
   const code = (s: string) => s.normalize("NFKC").replace(/[‐‑–—−]/g, "-").replace(/\s/g, "").toUpperCase();
   const name = (s: string) => s.normalize("NFKC").replace(/\s/g, "");
-  const candidates = products.filter(p => !!companyKey(client) && companyKey(p.clientName) === companyKey(client));
+  // companyKey(client) is loop-invariant, but it was being normalised and
+  // regexed twice for every product. Hoisting it turns a per-candidate cost
+  // into one call.
+  const clientKey = companyKey(client);
+  const candidates = clientKey
+    ? products.filter(p => companyKey(p.clientName) === clientKey)
+    : [];
   // A scanned drawing number must agree. A common name such as タンク is not
   // sufficient to override a different drawing number or another client's item.
   const matches = productNumber.trim()

@@ -1,4 +1,17 @@
-import ExcelJS from "exceljs";
+import type ExcelJS from "exceljs";
+
+/* ExcelJS and its dependencies (jszip, saxes, fast-csv) add roughly 270 kB
+   gzipped. Importing it at the top level pulled that entire payload into the
+   Inventory route chunk, so every visit to Inventory downloaded, parsed and
+   executed the whole spreadsheet engine even when the user only read numbers.
+   The type-only import above keeps the compile-time types at no runtime cost,
+   and this loader fetches the engine the first time an export or import is
+   actually requested. The promise is cached so repeat use costs nothing. */
+let excelModule: Promise<typeof ExcelJS> | null = null;
+function loadExcelJS(): Promise<typeof ExcelJS> {
+  excelModule ??= import("exceljs").then(module => module.default);
+  return excelModule;
+}
 
 export interface ExcelColumn {
   key: string;
@@ -72,7 +85,8 @@ export async function createExcelWorkbook({
   rows = [],
   template = false,
 }: WorkbookOptions): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
+  const ExcelJSRuntime = await loadExcelJS();
+  const workbook = new ExcelJSRuntime.Workbook();
   workbook.creator = "Kiyometa Order Management";
   workbook.company = "Kiyometa";
   workbook.created = new Date();
@@ -199,7 +213,8 @@ export async function readExcelRows(file: File, columns: ExcelColumn[]): Promise
   if (!file.name.toLowerCase().endsWith(".xlsx")) {
     throw new Error("Please choose an .xlsx Excel file.");
   }
-  const workbook = new ExcelJS.Workbook();
+  const ExcelJSRuntime = await loadExcelJS();
+  const workbook = new ExcelJSRuntime.Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error("The workbook does not contain a worksheet.");

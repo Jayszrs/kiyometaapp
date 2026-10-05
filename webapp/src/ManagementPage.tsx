@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
 import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
+import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import LoadingDialog from "./components/LoadingDialog";
 import {
   createManagedUser,
@@ -50,6 +51,7 @@ function messageOf(error: unknown) {
 export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   const { profile } = useAuth();
   const [tab, setTab] = useState<"users" | "audit">("users");
+  const isWide = useIsTabletOrWider();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [busy, setBusy] = useState(false);
@@ -167,7 +169,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
                   <h2 className="text-lg font-700 text-[#1a3458]">{text("Employee access", "従業員アカウント")}</h2>
                   <p className="text-sm text-slate-500">{users.filter(user => user.active).length}{text(" active accounts", "件が有効")}</p>
                 </div>
-                <div className="divide-y divide-slate-100 sm:hidden">
+                {!isWide && <div className="divide-y divide-slate-100">
                   {users.map(user => (
                     <article key={user.id} className="space-y-4 p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -189,8 +191,8 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
                       </div>
                     </article>
                   ))}
-                </div>
-                <div className="hidden overflow-x-auto sm:block">
+                </div>}
+                {isWide && <div className="overflow-x-auto">
                   <table className="w-full min-w-[700px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-5 py-3">{text("Employee", "従業員")}</th><th className="px-4 py-3">{text("Role", "権限")}</th><th className="px-4 py-3">{text("Status", "状態")}</th><th className="px-5 py-3 text-right">{text("Actions", "操作")}</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
@@ -208,7 +210,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </div>}
               </section>
             </div>
           )}
@@ -216,13 +218,13 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
           {tab === "audit" && (
               <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
                 <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-700 text-[#1a3458]">{text("Activity & undo", "操作履歴と取り消し")}</h2><p className="text-sm text-slate-500">{profile.role === "administrator" ? text("Administrators can recover activity from every employee.", "管理者は全従業員の操作を復元できます。") : text("Operators can review and recover their own activity.", "オペレーターは自身の操作を確認・復元できます。")}</p></div><input value={search} onChange={e => setSearch(e.target.value)} placeholder={text("Search employee or action...", "従業員名または操作を検索…")} className="w-full rounded border border-slate-300 px-3 py-2 text-sm sm:w-72" /></div>
-                <div className="divide-y divide-slate-100 sm:hidden">
+                {!isWide && <div className="divide-y divide-slate-100">
                   {filteredLogs.map(log => {
                     const undoable = isUndoableAuditLog(log);
                     return <article key={log.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700 text-slate-800">@{log.username}</p><p className="text-xs text-slate-500">{new Date(log.createdAt).toLocaleString(lang === "ja" ? "ja-JP" : undefined)}</p></div><span className="rounded bg-slate-100 px-2 py-1 text-xs font-700 text-slate-600">{(lang === "ja" ? ACTION_LABELS_JA[log.action] : ACTION_LABELS[log.action]) ?? log.action}</span></div><div className="rounded bg-slate-50 p-3"><p className="text-xs font-600 text-slate-400">{lang === "ja" ? ENTITY_LABELS_JA[log.entity] ?? "データ" : log.entity}</p><p className="mt-1 break-all font-mono text-xs text-slate-600">{log.entityId ?? String(log.metadata.target_username ?? "-")}</p></div><div className="flex justify-end">{log.undoneAt ? <span className="text-xs font-700 text-emerald-700">{text("Undone", "取り消し済み")}</span> : undoable ? <button disabled={busy} onClick={() => { if (confirm(text("Undo this data change?", "このデータ変更を取り消しますか？"))) void run(() => undoAuditLog(log.id), text("Activity was undone.", "操作を取り消しました。")); }} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-700 text-amber-800 hover:bg-amber-100">{text("Undo", "元に戻す")}</button> : <span className="text-xs text-slate-400">{text("View only", "表示のみ")}</span>}</div></article>;
                   })}
-                </div>
-                <div className="hidden overflow-x-auto sm:block">
+                </div>}
+                {isWide && <div className="overflow-x-auto">
                   <table className="w-full min-w-[850px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-5 py-3">{text("Time", "日時")}</th><th className="px-4 py-3">{text("Employee", "従業員")}</th><th className="px-4 py-3">{text("Activity", "操作")}</th><th className="px-4 py-3">{text("Record", "対象データ")}</th><th className="px-5 py-3 text-right">{text("Recovery", "復元")}</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
@@ -232,7 +234,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
                       })}
                     </tbody>
                   </table>
-                </div>
+                </div>}
               </section>
           )}
         </div>
