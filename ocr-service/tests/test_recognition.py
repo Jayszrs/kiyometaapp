@@ -17,12 +17,15 @@ class RecognitionTests(unittest.TestCase):
     def test_rotation_preserves_geometry_and_disables_crop_flipping(self):
         img = np.zeros((30, 50, 3), dtype=np.uint8)
         img[0, 0] = 255
+        calls = []
         def engine(image, **kwargs):
             self.assertFalse(kwargs['use_cls'])
+            calls.append(image.shape)
             text = '注文番号 株式会社' if image[-1, 0, 0] == 255 else 'x'
             return [(BOX, text, .99)], None
         upright, angle = orient_page(img, engine)
         self.assertEqual(angle, 90)
+        self.assertEqual(len(calls), 4)
         np.testing.assert_array_equal(upright, np.rot90(img))
 
     def test_japanese_names_and_multilingual_numbers_keep_disagreements_visible(self):

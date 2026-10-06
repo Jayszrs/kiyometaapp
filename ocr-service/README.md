@@ -33,6 +33,9 @@ runtime and never downloads models or sends documents anywhere.
 
 Each line: `text`, `x0`, `y0`, `x1`, `y1`, `score`, zero-based `page`. Coordinates
 refer to the upright page; whole-page rotation is detected before extraction.
+The four reduced-size orientation candidates are scored concurrently (bounded
+by available CPU cores); all candidates are still evaluated before full-page
+recognition, so the orientation and extracted-text behavior is unchanged.
 
 Uploads are bounded so a single request cannot exhaust the server:
 

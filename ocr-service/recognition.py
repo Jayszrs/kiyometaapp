@@ -1,9 +1,13 @@
 """Orientation and recognition helpers, independent of the HTTP endpoint."""
+import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
+
+_ORIENTATION_WORKERS = min(4, max(1, (os.cpu_count() or 1) // 3))
 
 
 def orientation_score(result) -> float:
@@ -31,11 +35,16 @@ def orient_page(img: np.ndarray, preview_engine) -> tuple[np.ndarray, int]:
     scale = min(1.0, 1200 / max(img.shape[:2]))
     preview = cv2.resize(img, None, fx=scale, fy=scale) if scale < 1 else img
     best_turn, best_score = 0, -1.0
-    for turns in range(4):
-        result, _ = preview_engine(np.ascontiguousarray(np.rot90(preview, turns)), use_cls=False)
-        score = orientation_score(result)
-        if score > best_score:
-            best_turn, best_score = turns, score
+    candidates = [np.ascontiguousarray(np.rot90(preview, turns)) for turns in range(4)]
+    with ThreadPoolExecutor(max_workers=_ORIENTATION_WORKERS) as executor:
+        results = executor.map(
+            lambda candidate: preview_engine(candidate, use_cls=False),
+            candidates,
+        )
+        for turns, (result, _) in enumerate(results):
+            score = orientation_score(result)
+            if score > best_score:
+                best_turn, best_score = turns, score
     return np.ascontiguousarray(np.rot90(img, best_turn)), (best_turn * 90) % 360
 
 
