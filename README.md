@@ -102,7 +102,7 @@ Dashboard -> Authentication -> Users before using the in-app controls.
 
 ## Run on the project tablet
 
-From the repository root:
+From a VS Code integrated terminal at the repository root:
 
 ```powershell
 flutter run
@@ -110,9 +110,14 @@ flutter run
 
 Choose option `4` for **Kiyometa Tablet**. The runner creates or starts the
 Android tablet, waits until Android has finished booting, starts Vite, connects
-port 5173 to the emulator, and launches the Flutter wrapper.
+port 5173 to the emulator, syncs web dependencies when `package-lock.json`
+changes, and launches the Flutter wrapper. The tablet image and AVD are created
+on each developer's computer; they are not stored in Git. Install Flutter,
+Android SDK Emulator/Command-line Tools, and Node.js first. Copy
+`webapp/.env.local.example` to `webapp/.env.local` and fill in the project's
+public Supabase values once per computer.
 
-To launch the tablet directly, use:
+From a regular PowerShell terminal, launch the tablet with:
 
 ```powershell
 .\run-tablet.cmd

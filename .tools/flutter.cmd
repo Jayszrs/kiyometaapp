@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "REAL_FLUTTER="
 for /f "delims=" %%F in ('where flutter.bat 2^>nul') do if not defined REAL_FLUTTER set "REAL_FLUTTER=%%F"
@@ -31,19 +31,19 @@ if errorlevel 1 exit /b 1
 if /i "%DEVICE_CHOICE%"=="q" exit /b 0
 if "%DEVICE_CHOICE%"=="1" (
     call "%REAL_FLUTTER%" run -d windows
-    exit /b %ERRORLEVEL%
+    exit /b !ERRORLEVEL!
 )
 if "%DEVICE_CHOICE%"=="2" (
     call "%REAL_FLUTTER%" run -d chrome
-    exit /b %ERRORLEVEL%
+    exit /b !ERRORLEVEL!
 )
 if "%DEVICE_CHOICE%"=="3" (
     call "%REAL_FLUTTER%" run -d edge
-    exit /b %ERRORLEVEL%
+    exit /b !ERRORLEVEL!
 )
 if "%DEVICE_CHOICE%"=="4" (
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\tool\start-tablet-emulator.ps1" -RunApp
-    exit /b %ERRORLEVEL%
+    exit /b !ERRORLEVEL!
 )
 
 echo Pilihan tidak valid. Gunakan 1, 2, 3, 4, atau q.

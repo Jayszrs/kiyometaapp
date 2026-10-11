@@ -50,7 +50,8 @@ function Get-RunningAvdSerial {
     })
 
     foreach ($serial in $serials) {
-        $runningName = (& $AdbPath -s $serial emu avd name 2>$null | Select-Object -First 1).Trim()
+        $runningName = [string](& $AdbPath -s $serial emu avd name 2>$null | Select-Object -First 1)
+        $runningName = $runningName.Trim()
         if ($runningName -eq $Name) {
             return $serial
         }
@@ -118,7 +119,8 @@ function Wait-AndroidBoot {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     do {
         Start-Sleep -Seconds 2
-        $bootCompleted = (& $AdbPath -s $Serial shell getprop sys.boot_completed 2>$null | Select-Object -First 1).Trim()
+        $bootCompleted = [string](& $AdbPath -s $Serial shell getprop sys.boot_completed 2>$null | Select-Object -First 1)
+        $bootCompleted = $bootCompleted.Trim()
     } until ($bootCompleted -eq '1' -or (Get-Date) -ge $deadline)
 
     if ($bootCompleted -ne '1') {
@@ -203,14 +205,21 @@ if ($RunApp) {
     }
 
     $nodeModulesPath = Join-Path $webAppPath 'node_modules'
-    if (-not (Test-Path -LiteralPath $nodeModulesPath)) {
-        Write-Host 'Meng-install dependency webapp...' -ForegroundColor Cyan
+    $lockFilePath = Join-Path $webAppPath 'package-lock.json'
+    $lockHashPath = Join-Path $nodeModulesPath '.kiyometa-lock-hash'
+    $lockHash = (Get-FileHash -LiteralPath $lockFilePath -Algorithm SHA256).Hash
+    $installedLockHash = if (Test-Path -LiteralPath $lockHashPath) {
+        (Get-Content -LiteralPath $lockHashPath -Raw).Trim()
+    }
+    if (-not (Test-Path -LiteralPath $nodeModulesPath) -or $installedLockHash -ne $lockHash) {
+        Write-Host 'Menyinkronkan dependency webapp...' -ForegroundColor Cyan
         Push-Location $webAppPath
         try {
-            & npm.cmd install
+            & npm.cmd ci
             if ($LASTEXITCODE -ne 0) {
-                throw 'npm install gagal.'
+                throw 'npm ci gagal.'
             }
+            Set-Content -LiteralPath $lockHashPath -Value $lockHash -NoNewline
         }
         finally {
             Pop-Location
