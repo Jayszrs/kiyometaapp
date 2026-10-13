@@ -24,6 +24,8 @@ import {
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
 import LoadingDialog from "./components/LoadingDialog";
+import { useDialog } from "./components/AppDialog";
+import { Icon } from "./components/Icon";
 
 interface Props {
   products: Product[];
@@ -224,7 +226,7 @@ function movementTypeFromExcel(value: unknown) {
 // references it, so it stays administrator-only, matching the DELETE policies
 // in migration 010. The row disappears from the ledger's history, which is not
 // a correction an operator should be able to make from the item list.
-const deleteDenied = "Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.";
+
 
 // Number("") is 0 and Number("abc") is NaN, so the old `Number(value) || 0`
 // turned a blank Excel cell into a real zero and a typo into a price of nothing.
@@ -247,6 +249,13 @@ type PreparedRow =
   | { kind: "bom"; existingId: string; payload: BomItem }
   | { kind: "skip" };
 
+type TransferDialogState = {
+  mode: "import" | "export";
+  template: boolean;
+  file: File | null;
+  fileName: string;
+};
+
 // The identity a row addresses, used to reject a file that sets the same record
 // twice. A row that creates a new record has no identity yet, so it is exempt.
 function duplicateKey(row: PreparedRow): string {
@@ -256,6 +265,7 @@ function duplicateKey(row: PreparedRow): string {
 
 export default function InventoryPage({ products, onNavigate, lang, setLang }: Props) {
   const { profile } = useAuth();
+  const dialog = useDialog();
   const canDelete = profile.role === "administrator";
   const fileInput = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>("inventory");
@@ -277,6 +287,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [transferDialog, setTransferDialog] = useState<TransferDialogState | null>(null);
   const [search, setSearch] = useState("");
   const isWide = useIsTabletOrWider();
   const [movementDirection, setMovementDirection] = useState<"all" | "outgoing" | "incoming">("all");
@@ -285,6 +296,11 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const text = (english: unknown, japanese?: string) => japanese === undefined
     ? String(english ?? "").trim()
     : lang === "ja" ? japanese : String(english ?? "").trim();
+  const unitLabel = (unit: string) => {
+    if (lang !== "ja") return unit;
+    const normalized = unit.trim().toLowerCase();
+    return ({ pcs: "個", pc: "個", piece: "個", pieces: "個", set: "セット", sets: "セット" } as Record<string, string>)[normalized] ?? unit;
+  };
   const categoryLabel = (category: InventoryCategory) => lang === "ja" ? CATEGORY_LABELS_JA[category] : CATEGORY_LABELS[category];
   const movementLabel = (type: string) => (lang === "ja" ? MOVEMENT_LABELS_JA[type] : MOVEMENT_LABELS[type]) ?? type;
   const procurementLabel = (type: ProcurementType) => lang === "ja"
@@ -377,7 +393,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     const selectedItem = itemById(movementItem);
     if (!positive && selectedItem && movementQty > selectedItem.availableQty) {
       setError(lang === "ja"
-        ? `在庫が不足しています（${selectedItem.itemCode}）。利用可能数：${selectedItem.availableQty.toLocaleString()} ${selectedItem.unit}`
+        ? `在庫が不足しています（${selectedItem.itemCode}）。利用可能数：${selectedItem.availableQty.toLocaleString()} ${unitLabel(selectedItem.unit)}`
         : `Insufficient stock for ${selectedItem.itemCode}. Available: ${selectedItem.availableQty.toLocaleString()} ${selectedItem.unit}.`);
       return;
     }
@@ -394,7 +410,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   };
 
   const askDelete = (message: string, task: () => Promise<void>, success: string) => {
-    if (window.confirm(message)) void run(task, success);
+    void dialog.confirm(message, { tone: "danger" }).then(ok => { if (ok) void run(task, success); });
   };
 
   const rowsForExport = (selectedTab: Tab): Record<string, unknown>[] => {
@@ -439,6 +455,22 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     } catch (err) {
       setError(lang === "ja" ? "Excelファイルを作成できませんでした。" : errorMessage(err));
     }
+  };
+
+  const openImportDialog = () => {
+    setError("");
+    setTransferDialog({ mode: "import", template: false, file: null, fileName: "" });
+  };
+
+  const openExportDialog = (template: boolean) => {
+    setError("");
+    const config = TAB_EXCEL[tab];
+    setTransferDialog({
+      mode: "export",
+      template,
+      file: null,
+      fileName: `${config.file}-${template ? "template" : today()}.xlsx`,
+    });
   };
 
   const validateRequired = (row: ImportedExcelRow, columns: ExcelColumn[]) => {
@@ -612,7 +644,20 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    setTransferDialog(current => current?.mode === "import" ? { ...current, file, fileName: file.name } : current);
+  };
+
+  const confirmTransfer = async () => {
+    if (!transferDialog) return;
+    if (transferDialog.mode === "export") {
+      await downloadExcel(transferDialog.template);
+      setTransferDialog(null);
+      return;
+    }
+    if (!transferDialog.file) return;
     const activeTab = tab;
+    const file = transferDialog.file;
+    setTransferDialog(null);
     setBusy(true);
     setError("");
     setNotice("");
@@ -652,9 +697,9 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
           <section className="flex flex-col gap-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
             <div><p className="text-xs font-700 text-[#0d7377]">{text("Excel tools", "Excel入出力")}</p><h2 className="font-700 text-[#1a3458]">{lang === "ja" ? ({ inventory: "在庫マスタ", purchases: "仕入台帳", movements: "在庫移動台帳", bom: "製品材料（BOM）" } as const)[tab] : TAB_EXCEL[tab].title}</h2><p className="text-xs text-slate-500">{text("Import validates every row. Automatic numbers may be left blank.", "インポート時に全行を検証します。自動採番の項目は空欄にできます。")}</p></div>
             <div className="flex flex-wrap gap-2">
-              <button disabled={busy} onClick={() => void downloadExcel(true)} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Template", "テンプレート")}</button>
-              <button disabled={busy} onClick={() => fileInput.current?.click()} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Import Excel", "Excelをインポート")}</button>
-              <button disabled={busy} onClick={() => void downloadExcel(false)} className="flex-1 whitespace-nowrap rounded bg-[#0d7377] px-3 py-2 text-sm font-700 text-white hover:bg-[#0a6063] disabled:opacity-40 sm:flex-none">{text("Export Excel", "Excelをエクスポート")}</button>
+              <button disabled={busy} onClick={() => openExportDialog(true)} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Template", "テンプレート")}</button>
+              <button disabled={busy} onClick={openImportDialog} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Import Excel", "Excelをインポート")}</button>
+              <button disabled={busy} onClick={() => openExportDialog(false)} className="flex-1 whitespace-nowrap rounded bg-[#0d7377] px-3 py-2 text-sm font-700 text-white hover:bg-[#0a6063] disabled:opacity-40 sm:flex-none">{text("Export Excel", "Excelをエクスポート")}</button>
               <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleExcelFile} className="hidden" />
             </div>
           </section>
@@ -665,15 +710,15 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                 <div><h2 className="text-lg font-700 text-[#1a3458]">{text("Inventory master", "在庫マスタ")}</h2><p className="text-sm text-slate-500">{text("Item numbers are generated automatically and cannot be edited.", "品目番号は自動採番され、編集できません。")}</p></div>
                 <div className="flex gap-2"><input value={search} onChange={event => setSearch(event.target.value)} placeholder={text("Search item...", "品目を検索…")} className="min-w-0 flex-1 rounded border border-slate-300 px-3 py-2 text-sm sm:w-56" /><button onClick={() => setItemForm(blankItem())} className="whitespace-nowrap rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">＋ {text("Item", "品目")}</button></div>
               </div>
-              {!isWide && <div className="divide-y divide-slate-100">{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? text("Out of stock", "在庫切れ") : categoryLabel(item.category)}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Available", "在庫数")}</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {item.unit}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Stock value", "在庫金額")}</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Min / target", "下限 / 目標")}</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Supplier", "仕入先")}</p><p className="break-words">{item.supplierName || "-"}</p></div></div>{item.needsReorder && <p className={`text-xs font-700 ${empty ? "text-red-700" : "text-amber-700"}`}>{text("Suggested purchase", "推奨発注数")} +{item.suggestedPurchaseQty.toLocaleString()}</p>}<div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={deleteDenied} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></article>; })}</div>}
+              {!isWide && <div className="divide-y divide-slate-100">{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? text("Out of stock", "在庫切れ") : categoryLabel(item.category)}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Available", "在庫数")}</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Stock value", "在庫金額")}</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Min / target", "下限 / 目標")}</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Supplier", "仕入先")}</p><p className="break-words">{item.supplierName || "-"}</p></div></div>{item.needsReorder && <p className={`text-xs font-700 ${empty ? "text-red-700" : "text-amber-700"}`}>{text("Suggested purchase", "推奨発注数")} +{item.suggestedPurchaseQty.toLocaleString()}</p>}<div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={text("Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.", "在庫品目の削除は管理者のみ行えます。残高を修正するには在庫調整を使用してください。")} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></article>; })}</div>}
               {isWide && <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("No / item", "番号 / 品目")}</th><th className="px-4 py-3">{text("Category", "分類")}</th><th className="px-4 py-3 text-right">{text("Available", "在庫数")}</th><th className="px-4 py-3 text-right">{text("Min / target", "下限 / 目標")}</th><th className="px-4 py-3">{text("Supplier", "仕入先")}</th><th className="px-4 py-3 text-right">{text("Stock value", "在庫金額")}</th><th className="px-4 py-3 text-right">{text("Actions", "操作")}</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">{filteredItems.map(item => <tr key={item.id} className={item.availableQty <= 0 ? "bg-red-50" : item.needsReorder ? "bg-amber-50/60" : "hover:bg-slate-50"}>
                   <td className="px-4 py-3"><p className="font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></td>
                   <td className="px-4 py-3"><p>{categoryLabel(item.category)}</p><p className="text-xs capitalize text-slate-500">{procurementLabel(item.procurementType)}</p></td>
-                  <td className="px-4 py-3 text-right"><span className={`font-mono font-700 ${item.availableQty <= 0 ? "text-red-700" : item.needsReorder ? "text-amber-700" : "text-slate-800"}`}>{item.availableQty.toLocaleString()} {item.unit}</span>{item.availableQty <= 0 ? <p className="text-xs font-700 text-red-700">{text("Out of stock", "在庫切れ")}</p> : item.needsReorder && <p className="text-xs text-amber-700">{text("Suggest", "推奨発注数")} +{item.suggestedPurchaseQty.toLocaleString()}</p>}</td>
+                  <td className="px-4 py-3 text-right"><span className={`font-mono font-700 ${item.availableQty <= 0 ? "text-red-700" : item.needsReorder ? "text-amber-700" : "text-slate-800"}`}>{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</span>{item.availableQty <= 0 ? <p className="text-xs font-700 text-red-700">{text("Out of stock", "在庫切れ")}</p> : item.needsReorder && <p className="text-xs text-amber-700">{text("Suggest", "推奨発注数")} +{item.suggestedPurchaseQty.toLocaleString()}</p>}</td>
                   <td className="px-4 py-3 text-right font-mono text-xs">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</td><td className="px-4 py-3">{item.supplierName || "-"}</td><td className="px-4 py-3 text-right font-mono">{money(item.stockValue)}</td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => setItemForm(item)} className="rounded border border-slate-300 px-3 py-1.5 font-600 hover:bg-white">{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={deleteDenied} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></td>
+                  <td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => setItemForm(item)} className="rounded border border-slate-300 px-3 py-1.5 font-600 hover:bg-white">{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={text("Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.", "在庫品目の削除は管理者のみ行えます。残高を修正するには在庫調整を使用してください。")} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></td>
                 </tr>)}</tbody>
               </table></div>}
             </section>
@@ -730,6 +775,21 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
         <div className="mt-5 space-y-4"><Field label={text("Item", "品目")}><select value={movementItem} onChange={e => setMovementItem(e.target.value)} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field><Field label={text("Movement type", "在庫移動種別")}><select value={movementType} onChange={e => setMovementType(e.target.value)} className={inputClass}><option value="material_issue">{movementLabel("material_issue")} (-)</option><option value="production_output">{movementLabel("production_output")} (+)</option><option value="subcontract_out">{movementLabel("subcontract_out")} (-)</option><option value="subcontract_in">{movementLabel("subcontract_in")} (+)</option><option value="sale_shipment">{movementLabel("sale_shipment")} (-)</option><option value="adjustment_in">{movementLabel("adjustment_in")} (+)</option><option value="adjustment_out">{movementLabel("adjustment_out")} (-)</option></select></Field><Field label={text("Positive quantity", "数量（正の値）")}><input type="number" min="0.001" step="0.001" value={movementQty} onChange={e => setMovementQty(number(e.target.value))} className={inputClass} /></Field><Field label={text("Notes", "備考")}><textarea value={movementNotes} onChange={e => setMovementNotes(e.target.value)} className={`${inputClass} min-h-20`} /></Field></div>
         <div className="mt-6 flex justify-end gap-2"><button onClick={() => setMovementOpen(false)} className={outlineButton}>{text("Cancel", "キャンセル")}</button><button disabled={busy || !movementItem || movementQty <= 0} onClick={submitMovement} className="rounded bg-[#1a3458] px-5 py-2 font-700 text-white disabled:opacity-40">{text("Post movement", "在庫移動を登録")}</button></div>
       </div></div>}
+
+      {transferDialog && <div className="popup-backdrop fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 print:hidden" role="dialog" aria-modal="true">
+        <div className="popup-panel w-full max-w-md rounded-lg bg-white p-5 shadow-2xl">
+          <div className="flex items-start gap-3 border-b border-slate-200 pb-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-[#e7f5f4] text-[#0d7377]"><Icon name={transferDialog.mode === "import" ? "upload" : "file-text"} size={20} /></div>
+            <div><h2 className="text-lg font-700 text-[#1a3458]">{transferDialog.mode === "import" ? text("Import Excel file", "Excelファイルをインポート") : transferDialog.template ? text("Download import template", "インポートテンプレートをダウンロード") : text("Export Excel file", "Excelファイルをエクスポート")}</h2><p className="mt-1 text-sm text-slate-500">{transferDialog.mode === "import" ? text("Choose a file, then confirm to validate and import it.", "ファイルを選択し、確認すると内容を検証してインポートします。") : text("The file will be downloaded to your device.", "ファイルを端末にダウンロードします。")}</p></div>
+          </div>
+          <div className="mt-5 rounded border border-slate-200 bg-slate-50 px-3 py-3">
+            <p className="text-xs font-700 text-slate-500">{text("File name", "ファイル名")}</p>
+            <p className="mt-1 break-all font-mono text-sm text-slate-800">{transferDialog.fileName || text("No file selected", "ファイル未選択")}</p>
+            {transferDialog.mode === "import" && <button type="button" onClick={() => fileInput.current?.click()} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-100"><Icon name="upload" size={16} />{text("Choose another file", "ファイルを選択")}</button>}
+          </div>
+          <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setTransferDialog(null)} className={outlineButton}>{text("Cancel", "キャンセル")}</button><button type="button" disabled={busy || (transferDialog.mode === "import" && !transferDialog.file)} onClick={() => void confirmTransfer()} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white disabled:cursor-not-allowed disabled:opacity-40">{transferDialog.mode === "import" ? text("Import file", "インポート") : text("Download", "ダウンロード")}</button></div>
+        </div>
+      </div>}
 
       {printPurchase && <article id="purchase-receipt" className="hidden print:block"><div className="mx-auto max-w-3xl p-10 text-black"><div className="flex items-start justify-between border-b-2 border-black pb-5"><div className="flex items-center gap-4"><img src="/app-logo.png" alt="Kiyometa" className="h-14 w-14 rounded object-cover" /><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="mt-1 text-3xl font-700">{text("Purchase receipt", "仕入伝票")}</h1></div></div><div className="text-right"><p className="font-mono text-lg font-700">{printPurchase.purchaseNo}</p><p>{printPurchase.purchaseDate}</p></div></div><div className="mt-8 grid grid-cols-2 gap-8"><div><p className="text-xs font-700 text-slate-500">{text("Supplier", "仕入先")}</p><p className="mt-1 text-lg font-700">{printPurchase.supplierName}</p></div><div><p className="text-xs font-700 text-slate-500">{text("PIC", "担当者")}</p><p className="mt-1 text-lg">{printPurchase.pic || "-"}</p></div></div><table className="mt-8 w-full border-collapse"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3 text-right">{text("Qty", "数量")}</th><th className="py-3 text-right">{text("Unit price", "単価")}</th><th className="py-3 text-right">{text("Total", "合計")}</th></tr></thead><tbody><tr><td className="py-4">{itemName(printPurchase.itemId)}</td><td className="py-4 text-right">{printPurchase.orderedQty.toLocaleString()}</td><td className="py-4 text-right">{money(printPurchase.unitPrice)}</td><td className="py-4 text-right font-700">{money(printPurchase.orderedQty * printPurchase.unitPrice)}</td></tr></tbody></table><div className="mt-10 border-t border-black pt-4 text-sm"><p>{text("Received quantity:", "入荷数：")} <strong>{printPurchase.receivedQty.toLocaleString()}</strong></p><p>{text("Status:", "状態：")} <strong>{purchaseStatusLabel(printPurchase.status)}</strong></p><p className="mt-3">{text("Notes:", "備考：")} {printPurchase.notes || "-"}</p></div></div></article>}
       <LoadingDialog active={busy} lang={lang} />

@@ -79,10 +79,25 @@ export function allowedTransitions(current: string, materialsIssued: boolean): s
   );
 }
 
-export function transitionRejection(from: string, to: string, materialsIssued: boolean): string | null {
+const JA: Record<string, string> = {
+  "Order request": "発注依頼",
+  Receipt: "受領",
+  "In preparation": "準備中",
+  "Preparation complete": "準備完了",
+  "In production": "製作中",
+  Complete: "完了",
+  Shipped: "出荷済み",
+  Cancelled: "キャンセル",
+};
+
+export function transitionRejection(from: string, to: string, materialsIssued: boolean, lang?: "ja" | "en"): string | null {
   if (canTransition(from, to, materialsIssued)) return null;
-  if (from === "Shipped") return `Order ${from} has shipped and can no longer be reopened.`;
-  if (from === PROGRESS_CANCELLED) return `Order is ${from} and can no longer change status.`;
-  if (from === "Complete" && to !== "Shipped") return "A completed order can only move to Shipped or Cancelled.";
-  return `Cannot move back from ${from} to ${to} because materials have already been issued. Cancel the order instead.`;
+  const ja = lang === "ja";
+  const label = (value: string) => (ja ? JA[value] ?? value : value);
+  if (from === "Shipped") return ja ? `受注は「${label(from)}」済みのため、再度開くことはできません。` : `Order ${label(from)} has shipped and can no longer be reopened.`;
+  if (from === PROGRESS_CANCELLED) return ja ? `受注は「${label(from)}」のため、ステータスを変更できません。` : `Order is ${label(from)} and can no longer change status.`;
+  if (from === "Complete" && to !== "Shipped") return ja ? "完了した受注は「出荷済み」または「キャンセル」にのみ変更できます。" : "A completed order can only move to Shipped or Cancelled.";
+  return ja
+    ? `材料が既に払い出されているため、${label(from)} から ${label(to)} へ戻すことはできません。代わりに受注をキャンセルしてください。`
+    : `Cannot move back from ${label(from)} to ${label(to)} because materials have already been issued. Cancel the order instead.`;
 }

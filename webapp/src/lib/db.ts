@@ -50,6 +50,8 @@ interface OrderRow {
   finish_task: boolean;
   has_contact: boolean;
   completed_tasks: boolean[];
+  preparation_print_status?: "pending" | "completed";
+  preparation_printed_at?: string | null;
   version: number;
   inventory_stock_applied: boolean;
 }
@@ -128,6 +130,8 @@ function orderFromRow(r: OrderRow): OrderRecord {
     finishTask: r.finish_task,
     hasContact: r.has_contact,
     completedTasks: r.completed_tasks ?? [],
+    preparationPrintStatus: r.preparation_print_status ?? "pending",
+    preparationPrintedAt: r.preparation_printed_at ?? undefined,
     version: r.version ?? 1,
     materialsIssued: r.inventory_stock_applied ?? false,
   };
@@ -151,6 +155,7 @@ function orderToRow(o: OrderRecord) {
     finish_task: o.finishTask,
     has_contact: o.hasContact,
     completed_tasks: o.completedTasks ?? [],
+    ...(o.preparationPrintStatus ? { preparation_print_status: o.preparationPrintStatus, preparation_printed_at: o.preparationPrintedAt ?? null } : {}),
   };
 }
 

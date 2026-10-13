@@ -11,12 +11,12 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 function Get-AndroidSdkPath {
-    $candidates = @(
+    $candidates = @(@(
         $env:ANDROID_SDK_ROOT,
         $env:ANDROID_HOME,
         (Join-Path $env:LOCALAPPDATA 'Android\Sdk'),
         'C:\Android'
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
 
     if ($candidates.Count -gt 0) {
         return $candidates[0]

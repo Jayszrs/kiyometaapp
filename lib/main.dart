@@ -1,9 +1,16 @@
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 // The tablet runner maps this emulator-local port to the Vite server on the
 // development PC with `adb reverse`, so this URL does not depend on Wi-Fi IPs.
-const String kServerUrl = 'http://127.0.0.1:5173';
+// Build a production APK with:
+//   flutter build apk --release --dart-define=APP_URL=https://...your-host.../
+const String kServerUrl =
+    String.fromEnvironment('APP_URL', defaultValue: 'http://127.0.0.1:5173');
 
 void main() {
   runApp(const KiyometaApp());
@@ -41,7 +48,7 @@ class _WebViewHomeState extends State<WebViewHome> {
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
+    final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -58,8 +65,74 @@ class _WebViewHomeState extends State<WebViewHome> {
                 'the web server and connect it to the Android emulator.';
           }),
         ),
-      )
-      ..loadRequest(Uri.parse(kServerUrl));
+      );
+
+    // Android WebView has no built-in <input type="file"> handler. Without this
+    // the "Upload document" and "Take photo" buttons in the quotation scan do
+    // nothing. Other platforms (web/Windows) let the host browser handle it.
+    final platform = controller.platform;
+    if (!kIsWeb && platform is AndroidWebViewController) {
+      // File inputs are opened from a file:// URI for the camera. WebView blocks
+      // file:// access by default when targeting API 30+.
+      platform.setAllowFileAccess(true);
+      platform.setAllowContentAccess(true);
+      platform.setOnShowFileSelector(_handleFileSelector);
+    }
+
+    controller.loadRequest(Uri.parse(kServerUrl));
+    _controller = controller;
+  }
+
+  Future<List<String>> _handleFileSelector(FileSelectorParams params) async {
+    try {
+      if (params.isCaptureEnabled) {
+        final XFile? shot = await ImagePicker().pickImage(
+          source: ImageSource.camera,
+          imageQuality: 90,
+        );
+        return shot == null ? const <String>[] : <String>[Uri.file(shot.path).toString()];
+      }
+
+      final extensions = _extensionsFor(params.acceptTypes);
+      if (params.mode == FileSelectorMode.openMultiple) {
+        final files = await FilePicker.pickFiles(
+          type: extensions == null ? FileType.any : FileType.custom,
+          allowedExtensions: extensions,
+        );
+        return files.map((file) => file.uri.toString()).toList();
+      }
+
+      final file = await FilePicker.pickFile(
+        type: extensions == null ? FileType.any : FileType.custom,
+        allowedExtensions: extensions,
+      );
+      return file == null ? const <String>[] : <String>[file.uri.toString()];
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  List<String>? _extensionsFor(List<String> acceptTypes) {
+    if (acceptTypes.isEmpty || acceptTypes.contains('*/*')) {
+      return null;
+    }
+
+    final extensions = <String>{};
+    for (final type in acceptTypes) {
+      final value = type.toLowerCase();
+      if (value == 'application/pdf' || value == '.pdf') {
+        extensions.add('pdf');
+      } else if (value.startsWith('image/')) {
+        extensions.addAll(const ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic']);
+      } else if (value == 'application/msword') {
+        extensions.add('doc');
+      } else if (value ==
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+        extensions.add('docx');
+      }
+    }
+
+    return extensions.isEmpty ? null : extensions.toList();
   }
 
   Future<void> _reload() async {

@@ -2,13 +2,14 @@ import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
 import { fetchAll, fetchProduct, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import { genUUID } from "./lib/uuid";
-import { addDaysJST, dateFromISO, endOfMonthJST, formatLongJST, todayJST } from "./lib/date";
+import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
 import { runOcr, sendOcrLog, type OcrLine } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import UndoButton from "./components/UndoButton";
+import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 import LoadingDialog from "./components/LoadingDialog";
 import {
@@ -66,6 +67,8 @@ export interface OrderRecord {
   finishTask: boolean;
   hasContact: boolean;
   completedTasks?: boolean[];
+  preparationPrintStatus?: "pending" | "completed";
+  preparationPrintedAt?: string;
   // Concurrency and workflow state owned by the database. version increments on
   // every successful write and is sent back as a precondition (see db.ts);
   // materialsIssued mirrors inventory_stock_applied and gates which status
@@ -174,6 +177,12 @@ const ARRANGEMENT_OPTIONS = [
 // 0.1, which meant changing the rate meant finding every copy of the number.
 const TAX_RATE = 0.1;
 
+function displayUnit(unit: string, lang: Lang): string {
+  if (lang !== "ja") return unit;
+  const normalized = unit.trim().toLowerCase();
+  return ({ pcs: "個", pc: "個", piece: "個", pieces: "個", set: "セット", sets: "セット" } as Record<string, string>)[normalized] ?? unit;
+}
+
 // Delete is administrator-only (see useCanDelete). The buttons stay visible but
 // disabled so the reason is discoverable instead of the control vanishing on a
 // page an operator still has to use.
@@ -189,110 +198,110 @@ const ALPHANUM = /^[a-zA-Z0-9\-_ ]*$/;
 const PHONE_RE = /^[0-9\-]*$/;
 const POSTAL_RE = /^\d{3}-\d{4}$/;
 
-function validateOrder(form: OrderRecord, clients: Client[], products: Product[]): FormErrors {
+function validateOrder(form: OrderRecord, clients: Client[], products: Product[], lang: Lang): FormErrors {
   const e: FormErrors = {};
 
-  if (!form.orderDate) e.orderDate = "Order date is required.";
+  if (!form.orderDate) e.orderDate = lang === "ja" ? "受注日が必要です。" : "Order date is required.";
 
   if (!form.deliveryDate) {
-    e.deliveryDate = "Delivery date is required.";
+    e.deliveryDate = lang === "ja" ? "納期が必要です。" : "Delivery date is required.";
   } else if (form.orderDate && form.deliveryDate < form.orderDate) {
-    e.deliveryDate = "Delivery date must be equal to or later than the order date.";
+    e.deliveryDate = lang === "ja" ? "納期は受注日以降にしてください。" : "Delivery date must be equal to or later than the order date.";
   }
 
   if (!form.client) {
-    e.client = "Client is required.";
+    e.client = lang === "ja" ? "取引先が必要です。" : "Client is required.";
   } else if (!clients.some(c => c.name === form.client)) {
-    e.client = "Client must match an existing entry in the Client Master.";
+    e.client = lang === "ja" ? "取引先マスタに存在する取引先を選択してください。" : "Client must match an existing entry in the Client Master.";
   }
 
-  if (form.orderNumber.length > 50) e.orderNumber = "Maximum 50 characters.";
+  if (form.orderNumber.length > 50) e.orderNumber = lang === "ja" ? "最大50文字です。" : "Maximum 50 characters.";
 
   if (!form.productName) {
-    e.productName = "Product name is required.";
+    e.productName = lang === "ja" ? "製品名が必要です。" : "Product name is required.";
   } else if (form.productName.length > 100) {
-    e.productName = "Maximum 100 characters.";
+    e.productName = lang === "ja" ? "最大100文字です。" : "Maximum 100 characters.";
   } else if (!products.some(p => p.productName === form.productName)) {
-    e.productName = "Product must match an existing entry in the Product Master.";
+    e.productName = lang === "ja" ? "製品マスタに存在する製品を選択してください。" : "Product must match an existing entry in the Product Master.";
   }
 
   if (!Number.isInteger(form.quantity) || form.quantity < 1 || form.quantity > 99999)
-    e.quantity = "Must be a whole number between 1 and 99,999.";
+    e.quantity = lang === "ja" ? "1〜99,999 の整数で入力してください。" : "Must be a whole number between 1 and 99,999.";
 
   if (!Number.isInteger(form.orderAmount) || form.orderAmount < 0 || form.orderAmount > 999999999)
-    e.orderAmount = "Must be a whole number from 0 to 999,999,999. No decimals.";
+    e.orderAmount = lang === "ja" ? "0〜999,999,999 の整数で入力してください（小数不可）。" : "Must be a whole number from 0 to 999,999,999. No decimals.";
 
   if (!Number.isInteger(form.requiredManhours) || form.requiredManhours < 0 || form.requiredManhours > 9999)
-    e.requiredManhours = "Must be a whole number from 0 to 9,999.";
+    e.requiredManhours = lang === "ja" ? "0〜9,999 の整数で入力してください。" : "Must be a whole number from 0 to 9,999.";
 
   if (!Number.isInteger(form.workedManhours) || form.workedManhours < 0 || form.workedManhours > 9999)
-    e.workedManhours = "Must be a whole number from 0 to 9,999.";
+    e.workedManhours = lang === "ja" ? "0〜9,999 の整数で入力してください。" : "Must be a whole number from 0 to 9,999.";
   else if (form.workedManhours > form.requiredManhours)
-    e.workedManhours = "Worked man-hours cannot exceed required man-hours.";
+    e.workedManhours = lang === "ja" ? "実働時間は所要時間を超えられません。" : "Worked man-hours cannot exceed required man-hours.";
 
   if (form.orderContact.length > 500)
-    e.orderContact = `Maximum 500 characters (${form.orderContact.length} used).`;
+    e.orderContact = lang === "ja" ? `最大500文字です（現在 ${form.orderContact.length} 文字）。` : `Maximum 500 characters (${form.orderContact.length} used).`;
 
   if (form.productionEndDate && form.orderDate && form.productionEndDate < form.orderDate)
-    e.productionEndDate = "Cannot be earlier than the order date.";
+    e.productionEndDate = lang === "ja" ? "受注日より前にはできません。" : "Cannot be earlier than the order date.";
   else if (form.productionEndDate && form.deliveryDate && form.productionEndDate > form.deliveryDate)
-    e.productionEndDate = "Cannot be later than the delivery date.";
+    e.productionEndDate = lang === "ja" ? "納期より後にはできません。" : "Cannot be later than the delivery date.";
 
   return e;
 }
 
-function validateClient(form: Client, allClients: Client[], isNew: boolean): FormErrors {
+function validateClient(form: Client, allClients: Client[], isNew: boolean, lang: Lang): FormErrors {
   const e: FormErrors = {};
 
   if (!form.name) {
-    e.name = "Client name is required.";
+    e.name = lang === "ja" ? "取引先名が必要です。" : "Client name is required.";
   } else if (form.name.length > 100) {
-    e.name = "Maximum 100 characters.";
+    e.name = lang === "ja" ? "最大100文字です。" : "Maximum 100 characters.";
   } else if (isNew && allClients.some(c => c.name === form.name)) {
-    e.name = "Client name must be unique. This name already exists.";
+    e.name = lang === "ja" ? "この取引先名は既に存在します。重複しない名前にしてください。" : "Client name must be unique. This name already exists.";
   }
 
-  if (form.phone.length > 20) e.phone = "Maximum 20 characters.";
-  else if (form.phone && !PHONE_RE.test(form.phone)) e.phone = "Only digits and hyphens are allowed.";
+  if (form.phone.length > 20) e.phone = lang === "ja" ? "最大20文字です。" : "Maximum 20 characters.";
+  else if (form.phone && !PHONE_RE.test(form.phone)) e.phone = lang === "ja" ? "数字とハイフンのみ入力できます。" : "Only digits and hyphens are allowed.";
 
   if (form.postalCode && !POSTAL_RE.test(form.postalCode))
-    e.postalCode = "Format must be: 3 digits, hyphen, 4 digits (e.g. 393-0011).";
+    e.postalCode = lang === "ja" ? "形式は「3桁-4桁」（例: 393-0011）としてください。" : "Format must be: 3 digits, hyphen, 4 digits (e.g. 393-0011).";
 
-  if (form.address.length > 255) e.address = "Maximum 255 characters.";
+  if (form.address.length > 255) e.address = lang === "ja" ? "最大255文字です。" : "Maximum 255 characters.";
 
   return e;
 }
 
-function validateProduct(form: Product, allProducts: Product[], isNew: boolean): FormErrors {
+function validateProduct(form: Product, allProducts: Product[], isNew: boolean, lang: Lang): FormErrors {
   const e: FormErrors = {};
 
   if (!form.productName) {
-    e.productName = "Product name is required.";
+    e.productName = lang === "ja" ? "製品名が必要です。" : "Product name is required.";
   } else if (form.productName.length > 100) {
-    e.productName = "Maximum 100 characters.";
+    e.productName = lang === "ja" ? "最大100文字です。" : "Maximum 100 characters.";
   }
 
   if (!form.productNumber) {
-    e.productNumber = "Product number is required.";
+    e.productNumber = lang === "ja" ? "製品番号が必要です。" : "Product number is required.";
   } else if (form.productNumber.length > 50) {
-    e.productNumber = "Maximum 50 characters.";
+    e.productNumber = lang === "ja" ? "最大50文字です。" : "Maximum 50 characters.";
   } else if (!ALPHANUM.test(form.productNumber)) {
-    e.productNumber = "Only letters, numbers, hyphens, and underscores.";
+    e.productNumber = lang === "ja" ? "英数字、ハイフン、アンダースコアのみ使用できます。" : "Only letters, numbers, hyphens, and underscores.";
   } else if (isNew && allProducts.some(p => p.clientName === form.clientName && p.productNumber === form.productNumber)) {
-    e.productNumber = "Product number must be unique per client.";
+    e.productNumber = lang === "ja" ? "製品番号は取引先ごとに一意にする必要があります。" : "Product number must be unique per client.";
   }
 
   const up = form.unitPrice === "" ? NaN : Number(form.unitPrice);
   if (isNaN(up) || !Number.isInteger(up) || up < 0 || up > 99999999)
-    e.unitPrice = "Must be a whole number from 0 to 99,999,999.";
+    e.unitPrice = lang === "ja" ? "0〜99,999,999 の整数で入力してください。" : "Must be a whole number from 0 to 99,999,999.";
 
   form.tasks.forEach((t, i) => {
     if (t.content.length > 100)
-      e[`task_content_${i}`] = `Row ${i + 1}: maximum 100 characters.`;
+      e[`task_content_${i}`] = lang === "ja" ? `行 ${i + 1}: 最大100文字です。` : `Row ${i + 1}: maximum 100 characters.`;
     if (t.time !== "") {
       const n = Number(t.time);
       if (isNaN(n) || n < 0 || n > 999.9)
-        e[`task_time_${i}`] = `Row ${i + 1}: must be 0.0 to 999.9.`;
+        e[`task_time_${i}`] = lang === "ja" ? `行 ${i + 1}: 0.0〜999.9 の数値で入力してください。` : `Row ${i + 1}: must be 0.0 to 999.9.`;
     }
   });
 
@@ -1063,6 +1072,7 @@ const LABELS = {
   toLabel:            { ja: "至",              en: "To" },
   clientSection:      { ja: "取引先",           en: "Client" },
   statusSection:      { ja: "状態",             en: "Status" },
+  selectOrders:       { ja: "対象注文",          en: "Orders to include" },
   dlvPrefix:          { ja: "納",              en: "Dlv" },
   orderNoPrefix:      { ja: "注文",             en: "Order No." },
   partNoPrefix:       { ja: "製番",             en: "Part No." },
@@ -1282,6 +1292,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   lang: Lang; setLang: (l: Lang) => void;
 }) {
   const canDelete = useCanDelete();
+  const dialog = useDialog();
   const newId = () => genUUID();
 
   const blankForm = (): OrderRecord => ({
@@ -1369,7 +1380,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const handleSave = async () => {
     const cleaned = cleanOrder(form);
     setForm(cleaned);
-    const errs = validateOrder(cleaned, clients, products);
+    const errs = validateOrder(cleaned, clients, products, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const record = isNew ? { ...cleaned, id: newId() } : cleaned;
     try {
@@ -1381,19 +1392,19 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       setSelectedId(saved.id);
       setIsNew(false);
     } catch (err) {
-      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     setErrors({});
   };
 
   const handleDelete = async () => {
-    if (!confirm("Delete this order? You can recover it with Undo.")) return;
+    if (!(await dialog.confirm("Delete this order? You can recover it with Undo.", { tone: "danger" }))) return;
     const deletedId = form.id;
     try {
       await deleteOrder(deletedId);
     } catch (err) {
-      alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = orders.filter(o => o.id !== deletedId);
@@ -1838,6 +1849,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   billingOrderIds: string[]; setBillingOrderIds: React.Dispatch<React.SetStateAction<string[]>>;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
+  const dialog = useDialog();
   const [fromDate, setFromDate] = useState(addDaysJST(today, -30));
   const [toDate, setToDate] = useState(endOfMonthJST(today));
   const [clientFilter, setClientFilter] = useState<Record<string, boolean>>({});
@@ -1885,7 +1897,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
       setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
       setPanelForm(saved);
     } catch (err) {
-      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -1893,7 +1905,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     try {
       await deleteOrder(id);
     } catch (err) {
-      alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
       return;
     }
     setOrders(prev => prev.filter(o => o.id !== id));
@@ -1933,6 +1945,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     });
   };
 
+  const selectedOrders = useMemo(
+    () => orders.filter(o => selectedBillingIds.has(o.id)).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)),
+    [orders, selectedBillingIds],
+  );
+
   // Excel and CSV both treat a leading =, +, - or @ as a formula, so a product
   // named "=SUM(A1)" executes when the file is opened. Prefixing with an
   // apostrophe keeps the text and neutralises the trigger. The original version
@@ -1943,10 +1960,13 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     return `"${text.replace(/"/g, '""')}"`;
   };
   const downloadCsv = () => {
-    const headers = ["Order date", "Delivery date", "Client", "Order number", "Product", "Quantity", "Amount", "Progress"];
-    const lines = [headers, ...filtered.map(order => [
-      order.orderDate, order.deliveryDate, order.client, order.orderNumber,
-      order.productName, order.quantity, order.orderAmount, order.progress,
+    const headers = lang === "ja"
+      ? ["受注ID", "取引先名", "製品番号", "数量", "単価", "合計金額", "納期", "取引状況"]
+      : ["Order ID", "Client Name", "Product Number", "Quantity", "Unit Price", "Total Price", "Delivery Date", "Transaction Status"];
+    const lines = [headers, ...selectedOrders.map(order => [
+      order.id, order.client, productInfo(order)?.productNumber ?? "-", order.quantity,
+      order.quantity > 0 ? Math.round(order.orderAmount / order.quantity) : 0,
+      order.orderAmount, order.deliveryDate, lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress,
     ])].map(row => row.map(csvCell).join(","));
     const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1957,17 +1977,36 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     URL.revokeObjectURL(url);
   };
 
-  const printPreparation = () => {
+  const printPreparation = async () => {
     const popup = window.open("", "_blank", "width=960,height=720");
     if (!popup) {
-      alert(lang === "ja" ? "印刷画面がブロックされました。このアプリのポップアップを許可して、もう一度お試しください。" : "The print window was blocked. Allow pop-ups for this application and try again.");
+      dialog.alert(lang === "ja" ? "印刷画面がブロックされました。このアプリのポップアップを許可して、もう一度お試しください。" : "The print window was blocked. Allow pop-ups for this application and try again.");
       return;
     }
     popup.opener = null;
     const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
-    const rows = filtered.map(order => `<tr><td>${escape(order.deliveryDate)}</td><td>${escape(order.orderNumber)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="num">${escape(order.quantity)}</td><td>${escape(order.progress)}</td></tr>`).join("");
-    popup.document.write(`<!doctype html><html><head><title>Production preparation</title><style>body{font:14px Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px}p{color:#64748b;margin:0 0 24px}table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #cbd5e1;padding:10px 8px;text-align:left}th{background:#f1f5f9;font-size:12px}.num{text-align:right}@media print{body{padding:0}}</style></head><body><h1>Production Preparation List</h1><p>${escape(fromDate)} to ${escape(toDate)} · ${filtered.length} order(s)</p><table><thead><tr><th>Delivery</th><th>Order no.</th><th>Client</th><th>Product</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
+    const details = await Promise.all(selectedOrders.map(async order => {
+      const base = productInfo(order);
+      if (!base || base.tasks.length > 0) return base;
+      try { return await fetchProduct(base.id); } catch { return base; }
+    }));
+    const productByOrderId = new Map(selectedOrders.map((order, index) => [order.id, details[index]]));
+    const labels = lang === "ja"
+      ? { title: "事前準備リスト", id: "受注ID", client: "取引先名", product: "製品名", number: "製品番号", qty: "数量", tasks: "作業工程", status: "準備状況" }
+      : { title: "Production Preparation List", id: "Order ID", client: "Client Name", product: "Product Name", number: "Product Number", qty: "Quantity", tasks: "Process List", status: "Preparation Status" };
+    const rows = selectedOrders.map(order => {
+      const product = productByOrderId.get(order.id);
+      const tasks = product?.tasks.filter(task => task.content.trim()).map(task => `${task.content}${task.time === "" ? "" : ` (${task.time}${lang === "ja" ? "分" : " min"})`}`).join("、") || "-";
+      return `<tr><td class="mono">${escape(order.id)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="mono">${escape(product?.productNumber ?? "-")}</td><td class="num">${escape(order.quantity)}</td><td>${escape(tasks)}</td><td>${escape(lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress)}</td></tr>`;
+    }).join("");
+    popup.document.write(`<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${escape(labels.title)}</title><style>body{font:14px "Noto Sans JP",Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px;color:#1a3458}p{color:#64748b;margin:0 0 24px}.meta{display:flex;justify-content:space-between;border-bottom:2px solid #1a3458;padding-bottom:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ebbd0;padding:9px 8px;text-align:left;vertical-align:top}th{background:#dbeef8;font-size:12px;color:#1a3458}.num{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}@media print{body{padding:0}thead{display:table-header-group}}</style></head><body><div class="meta"><div><h1>${escape(labels.title)}</h1><p>${escape(fromDate)} ～ ${escape(toDate)} ・ ${selectedOrders.length}${lang === "ja" ? "件" : " order(s)"}</p></div><div>${escape(new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US"))}</div></div><table><thead><tr><th>${escape(labels.id)}</th><th>${escape(labels.client)}</th><th>${escape(labels.product)}</th><th>${escape(labels.number)}</th><th class="num">${escape(labels.qty)}</th><th>${escape(labels.tasks)}</th><th>${escape(labels.status)}</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
     popup.document.close();
+    try {
+      const updated = await Promise.all(selectedOrders.map(order => upsertOrder({ ...order, preparationPrintStatus: "completed", preparationPrintedAt: new Date().toISOString() })));
+      setOrders(previous => previous.map(order => updated.find(next => next.id === order.id) ?? order));
+    } catch (error) {
+      dialog.alert(lang === "ja" ? `準備印刷の記録を保存できませんでした。${error instanceof Error ? error.message : ""}` : `The preparation print was created, but its completion could not be saved. ${error instanceof Error ? error.message : ""}`);
+    }
   };
 
   const productInfo = (o: OrderRecord) =>
@@ -2137,8 +2176,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
                 <FieldBox label={t("progressStatus", lang)}>
                   <select value={panelForm.progress} onChange={e => {
                     const next = e.target.value;
-                    const refusal = transitionRejection(panelForm.progress, next, !!panelForm.materialsIssued);
-                    if (refusal) { alert(refusal); return; }
+                    const refusal = transitionRejection(panelForm.progress, next, !!panelForm.materialsIssued, lang);
+                    if (refusal) { dialog.alert(refusal); return; }
                     setPanelForm(prev => ({ ...prev, progress: next }));
                   }}
                     className="w-full px-3 py-2 text-base border border-slate-300 rounded-sm bg-white focus:outline-none focus:border-[#1a3458] focus:ring-2 focus:border-[#1a3458]/20 transition-colors">
@@ -2188,28 +2227,33 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
         </aside>
       </div>
 
-      <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 lg:flex lg:items-center lg:gap-3 lg:px-5">
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
-        <span className="col-span-2 flex items-center justify-center gap-2 min-[390px]:col-span-3 lg:col-span-1 lg:flex-none">
-          <label className="flex items-center gap-1.5 text-xs text-blue-100 cursor-pointer whitespace-nowrap">
-            <input type="checkbox" checked={allBillableSelected} onChange={toggleAllBillable}
-              className="w-4 h-4 accent-[#0d7377] cursor-pointer" />
-            {lang === "ja" ? "全選択" : "Select all"}
-          </label>
-          <span className="text-xs text-blue-200 font-mono whitespace-nowrap">
-            {lang === "ja" ? `${billingOrderIds.length} 件選択` : `${billingOrderIds.length} selected`}
-          </span>
-          {billingOrderIds.length > 0 && (
-            <button type="button" onClick={() => setBillingOrderIds([])}
-              className="text-xs text-blue-200 underline hover:text-white cursor-pointer whitespace-nowrap">
-              {lang === "ja" ? "クリア" : "Clear"}
-            </button>
-          )}
-        </span>
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
-        <Btn variant="action" size="md" className="justify-center whitespace-nowrap lg:flex-1" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
-        <Btn variant="ghost" size="md" className="col-span-2 justify-center whitespace-nowrap min-[390px]:col-span-1 lg:flex-1" onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+      <footer className="shrink-0 bg-[#1a3458] px-3 py-3 lg:px-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-white/15 pb-2">
+          <span className="text-xs font-700 text-blue-100">{t("selectOrders", lang)}</span>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-blue-100 cursor-pointer whitespace-nowrap">
+              <input type="checkbox" checked={allBillableSelected} onChange={toggleAllBillable}
+                className="w-4 h-4 accent-[#0d7377] cursor-pointer" />
+              {lang === "ja" ? "全選択" : "Select all"}
+            </label>
+            <span className="text-xs text-blue-200 font-mono whitespace-nowrap">
+              {lang === "ja" ? `${billingOrderIds.length} 件選択` : `${billingOrderIds.length} selected`}
+            </span>
+            {billingOrderIds.length > 0 && (
+              <button type="button" onClick={() => setBillingOrderIds([])}
+                className="text-xs text-blue-200 underline hover:text-white cursor-pointer whitespace-nowrap">
+                {lang === "ja" ? "クリア" : "Clear"}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
+          <Btn variant="action" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+        </div>
       </footer>
     </AppShell>
   );
@@ -2227,6 +2271,8 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   // real current day, and the deadline is a month out unless typed.
   const [billingDate, setBillingDate] = useState(todayJST());
   const [deadlineDate, setDeadlineDate] = useState(addDaysJST(todayJST(), 30));
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceNote, setInvoiceNote] = useState("");
   const [dateField, setDateField] = useState<"billing" | "deadline" | null>(null);
   const [calCursor, setCalCursor] = useState(() => {
     const d = dateFromISO(todayJST());
@@ -2330,6 +2376,10 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
               </div>
               <div className="mt-3 space-y-2">
                 <div>
+                  <p className="text-xs font-600 text-slate-500 mb-1">{lang === "ja" ? "請求書番号" : "Invoice No."}</p>
+                  <TextInput value={invoiceNumber || `INV-${billingDate.replace(/-/g, "")}-${clientName ? clientName.slice(0, 3).toUpperCase() : "000"}`} onChange={setInvoiceNumber} />
+                </div>
+                <div>
                   <p className="text-xs font-600 text-slate-500 mb-1">{t("billingDateLabel", lang)}</p>
                   <button type="button" onClick={() => openCalendar("billing")}
                     className="w-full flex items-center justify-between px-3 py-1.5 text-base bg-white border border-slate-300 rounded-sm cursor-pointer hover:border-[#1a3458] transition-colors">
@@ -2416,6 +2466,10 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
           </table>
 
           <p className="text-center text-xs text-slate-300 mt-8">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</p>
+          <div className="mt-6 border-t border-slate-200 pt-3">
+            <label className="text-xs font-600 text-slate-500">{lang === "ja" ? "請求書発行メモ" : "Invoice issue note"}</label>
+            <textarea value={invoiceNote} onChange={event => setInvoiceNote(event.target.value)} rows={2} placeholder={lang === "ja" ? "備考を入力" : "Add a note"} className="mt-1 w-full resize-none rounded-sm border border-slate-300 px-3 py-2 text-sm" />
+          </div>
         </div>
       </div>
     </AppShell>
@@ -2432,6 +2486,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const canDelete = useCanDelete();
+  const dialog = useDialog();
   const isScanRouted = scanRouting.stage === "need-client" && scanRouting.data !== null;
   const sd = scanRouting.data;
 
@@ -2460,7 +2515,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   const handleSave = async () => {
     const cleaned = cleanClient(form);
     setForm(cleaned);
-    const errs = validateClient(cleaned, clients, isNew);
+    const errs = validateClient(cleaned, clients, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const candidate = isNew ? { ...cleaned, id: genUUID() } : cleaned;
     let saved: Client;
@@ -2469,7 +2524,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
       saved = await upsertClient(candidate);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      alert(lang === "ja" ? `取引先の保存に失敗しました: ${message}` : `Failed to save client: ${message}`);
+      dialog.alert(lang === "ja" ? `取引先の保存に失敗しました: ${message}` : `Failed to save client: ${message}`);
       return;
     }
 
@@ -2511,12 +2566,12 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   };
 
   const handleDelete = async () => {
-    if (isNew || !confirm("Delete this client? You can recover it with Undo.")) return;
+    if (isNew || !(await dialog.confirm("Delete this client? You can recover it with Undo.", { tone: "danger" }))) return;
     const deletedId = form.id;
     try {
       await deleteClient(deletedId);
     } catch (err) {
-      alert(lang === "ja" ? `取引先の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete client: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `取引先の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete client: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = clients.filter(client => client.id !== deletedId);
@@ -2534,7 +2589,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   return (
     <AppShell onNavigate={onNavigate} title={t("clientMaster", lang)} activePage="client-master" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
-        <ScanBanner message={`Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
+        <ScanBanner message={lang === "ja" ? `取引先「${sd?.client}」が取引先マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
       <div className="responsive-workspace flex flex-1 overflow-hidden">
         <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
@@ -2585,7 +2640,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
                 <p className="text-xs text-slate-400 mt-0.5 text-right">{form.name.length}/100</p>
               </FieldBox>
               <FieldBox label={t("phoneNumber", lang)} error={errors.phone}>
-                <TextInput value={form.phone} onChange={sf("phone")} hasError={!!errors.phone} maxLength={20} placeholder="e.g. 0266-28-0105" />
+                <TextInput value={form.phone} onChange={sf("phone")} hasError={!!errors.phone} maxLength={20} placeholder={lang === "ja" ? "例: 0266-28-0105" : "e.g. 0266-28-0105"} />
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "数字とハイフンのみ、最大20文字" : "Digits and hyphens only, max 20 characters"}</p>
               </FieldBox>
               <FieldBox label={t("emailAddress", lang)}>
@@ -2593,8 +2648,8 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
               </FieldBox>
               <FieldBox label={t("postalCodeLabel", lang)} error={errors.postalCode}>
                 <div className="flex gap-2">
-                  <TextInput value={form.postalCode} onChange={sf("postalCode")} hasError={!!errors.postalCode} placeholder="e.g. 393-0011" />
-                  <Btn variant="outline" size="sm" onClick={handlePostalSearch} ariaLabel="Find address from postal code"><Icon name="search" size={14} /></Btn>
+                  <TextInput value={form.postalCode} onChange={sf("postalCode")} hasError={!!errors.postalCode} placeholder={lang === "ja" ? "例: 393-0011" : "e.g. 393-0011"} />
+                  <Btn variant="outline" size="sm" onClick={handlePostalSearch} ariaLabel={lang === "ja" ? "郵便番号から住所を検索" : "Find address from postal code"}><Icon name="search" size={14} /></Btn>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "形式: 3桁-4桁" : "Format: 3 digits, hyphen, 4 digits"}</p>
               </FieldBox>
@@ -2629,6 +2684,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const canDelete = useCanDelete();
+  const dialog = useDialog();
   const isScanRouted = scanRouting.stage === "need-product" && scanRouting.data !== null;
   const sd = scanRouting.data;
 
@@ -2770,7 +2826,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   const removeMaterial = async (row: BomItem) => {
-    if (!confirm(`Remove ${row.bomNo} from this product? You can recover it with Undo.`)) return;
+    if (!(await dialog.confirm(`Remove ${row.bomNo} from this product? You can recover it with Undo.`, { tone: "danger" }))) return;
     setMaterialBusy(true);
     setMaterialError("");
     try {
@@ -2856,7 +2912,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const handleSave = async () => {
     const cleaned = cleanProduct(form);
     setForm(cleaned);
-    const errs = validateProduct(cleaned, products, isNew);
+    const errs = validateProduct(cleaned, products, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const record = isNew ? { ...cleaned, id: genUUID() } : cleaned;
 
@@ -2874,7 +2930,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setErrors({});
       setDirty(false);
     } catch (err) {
-      alert(lang === "ja" ? `製品の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save product: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `製品の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save product: ${err instanceof Error ? err.message : err}`);
       return;
     }
 
@@ -2886,12 +2942,12 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   const handleDelete = async () => {
-    if (isNew || !confirm("Delete this product? You can recover it with Undo.")) return;
+    if (isNew || !(await dialog.confirm("Delete this product? You can recover it with Undo.", { tone: "danger" }))) return;
     const deletedId = form.id;
     try {
       await deleteProduct(deletedId);
     } catch (err) {
-      alert(lang === "ja" ? `製品の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete product: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete product: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const rest = products.filter(product => product.id !== deletedId);
@@ -2909,7 +2965,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   return (
     <AppShell onNavigate={onNavigate} title={t("productMaster", lang)} activePage="product-master" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       {isScanRouted && (
-        <ScanBanner message={`Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
+        <ScanBanner message={lang === "ja" ? `製品「${sd?.productName}」(${sd?.productNumber}) が製品マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
       <div className="responsive-workspace flex flex-1 overflow-hidden">
         <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
@@ -2963,7 +3019,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                 <p className="text-xs text-slate-400 mt-0.5 text-right">{form.productName.length}/100</p>
               </FieldBox>
               <FieldBox label={t("productNumberLabel", lang)} error={errors.productNumber}>
-                <TextInput value={form.productNumber} onChange={sf("productNumber")} hasError={!!errors.productNumber} maxLength={50} placeholder="e.g. NHD-F1772-11" />
+                <TextInput value={form.productNumber} onChange={sf("productNumber")} hasError={!!errors.productNumber} maxLength={50} placeholder={lang === "ja" ? "例: NHD-F1772-11" : "e.g. NHD-F1772-11"} />
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "英数字・取引先ごとに一意・最大50文字" : "Alphanumeric, unique per client, max 50 characters"}</p>
               </FieldBox>
               <FieldBox label={t("unitPriceYen", lang)} error={errors.unitPrice}>
@@ -3044,10 +3100,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h3 className="font-700 text-[#1a3458]">Materials used by this product (BOM)</h3>
-                  <p className="mt-0.5 text-sm text-slate-500">Stock is deducted automatically when an order enters In production.</p>
+                  <h3 className="font-700 text-[#1a3458]">{lang === "ja" ? "この製品の使用材料 (BOM)" : "Materials used by this product (BOM)"}</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">{lang === "ja" ? "受注が「製作中」に入ると、在庫が自動的に減算されます。" : "Stock is deducted automatically when an order enters In production."}</p>
                 </div>
-                <button type="button" onClick={() => onNavigate("inventory")} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-100">Open inventory</button>
+                <button type="button" onClick={() => onNavigate("inventory")} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-100">{lang === "ja" ? "在庫管理を開く" : "Open inventory"}</button>
               </div>
 
               {materialError && <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{materialError}</div>}
@@ -3058,7 +3114,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                   <select value={materialItemId} disabled={isNew || materialBusy} onChange={event => setMaterialItemId(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-base disabled:bg-slate-100">
                     <option value="">{lang === "ja" ? "材料 / 部品を選択" : "Select material / component"}</option>
                     {availableMaterialItems.map(item => (
-                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · {lang === "ja" ? "在庫" : "stock"} {item.availableQty.toLocaleString()} {item.unit}</option>
+                      <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName} · {lang === "ja" ? "在庫" : "stock"} {item.availableQty.toLocaleString()} {displayUnit(item.unit, lang)}</option>
                     ))}
                   </select>
                 </label>
@@ -3074,27 +3130,45 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               ) : productMaterials.length === 0 ? (
                 <p className="p-4 text-sm text-amber-700">{lang === "ja" ? "材料が登録されていません。BOMを追加するまで、この製品は製作工程に進めません。" : "No materials configured. This product cannot enter production until its BOM is added."}</p>
               ) : (
-                <div className="divide-y divide-slate-100">
-                  {productMaterials.map(row => {
-                    const item = inventoryById(row.inventoryItemId);
-                    const empty = (item?.availableQty ?? 0) <= 0;
-                    const low = !empty && Boolean(item?.needsReorder);
-                    return (
-                      <div key={row.id} className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center ${empty ? "bg-red-50" : low ? "bg-amber-50" : ""}`}>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-700 text-slate-800">{item?.itemName ?? "Unknown material"}</p>
-                          <p className="font-mono text-xs text-slate-500">{item?.itemCode ?? row.bomNo} · {row.bomNo}</p>
+                <>
+                  <div className="hidden border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-600 text-slate-500 md:grid md:grid-cols-[minmax(0,1fr)_7rem_8rem_8.5rem_7.5rem]">
+                    <span>{lang === "ja" ? "材料 / 部品" : "Material"}</span>
+                    <span className="border-l border-slate-200 pl-4">{lang === "ja" ? "製品あたり" : "Per unit"}</span>
+                    <span className="border-l border-slate-200 pl-4">{lang === "ja" ? "在庫数" : "Available"}</span>
+                    <span className="border-l border-slate-200 pl-4">{lang === "ja" ? "状態" : "Status"}</span>
+                    <span className="border-l border-slate-200 pl-4 text-right">{lang === "ja" ? "操作" : "Action"}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {productMaterials.map(row => {
+                      const item = inventoryById(row.inventoryItemId);
+                      const empty = (item?.availableQty ?? 0) <= 0;
+                      const low = !empty && Boolean(item?.needsReorder);
+                      const cells = `md:border-l md:border-slate-200 md:px-4 md:py-2`;
+                      return (
+                        <div key={row.id} className={`grid min-h-[4.5rem] grid-cols-2 gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_7rem_8rem_8.5rem_7.5rem] md:items-center md:gap-0 ${empty ? "bg-red-50" : low ? "bg-amber-50" : ""}`}>
+                          <div className="col-span-2 min-w-0 md:col-span-1">
+                            <p className="font-700 text-slate-800">{item?.itemName ?? (lang === "ja" ? "不明な材料" : "Unknown material")}</p>
+                            <p className="font-mono text-xs text-slate-500">{item?.itemCode ?? row.bomNo} · {row.bomNo}</p>
+                          </div>
+                          <div className={`${cells} md:py-1`}>
+                            <p className="text-xs font-600 text-slate-400 md:hidden">{lang === "ja" ? "製品あたり" : "Per unit"}</p>
+                            <p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p>
+                          </div>
+                          <div className={`${cells} md:py-1`}>
+                            <p className="text-xs font-600 text-slate-400 md:hidden">{lang === "ja" ? "在庫数" : "Available"}</p>
+                            <p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p>
+                          </div>
+                          <div className={`${cells} md:py-1`}>
+                            <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? (lang === "ja" ? "在庫切れ" : "Out of stock") : low ? (lang === "ja" ? "在庫わずか" : "Low stock") : (lang === "ja" ? "在庫あり" : "Ready")}</span>
+                          </div>
+                          <div className={`${cells} flex items-center md:justify-end md:py-1`}>
+                            <button type="button" disabled={materialBusy} onClick={() => void removeMaterial(row)} className="rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 hover:bg-red-50 disabled:opacity-40">{lang === "ja" ? "削除" : "Remove"}</button>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-sm sm:flex sm:items-center sm:gap-7">
-                          <div><p className="text-xs font-600 text-slate-400">Per unit</p><p className="font-mono font-700">{row.quantityPerUnit.toLocaleString()} {item?.unit ?? ""}</p></div>
-                          <div><p className="text-xs font-600 text-slate-400">Available</p><p className={`font-mono font-700 ${empty ? "text-red-700" : low ? "text-amber-700" : "text-emerald-700"}`}>{item?.availableQty.toLocaleString() ?? "0"} {item?.unit ?? ""}</p></div>
-                        </div>
-                        <span className={`rounded-full px-2.5 py-1 text-center text-xs font-700 ${empty ? "bg-red-200 text-red-800" : low ? "bg-amber-200 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{empty ? "Out of stock" : low ? "Low stock" : "Ready"}</span>
-                        <button type="button" disabled={materialBusy} onClick={() => void removeMaterial(row)} className="rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </section>
 
@@ -3177,12 +3251,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
 // ---- Page 6: Delivery slip ----
 
-function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }: {
-  mode: DeliverySlipMode; orders: OrderRecord[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
+function DeliverySlipPage({ mode, orders, clients, products, orderIds, lang, setLang, onNavigate }: {
+  mode: DeliverySlipMode; orders: OrderRecord[]; clients: Client[]; products: Product[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const [inCharge, setInCharge] = useState("");
   const [conditions, setConditions] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
+  const [actualDeliveryDate, setActualDeliveryDate] = useState(todayJST());
+  const [deliveryNumber, setDeliveryNumber] = useState("");
 
   // Same defect as the invoice: orders.slice(3, 4) / slice(3, 5) shipped a
   // fixed pair of rows regardless of what was actually ticked, so the slip
@@ -3196,11 +3272,16 @@ function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }:
     () => (mode === "single" ? selected.slice(0, 1) : selected),
     [mode, selected],
   );
+  const firstClient = clients.find(client => client.name === items[0]?.client);
+  const productByKey = useMemo(() => new Map(products.map(product => [`${product.clientName}|${product.productName}`, product])), [products]);
+  const deliveryNo = deliveryNumber || `${mode === "single" ? "納品" : "出荷バッチ"}-${todayJST().replace(/-/g, "")}-${items[0]?.orderNumber || "未採番"}`;
+  const totalQuantity = items.reduce((sum, order) => sum + order.quantity, 0);
+  const clientSummary = Array.from(new Set(items.map(order => order.client))).join("、") || "-";
+  const productSummary = Array.from(new Set(items.map(order => order.productName))).join("、") || "-";
   const total = items.reduce((s, o) => s + o.orderAmount, 0);
   const tax = Math.round(total * TAX_RATE);
   // The delivery date is the day the document is printed, in office time, so
   // it follows the JST calendar day rather than the viewer's timezone.
-  const todayStr = formatLongJST(new Date(), lang);
   const ph = {
     inCharge: lang === "ja" ? "氏名" : "Name",
     conditions: lang === "ja" ? "条件" : "Conditions",
@@ -3217,7 +3298,24 @@ function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }:
       <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
         <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
-          <p className="text-sm text-slate-500 mb-6"><span className="font-600 text-slate-600">{t("deliveryDateLabel", lang)}:</span><span className="ml-2 font-mono">{todayStr}</span></p>
+          <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FieldBox label={lang === "ja" ? (mode === "single" ? "納品書番号" : "出荷バッチ番号") : (mode === "single" ? "Delivery Slip No." : "Shipment Batch No.")}><TextInput value={deliveryNo} onChange={setDeliveryNumber} /></FieldBox>
+            <FieldBox label={lang === "ja" ? "実際の納品日" : "Actual delivery date"}><TextInput type="date" value={actualDeliveryDate} onChange={setActualDeliveryDate} /></FieldBox>
+          </div>
+          {mode === "single" ? (
+            <div className="mb-6 grid grid-cols-1 gap-3 rounded-sm border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "取引先" : "Client"}</p><p className="font-700">{firstClient?.name || items[0]?.client || "-"}</p></div>
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "電話番号" : "Phone"}</p><p className="font-mono">{firstClient?.phone || "-"}</p></div>
+              <div className="sm:col-span-2"><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "住所" : "Address"}</p><p>{firstClient?.address || "-"}</p></div>
+            </div>
+          ) : (
+            <div className="mb-6 grid grid-cols-2 gap-3 rounded-sm border border-slate-200 bg-slate-50 p-3 text-sm sm:grid-cols-4">
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "取引先" : "Clients"}</p><p className="font-700">{clientSummary}</p></div>
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "製品概要" : "Products"}</p><p className="font-700">{productSummary}</p></div>
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "合計数量" : "Total quantity"}</p><p className="font-mono font-700">{totalQuantity}</p></div>
+              <div><p className="text-xs font-600 text-slate-500">{lang === "ja" ? "納品先" : "Destinations"}</p><p>{Array.from(new Set(items.map(order => clients.find(client => client.name === order.client)?.address || "-"))).join(" / ")}</p></div>
+            </div>
+          )}
           {items.length === 0 ? (
             <div className="mb-6 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               {lang === "ja"
@@ -3235,10 +3333,10 @@ function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }:
               <tr className="border-b-2 border-slate-200">
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("orderNoLabel", lang)}</th>
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("productNameLabel", lang)}</th>
+                <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("productNumberLabel", lang)}</th>
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{t("deliveryLabel", lang)}</th>
                 <th className="px-3 py-2 text-sm font-600 text-slate-500 text-right">{t("qtyLabel", lang)}</th>
-                <th className="px-3 py-2 text-sm font-600 text-slate-500 text-right">{t("unitPriceLabel", lang)}</th>
-                <th className="px-3 py-2 text-sm font-600 text-slate-500 text-right">{t("invoiceAmount", lang)}</th>
+                <th className="px-3 py-2 text-sm font-600 text-slate-500 text-left">{lang === "ja" ? "備考" : "Notes"}</th>
               </tr>
             </thead>
             <tbody>
@@ -3246,10 +3344,10 @@ function DeliverySlipPage({ mode, orders, orderIds, lang, setLang, onNavigate }:
                 <tr key={o.id} className="border-b border-slate-100">
                   <td className="px-3 py-2.5 font-mono text-sm text-slate-600">{o.orderNumber}</td>
                   <td className="px-3 py-2.5 text-slate-800">{o.productName}</td>
+                  <td className="px-3 py-2.5 font-mono text-sm text-slate-600">{productByKey.get(`${o.client}|${o.productName}`)?.productNumber || "-"}</td>
                   <td className="px-3 py-2.5 font-mono text-sm text-slate-600">{o.deliveryDate}</td>
                   <td className="px-3 py-2.5 text-right text-slate-700">{o.quantity}</td>
-                  <td className="px-3 py-2.5 text-right font-mono text-sm text-slate-600">¥{(o.orderAmount / o.quantity).toLocaleString()}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-600 text-slate-800">¥{o.orderAmount.toLocaleString()}</td>
+                  <td className="px-3 py-2.5 text-slate-600">{o.orderContact || o.contactContents || "-"}</td>
                 </tr>
               ))}
             </tbody>
@@ -3278,6 +3376,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
 }) {
+  const dialog = useDialog();
   const [currentDate, setCurrentDate] = useState(new Date("2025-11-01"));
   const [headcount, setHeadcount] = useState(3);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -3375,7 +3474,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -3390,7 +3489,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
               return (
                 <button key={status} type="button" onClick={() => toggleStatus(status)}
                   className={`px-2 py-2 text-xs font-600 text-center rounded-sm transition-opacity border cursor-pointer ${colorClass} ${active ? "opacity-100" : "opacity-40"}`}>
-                  {status}
+                  {lang === "ja" ? PROGRESS_JA[status] ?? status : status}
                 </button>
               );
             })}
@@ -3448,7 +3547,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
                       return (
                         <div key={o.id} onClick={() => selectBlock(o)}
                           className={`text-[10px] leading-tight p-1 rounded-sm border cursor-pointer truncate select-none ${bg} ${isSelected ? "ring-2 ring-slate-900" : ""}`}
-                          title={`${o.productName} - ${o.client}`}>
+                          title={`${o.productName} - ${o.client} · ${lang === "ja" ? PROGRESS_JA[o.progress] ?? o.progress : o.progress}`}>
                           <span className="font-700">{o.requiredManhours}{t("minUnit", lang)}</span> {o.productName}
                         </div>
                       );
@@ -3467,7 +3566,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
               {dirty && <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse shrink-0" role="status" />}
             </span>
             {form && (
-              <button type="button" onClick={clearSelection} aria-label="Close" className="p-1.5 rounded-sm hover:bg-slate-200 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors">
+              <button type="button" onClick={clearSelection} aria-label={lang === "ja" ? "閉じる" : "Close"} className="p-1.5 rounded-sm hover:bg-slate-200 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors">
                 <Icon name="close" size={16} />
               </button>
             )}
@@ -3504,6 +3603,10 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
                 <FieldBox label={t("productNameLabel", lang)}>
                   <TextInput value={form.productName} readOnly />
                 </FieldBox>
+                <div className="flex items-center justify-between border-y border-slate-200 py-2">
+                  <span className="text-sm font-700 text-slate-600">{t("statusSection", lang)}</span>
+                  <StatusBadge status={form.progress} lang={lang} />
+                </div>
 
                 <div className="p-3 bg-blue-50 border border-blue-200 rounded-sm space-y-2">
                   <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
@@ -3554,6 +3657,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
   orderId: string | null; orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang;
 }) {
+  const dialog = useDialog();
   const order = orders.find(o => o.id === orderId);
   const product = products.find(p => p.clientName === order?.client && p.productName === order?.productName);
 
@@ -3577,7 +3681,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
       const persisted = await upsertOrder(updated);
       setOrders(prev => prev.map(o => o.id === order.id ? persisted : o));
     } catch (err) {
-      alert(lang === "ja" ? `作業の進捗保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save task progress: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `作業の進捗保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save task progress: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -3595,7 +3699,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
           <button onClick={handleSaveAndReturn} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveAndReturn", lang)}</button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">Auto-saved</span>
+          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">{lang === "ja" ? "自動保存済み" : "Auto-saved"}</span>
           <button onClick={() => window.print()} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("printButton", lang)}</button>
         </div>
       </header>
@@ -3807,7 +3911,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "invoice"        && <InvoicePage orders={dedupedOrders} clients={clients} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "client-master"  && <ClientMasterPage clients={clients} setClients={setClients} products={products} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
-        {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
+        {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} clients={clients} products={products} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
         {page === "inventory"       && <Suspense fallback={<PageLoading lang={lang} />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}

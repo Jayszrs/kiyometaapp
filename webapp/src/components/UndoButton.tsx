@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { fetchAuditLogs, isUndoableAuditLog, undoAuditLog } from "../lib/operations";
 import { Icon } from "./Icon";
+import { useDialog } from "./AppDialog";
 
 export default function UndoButton({ className = "" }: { className?: string }) {
   const [busy, setBusy] = useState(false);
+  const dialog = useDialog();
 
   const undoLatest = async () => {
     setBusy(true);
@@ -11,18 +13,18 @@ export default function UndoButton({ className = "" }: { className?: string }) {
       const logs = await fetchAuditLogs(100);
       const latest = logs.find(isUndoableAuditLog);
       if (!latest) {
-        alert("No activity is currently available to undo.");
+        await dialog.alert("No activity is currently available to undo.");
         return;
       }
 
       const activity = `${latest.action} ${latest.entity.replace(/_/g, " ")}`;
-      if (!confirm(`Undo your latest activity: ${activity}?`)) return;
+      if (!(await dialog.confirm(`Undo your latest activity: ${activity}?`, { tone: "danger" }))) return;
 
       await undoAuditLog(latest.id);
-      alert("The activity was undone successfully.");
+      await dialog.alert("The activity was undone successfully.");
       window.location.reload();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Undo failed.");
+      await dialog.alert(error instanceof Error ? error.message : "Undo failed.");
     } finally {
       setBusy(false);
     }

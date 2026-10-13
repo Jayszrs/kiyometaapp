@@ -4,6 +4,7 @@ import LoginPage from "./LoginPage";
 import { AuthContext, useSession, signOut } from "./lib/auth";
 import type { Lang } from "./App";
 import LoadingDialog from "./components/LoadingDialog";
+import { DialogProvider } from "./components/AppDialog";
 
 export default function AuthGate() {
   const { session, profile, loading, updateProfile } = useSession();
@@ -52,7 +53,9 @@ export default function AuthGate() {
   return (
     <AuthContext.Provider value={{ email: session.user.email ?? "", profile, signOut, updateProfile }}>
       <div className={`h-full ${languageChanging ? "language-change" : ""}`}>
-        <App lang={lang} setLang={setLang} />
+        <DialogProvider lang={lang}>
+          <App lang={lang} setLang={setLang} />
+        </DialogProvider>
       </div>
     </AuthContext.Provider>
   );
