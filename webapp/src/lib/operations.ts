@@ -411,6 +411,12 @@ export async function deleteStockMovement(movement: StockMovement): Promise<void
   if (error) throw error;
 }
 
+export async function importInventoryRows(rows: readonly unknown[]): Promise<number> {
+  const { data, error } = await supabase.rpc("import_inventory_rows", { p_rows: rows });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
 export async function saveBomItem(item: BomItem) {
   const row = {
     id: item.id,

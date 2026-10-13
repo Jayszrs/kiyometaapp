@@ -29,11 +29,11 @@ export async function probeOperationsBackend(force = false): Promise<boolean> {
     ]);
     const error = profilesError ?? numbersError ?? undoError;
     const undoVersion = Number((undoData as { version?: unknown } | null)?.version ?? 0);
-    if (!error && undoVersion >= 5) {
+    if (!error && undoVersion >= 7) {
       markOperationsBackendReady();
       return true;
     }
-    if (isMissingOperationsSchema(error) || (!error && undoVersion < 5)) {
+    if (isMissingOperationsSchema(error) || (!error && undoVersion < 7)) {
       markOperationsMigrationRequired();
       return false;
     }
@@ -58,7 +58,7 @@ export function isMissingOperationsSchema(error: unknown): boolean {
 }
 
 export const MIGRATION_REQUIRED_MESSAGE =
-  "Migration backend belum lengkap. Jalankan migration 001 sampai 013 di project Supabase yang dipakai aplikasi, kemudian klik Check again.";
+  "Migration backend belum lengkap. Jalankan migration 001 sampai 016 di project Supabase yang dipakai aplikasi, kemudian klik Check again.";
 
 export const EDGE_FUNCTION_REQUIRED_MESSAGE =
   "Database sudah siap, tetapi Edge Function manage-users belum dapat diakses. Deploy function tersebut ke project Supabase yang sama, lalu klik Check again.";

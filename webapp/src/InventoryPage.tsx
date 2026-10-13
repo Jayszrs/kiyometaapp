@@ -12,6 +12,7 @@ import {
   deletePurchase,
   deleteStockMovement,
   fetchInventoryData,
+  importInventoryRows,
   saveBomItem,
   saveInventoryItem,
   savePurchase,
@@ -640,26 +641,9 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       collisions.set(key, 1);
     }
 
-    // Phase 2: write. Every row has already passed validation, so a failure
-    // here is a server or permission problem rather than bad input.
-    let saved = 0;
-    try {
-      for (const row of writable) {
-        if (row.kind === "inventory") await saveInventoryItem(row.payload);
-        else if (row.kind === "purchases") await savePurchase(row.payload);
-        else if (row.kind === "movements") await addStockMovement(row.payload);
-        else await saveBomItem(row.payload);
-        saved += 1;
-      }
-    } catch (err) {
-      // The writes above are individual statements, so report exactly how far
-      // the import got instead of implying the whole file landed. The audit log
-      // is what an administrator uses to undo the remainder.
-      throw new Error(
-        `${errorMessage(err)} The import stopped after ${saved} of ${writable.length} rows. ` +
-        `An administrator can undo the saved rows from Activity, or fix the file and re-import.`,
-      );
-    }
+    // Phase 2 is one database call and therefore one transaction: a failure in
+    // any row rolls the entire batch back.
+    const saved = await importInventoryRows(writable);
     return `${saved} record${saved === 1 ? "" : "s"} imported${skipped ? `, ${skipped} existing journal row${skipped === 1 ? "" : "s"} skipped` : ""}.`;
   };
 
