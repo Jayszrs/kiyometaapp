@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useGlobalLoading } from "../lib/loading";
 
 export default function LoadingDialog({ active, lang, label }: {
   active: boolean;
@@ -25,4 +26,10 @@ export default function LoadingDialog({ active, lang, label }: {
       </div>
     </div>
   );
+}
+
+export function GlobalLoadingDialog() {
+  const active = useGlobalLoading();
+  const lang = localStorage.getItem("kiyometa-language") === "en" ? "en" : "ja";
+  return <LoadingDialog active={active} lang={lang} />;
 }

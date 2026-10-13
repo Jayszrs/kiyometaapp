@@ -3,7 +3,6 @@ import App from "./App";
 import LoginPage from "./LoginPage";
 import { AuthContext, useSession, signOut } from "./lib/auth";
 import type { Lang } from "./App";
-import LoadingDialog from "./components/LoadingDialog";
 import { DialogProvider } from "./components/AppDialog";
 
 export default function AuthGate() {
@@ -27,7 +26,6 @@ export default function AuthGate() {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-        <LoadingDialog active lang={lang} label={lang === "ja" ? "認証情報を確認しています…" : "Checking your session…"} />
       </div>
     );
   }

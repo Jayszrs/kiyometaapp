@@ -3,7 +3,6 @@ import { useAuth, type UserRole } from "./lib/auth";
 import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
-import LoadingDialog from "./components/LoadingDialog";
 import { useDialog } from "./components/AppDialog";
 import {
   createManagedUser,
@@ -252,7 +251,6 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
           </div>
         </div>
       )}
-      <LoadingDialog active={busy} lang={lang} label={text("Processing employee or audit changes…", "従業員情報・操作履歴を処理しています…")} />
     </AppShell>
   );
 }

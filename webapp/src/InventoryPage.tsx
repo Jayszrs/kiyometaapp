@@ -25,7 +25,6 @@ import {
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
 import { supabase } from "./lib/supabaseClient";
-import LoadingDialog from "./components/LoadingDialog";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 
@@ -799,7 +798,6 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       </div>}
 
       {printPurchase && <article id="purchase-receipt" className="hidden print:block"><div className="mx-auto max-w-3xl p-10 text-black"><div className="flex items-start justify-between border-b-2 border-black pb-5"><div className="flex items-center gap-4"><img src="/app-logo.png" alt="Kiyometa" className="h-14 w-14 rounded object-cover" /><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="mt-1 text-3xl font-700">{text("Purchase receipt", "仕入伝票")}</h1></div></div><div className="text-right"><p className="font-mono text-lg font-700">{printPurchase.purchaseNo}</p><p>{printPurchase.purchaseDate}</p></div></div><div className="mt-8 grid grid-cols-2 gap-8"><div><p className="text-xs font-700 text-slate-500">{text("Supplier", "仕入先")}</p><p className="mt-1 text-lg font-700">{printPurchase.supplierName}</p></div><div><p className="text-xs font-700 text-slate-500">{text("PIC", "担当者")}</p><p className="mt-1 text-lg">{printPurchase.pic || "-"}</p></div></div><table className="mt-8 w-full border-collapse"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3 text-right">{text("Qty", "数量")}</th><th className="py-3 text-right">{text("Unit price", "単価")}</th><th className="py-3 text-right">{text("Total", "合計")}</th></tr></thead><tbody><tr><td className="py-4">{itemName(printPurchase.itemId)}</td><td className="py-4 text-right">{printPurchase.orderedQty.toLocaleString()}</td><td className="py-4 text-right">{money(printPurchase.unitPrice)}</td><td className="py-4 text-right font-700">{money(printPurchase.orderedQty * printPurchase.unitPrice)}</td></tr></tbody></table><div className="mt-10 border-t border-black pt-4 text-sm"><p>{text("Received quantity:", "入荷数：")} <strong>{printPurchase.receivedQty.toLocaleString()}</strong></p><p>{text("Status:", "状態：")} <strong>{purchaseStatusLabel(printPurchase.status)}</strong></p><p className="mt-3">{text("Notes:", "備考：")} {printPurchase.notes || "-"}</p></div></div></article>}
-      <LoadingDialog active={busy} lang={lang} />
     </AppShell>
   );
 }

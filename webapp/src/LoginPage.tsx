@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Icon, Btn, TextInput } from "./App";
 import { signIn } from "./lib/auth";
 import type { Lang } from "./App";
-import LoadingDialog from "./components/LoadingDialog";
 
 export default function LoginPage({ lang, setLang }: { lang: Lang; setLang: (lang: Lang) => void }) {
   const [username, setUsername] = useState("");
@@ -72,7 +71,6 @@ export default function LoginPage({ lang, setLang }: { lang: Lang; setLang: (lan
           {busy ? (lang === "ja" ? "ログイン中…" : "Signing in…") : (lang === "ja" ? "ログイン" : "Sign in")}
         </Btn>
       </form>
-      <LoadingDialog active={busy} lang={lang} label={lang === "ja" ? "ログインしています…" : "Signing in…"} />
     </div>
   );
 }

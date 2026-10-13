@@ -693,6 +693,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
 
 return (
     <div className="popup-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
+      <LoadingDialog active={busy} lang={lang} label={t("workingOnDoc", lang)} />
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="popup-panel relative w-full max-w-4xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
