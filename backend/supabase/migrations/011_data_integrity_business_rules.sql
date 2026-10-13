@@ -274,7 +274,7 @@ begin
   else
     alter table public.products drop constraint if exists products_client_name_product_name_key;
     alter table public.products add constraint products_client_name_product_name_key
-      unique (client_name, product_name) not valid;
+      unique (client_name, product_name);
   end if;
 end;
 $$;

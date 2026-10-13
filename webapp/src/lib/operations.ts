@@ -382,7 +382,9 @@ export async function deletePurchase(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function addStockMovement(input: Omit<StockMovement, "id" | "movementNo" | "createdAt">) {
+export async function addStockMovement(
+  input: Omit<StockMovement, "id" | "movementNo" | "createdAt"> & { idempotencyKey: string },
+) {
   // PostgREST insert is revoked on stock_movements; the only client path is
   // record_stock_movement, which rejects a reference_type that would imply a
   // purchase or an order exists behind the movement.
@@ -395,6 +397,7 @@ export async function addStockMovement(input: Omit<StockMovement, "id" | "moveme
     p_delta: input.delta,
     p_pic: input.pic.trim(),
     p_notes: input.notes.trim(),
+    p_idempotency_key: input.idempotencyKey,
   });
   if (error) throw error;
   return (data ?? null) as StockMovement | null;

@@ -12,6 +12,7 @@ import UndoButton from "./components/UndoButton";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 import LoadingDialog from "./components/LoadingDialog";
+import { supabase } from "./lib/supabaseClient";
 import {
   deleteBomItem,
   fetchProductMaterialData,
@@ -3828,7 +3829,17 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     const refreshTimer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void refreshData();
-    }, 60000);
+    }, 300000);
+    let realtimeTimer: number | undefined;
+    const scheduleRealtimeRefresh = () => {
+      window.clearTimeout(realtimeTimer);
+      realtimeTimer = window.setTimeout(() => void refreshData(), 150);
+    };
+    const realtime = supabase.channel("core-data-refresh");
+    for (const table of ["clients", "products", "orders"] as const) {
+      realtime.on("postgres_changes", { event: "*", schema: "public", table }, scheduleRealtimeRefresh);
+    }
+    void realtime.subscribe();
     const refreshOnFocus = () => void refreshData();
     const refreshOnVisibility = () => {
       if (document.visibilityState === "visible") void refreshData();
@@ -3840,6 +3851,8 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     return () => {
       cancelled = true;
       window.clearInterval(refreshTimer);
+      window.clearTimeout(realtimeTimer);
+      void supabase.removeChannel(realtime);
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
     };

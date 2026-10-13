@@ -23,6 +23,7 @@ import {
   type StockMovement,
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
+import { supabase } from "./lib/supabaseClient";
 import LoadingDialog from "./components/LoadingDialog";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
@@ -268,6 +269,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const dialog = useDialog();
   const canDelete = profile.role === "administrator";
   const fileInput = useRef<HTMLInputElement>(null);
+  const movementRequestId = useRef("");
   const [tab, setTab] = useState<Tab>("inventory");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -331,6 +333,23 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const scheduleLoad = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void load(), 150);
+    };
+    const channel = supabase.channel("inventory-data-refresh");
+    for (const table of ["inventory_items", "purchases", "stock_movements", "product_materials"] as const) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleLoad);
+    }
+    void channel.subscribe();
+    return () => {
+      window.clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [load]);
 
   const run = async (task: () => Promise<void>, success: string) => {
     setBusy(true);
@@ -397,12 +416,15 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
         : `Insufficient stock for ${selectedItem.itemCode}. Available: ${selectedItem.availableQty.toLocaleString()} ${selectedItem.unit}.`);
       return;
     }
+    if (!movementRequestId.current) movementRequestId.current = genUUID();
     void run(async () => {
       await addStockMovement({
         movementDate: today(), movementType, referenceType: "manual", referenceId: null,
         itemId: movementItem, quantity: movementQty, delta: positive ? movementQty : -movementQty,
         pic: profile.displayName || profile.username, notes: movementNotes,
+        idempotencyKey: movementRequestId.current,
       });
+      movementRequestId.current = "";
       setMovementOpen(false);
       setMovementQty(1);
       setMovementNotes("");
@@ -566,6 +588,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
           referenceType: "manual", referenceId: null, itemId: item.id, quantity,
           delta: positive ? quantity : -quantity, pic: text(row.values.pic) || profile.displayName || profile.username,
           notes: text(row.values.notes),
+          idempotencyKey: genUUID(),
         },
       };
     }
