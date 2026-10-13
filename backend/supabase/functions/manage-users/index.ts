@@ -15,6 +15,39 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Leaked-password guard, same purpose as the paid Supabase Auth toggle but
+// calling HIBP's keyless k-anonymity API directly: only the first 5 hex chars
+// of the password's SHA-1 leave this server. -1 (unreachable) fails open so a
+// HIBP outage never blocks account creation.
+const kRangeUrl = "https://api.pwnedpasswords.com/range/";
+async function breachedPasswordCount(password: string): Promise<number> {
+  try {
+    const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(password));
+    const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase();
+    const response = await fetch(`${kRangeUrl}${hex.slice(0, 5)}`, { signal: AbortSignal.timeout(6000) });
+    if (!response.ok) return -1;
+    const suffix = hex.slice(5);
+    const body = await response.text();
+    for (const line of body.split("\n")) {
+      const [candidate, count] = line.split(":");
+      if (candidate === suffix) return Number(count || 0);
+    }
+    return 0;
+  } catch {
+    return -1;
+  }
+}
+
+async function rejectBreachedPassword(password: string): Promise<Response | null> {
+  const breached = await breachedPasswordCount(password);
+  if (breached <= 0) return null;
+  return json({
+    error: `This password appears in ${breached} known data breaches. Choose a different password.`,
+  }, 400);
+}
+
 serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -69,6 +102,8 @@ serve(async (request) => {
         return json({ error: "Username must be 3-32 lowercase letters, numbers, dot, dash, or underscore" }, 400);
       }
       if (password.length < 8) return json({ error: "Password must contain at least 8 characters" }, 400);
+      const breached = await rejectBreachedPassword(password);
+      if (breached) return breached;
 
       const email = `${username}@users.kiyometa.local`;
       const { data: created, error: createError } = await adminClient.auth.admin.createUser({
@@ -115,6 +150,8 @@ serve(async (request) => {
       const targetId = String(payload.userId ?? "");
       const password = String(payload.password ?? "");
       if (password.length < 8) return json({ error: "Password must contain at least 8 characters" }, 400);
+      const breached = await rejectBreachedPassword(password);
+      if (breached) return breached;
 
       const { data: target, error: targetError } = await adminClient
         .from("profiles")

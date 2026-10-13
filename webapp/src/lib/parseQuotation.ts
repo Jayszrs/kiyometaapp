@@ -36,7 +36,7 @@ const DEFINITIONS: Definition[] = [
   { key: "ignore", aliases: ["税込合計金額", "税込金額", "消費税額", "消費税", "税率", "税額", "発注先住所", "納入者コード", "仕入先コード", "納入場所", "納入先", "発注先", "宛先", "お支払い条件", "支払条件", "担当者", "担当", "備考", "単位", "ページ", "FAX", "次工程", "工程", "残数", "検収日", "検収担当", "支給予定日", "注文書", "発注書"] },
   { key: "orderDate", aliases: ["発注年月日", "注文年月日", "発注日付", "注文日付", "発注日", "注文日", "見積日", "発行日"] },
   { key: "deliveryDate", aliases: ["指定納入日", "納入期日", "希望納期", "納入予定日", "納入日", "納期"] },
-  { key: "orderNumber", aliases: ["注文番号", "発注番号", "注文No.", "注文No", "発注No.", "発注No", "見積番号"] },
+  { key: "orderNumber", aliases: ["注文番号", "発注番号", "注文No.", "注文No", "注文№", "注文Na", "注文Nα", "注文", "発注No.", "発注No", "見積番号"] },
   { key: "productNumber", aliases: ["図面番号", "品目コード", "製品番号", "部品番号", "品番", "図番", "製番"] },
   { key: "productName", aliases: ["部品名", "製品名", "品目名", "商品名", "品名"] },
   { key: "quantity", aliases: ["発注数量", "注文数量", "納入数量", "納入数", "数量"] },
@@ -113,7 +113,7 @@ interface Anchor extends Box { key: FieldKey; label: string; inline?: Box }
 const patterns = DEFINITIONS.flatMap(d => d.aliases.map(alias => ({ key: d.key, alias,
   re: new RegExp([...alias].map(c => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*"), "gi") })));
 function anchorsIn(b: Box): Anchor[] {
-  const hits = patterns.flatMap(p => [...labelText(b.text).matchAll(p.re)].map(m => ({ key: p.key, label: p.alias, start: m.index!, end: m.index! + m[0].length })));
+  const hits = patterns.filter(p => p.alias !== "注文" || compact(b.text) === "注文").flatMap(p => [...labelText(b.text).matchAll(p.re)].map(m => ({ key: p.key, label: p.alias, start: m.index!, end: m.index! + m[0].length })));
   hits.sort((a, b) => (b.end - b.start) - (a.end - a.start));
   const chosen: typeof hits = [];
   for (const h of hits) if (!chosen.some(c => h.start < c.end && h.end > c.start)) chosen.push(h);
@@ -135,7 +135,15 @@ function phone(raw: string): string {
   return t.match(/(?:^|\D)(0\d{9,10})(?!\d)/)?.[1] ?? "";
 }
 function number(raw: string): number | null {
-  const t = clean(raw).replace(/^[¥￥]/, "").replace(/(?:円|個|台|本|枚|式|kg|KG)$/, "").replace(/\s/g, "");
+  let t = clean(raw).replace(/^[¥￥]/, "").replace(/(?:円|個|台|本|枚|式|kg|KG)$/, "").replace(/\s/g, "");
+  // Camera OCR may read grouping commas as dots. A final 1–2 digit
+  // decimal suffix makes this unambiguous (5.000.00 -> 5000.00).
+  if (/^\d{1,3}(?:\.\d{3})+\.\d{1,2}$/.test(t)) {
+    const decimal = t.lastIndexOf(".");
+    t = t.slice(0, decimal).replace(/\./g, "") + t.slice(decimal);
+  }
+  // Yen has no fractional minor unit; keep this OCR repair visible in review.
+  if (/^[¥￥]/.test(clean(raw)) && /^\d{1,3}(?:\.\d{3})+$/.test(t)) t = t.replace(/\./g, "");
   if (!/^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?$/.test(t)) return null;
   const n = Number(t.replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
@@ -234,7 +242,9 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
         if (below) {
           if (numeric.has(key) && b.x1 < a.x0-h*0.2) continue;
           const left = anchors.filter(k => k !== a && sameRow(a,k) && k.x0 < a.x0).sort((x,y) => y.x0-x.x0)[0];
-          const next = anchors.filter(k => k !== a && sameRow(a,k) && k.x0 > a.x0).sort((x,y) => x.x0-y.x0)[0];
+          // Even an unreadable column label is a boundary. Otherwise the
+          // amount column can borrow an order number from the next cell.
+          const next = lines.filter(k => sameRow(a,k) && k.x0 >= a.x1 && k.x0 > a.x0).sort((x,y) => x.x0-y.x0)[0];
           if ((left && b.x0 < left.x1-h*0.3) || (next && b.x0 >= next.x0-h*0.3)) continue;
           if (anchors.some(k => k !== a && k.page === a.page && k.y0 > a.y1 && k.y1 <= b.y0 && k.x0 <= a.x1 && k.x1 >= a.x0)) continue;
         }
@@ -248,7 +258,7 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
         if (key === "orderAmount" && /合計|税抜|小計/.test(a.label)) cost -= 3;
         if ((key === "productName" || key === "processName") && joined.includes(b)) cost -= 0.35;
         cost += (1-b.score)*2;
-        candidates.push({ value, box:b, label:a.label, cost, confidence:Math.min(a.score,b.score), anchor:a });
+        candidates.push({ value, box:b, label:a.label, cost, confidence:Math.min(a.score,b.score, /^[¥￥]\s*\d{1,3}(?:\.\d{3})+$/.test(b.text) ? 0.6 : 1), anchor:a });
       }
     }
     candidates.sort((a,b) => a.box.page-b.box.page || (a.anchor === b.anchor && !sameRow(a.box,b.box) ? a.box.y0-b.box.y0 : a.cost-b.cost) || a.box.y0-b.box.y0);

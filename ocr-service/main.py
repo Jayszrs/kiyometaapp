@@ -34,6 +34,8 @@ import binascii
 import hashlib
 import hmac
 import json
+import io
+from contextlib import asynccontextmanager
 import logging
 import os
 import time
@@ -50,6 +52,7 @@ from pydantic import BaseModel
 from rapidocr_onnxruntime import RapidOCR
 from prepare_models import model_path
 from recognition import recognize_page
+from jobs import OcrJobs, JobsBusy, JobStopped
 
 logging.basicConfig(
     level=logging.INFO,
@@ -79,7 +82,15 @@ if not REQUIRE_AUTH:
         "SUPABASE_JWKS_URL before exposing this service."
     )
 
-app = FastAPI(title="Kiyometa Quotation OCR")
+@asynccontextmanager
+async def lifespan(app):
+    try:
+        yield
+    finally:
+        _jobs.shutdown()
+
+
+app = FastAPI(title="Kiyometa Quotation OCR", lifespan=lifespan)
 
 _origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 if os.environ.get("CORS_ORIGINS", "").strip() == "*":
@@ -93,7 +104,7 @@ if _origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
-        allow_methods=["POST", "GET", "OPTIONS"],
+        allow_methods=["POST", "GET", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
 # Unset CORS_ORIGINS means no CORS headers at all, so other origins are refused
@@ -342,15 +353,19 @@ def verify_access_token(token: str) -> dict:
     return payload
 
 
-def require_user(request: Request) -> None:
+def require_user(request: Request) -> str:
     if not REQUIRE_AUTH:
-        return
+        return "local"
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Sign in to use OCR.")
     try:
-        verify_access_token(token.strip())
+        claims = verify_access_token(token.strip())
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise HTTPException(status_code=401, detail="Invalid session token.")
+        return subject
     except HTTPException as exc:
         if exc.status_code == 503:
             raise
@@ -386,7 +401,7 @@ def check_pixels(width: int, height: int, label: str) -> None:
         )
 
 
-def rasterize_pdf(data: bytes, dpi: int = 300) -> list[np.ndarray]:
+def rasterize_pdf(data: bytes, dpi: int = 300, check=lambda: None) -> list[np.ndarray]:
     import pymupdf
 
     out: list[np.ndarray] = []
@@ -395,6 +410,7 @@ def rasterize_pdf(data: bytes, dpi: int = 300) -> list[np.ndarray]:
             raise ValueError(f"PDF has {len(doc)} pages; the limit is {MAX_PDF_PAGES}. Split the file before scanning.")
         scale = max(72, min(dpi, 400))
         for page in doc:
+            check()
             width_pt, height_pt = page.rect.width, page.rect.height
             check_pixels(int(width_pt * scale / 72), int(height_pt * scale / 72), f"PDF page at {scale}dpi")
             pix = page.get_pixmap(dpi=scale, colorspace=pymupdf.csRGB, alpha=False)
@@ -460,7 +476,7 @@ def ocr(request: Request, file: UploadFile = File(...), dpi: int = 300) -> OcrRe
         _slots.release()
 
 
-def run_ocr(file: UploadFile, dpi: int) -> OcrResponse:
+def run_ocr(file: UploadFile, dpi: int, check=lambda: None) -> OcrResponse:
     # Read one byte past the limit so an oversized body is detected without
     # buffering the whole thing.
     raw = file.file.read(MAX_UPLOAD_BYTES + 1) if file.file else None
@@ -472,19 +488,21 @@ def run_ocr(file: UploadFile, dpi: int) -> OcrResponse:
             detail=f"File is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
         )
 
+    check()
+    started = time.monotonic()
     name = safe_name(file.filename or "upload")
     is_pdf = name.lower().endswith(".pdf")
     log.info("OCR request: %s (%d bytes, %s)", name, len(raw), "pdf" if is_pdf else "image")
     try:
         if is_pdf:
-            images = rasterize_pdf(raw, dpi)
+            images = rasterize_pdf(raw, dpi, check)
             if not images:
                 raise HTTPException(status_code=400, detail="PDF has no pages.")
             log.info("Rasterized %d page(s) at %ddpi", len(images), dpi)
         else:
             images = [decode_image(raw)]
             log.info("Decoded image %dx%d", images[0].shape[1], images[0].shape[0])
-    except HTTPException:
+    except (HTTPException, JobStopped):
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -493,15 +511,24 @@ def run_ocr(file: UploadFile, dpi: int) -> OcrResponse:
         # types, which must not surface as a 500 with a traceback.
         log.warning("OCR decode failed for %s: %s: %s", name, type(exc).__name__, exc)
         raise HTTPException(status_code=400, detail="The file could not be read as a PDF or image.") from exc
+    log.info("decode %.3fs", time.monotonic()-started)
     del raw
 
     lines: list[LineOut] = []
     for pi, img in enumerate(images):
         try:
-            with _inference_lock:
-                result, rotation = recognize_page(img, get_ocr(), get_japanese_ocr(), get_preview_ocr())
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            while not _inference_lock.acquire(timeout=0.25):
+                check()
+            try:
+                check()
+                result, rotation = recognize_page(img, get_ocr(), get_japanese_ocr(), get_preview_ocr(), photo=not is_pdf, check=check)
+            finally:
+                _inference_lock.release()
+        except (HTTPException, JobStopped):
+            raise
+        except Exception as exc:
+            log.exception("OCR inference failed: %s", name)
+            raise HTTPException(status_code=503, detail="Recognition is temporarily unavailable. Try again shortly.") from exc
         log.info("[ocr] page %d: rotated %d degrees counterclockwise", pi, rotation)
         if not result:
             log.info("[ocr] page %d: no text", pi)
@@ -528,5 +555,45 @@ def run_ocr(file: UploadFile, dpi: int) -> OcrResponse:
     if not lines:
         raise HTTPException(status_code=422, detail="No recognizable text in the uploaded file.")
     lines.sort(key=lambda l: (l.page, l.y0, l.x0))
-    log.info("OCR done: %d line(s) -> %s", len(lines), name)
+    log.info("OCR done: %d line(s) -> %s (%.3fs)", len(lines), name, time.monotonic()-started)
     return OcrResponse(source=name, lines=lines)
+
+
+# The synchronous endpoint stays available for existing integrations. The web
+# app uses short job requests so a proxy/FE timeout cannot discard a valid result.
+def _job_work(raw, name, dpi, check):
+    upload = UploadFile(filename=name,file=io.BytesIO(raw))
+    try:
+        return run_ocr(upload,dpi,check).model_dump()
+    finally:
+        upload.file.close()
+
+
+_jobs = OcrJobs(_job_work)
+
+
+@app.post("/ocr/jobs", status_code=202)
+def create_ocr_job(request: Request, file: UploadFile = File(...), dpi: int = 300):
+    owner = require_user(request)
+    raw = file.file.read(MAX_UPLOAD_BYTES+1)
+    if not raw: raise HTTPException(status_code=400,detail="Empty file.")
+    if len(raw) > MAX_UPLOAD_BYTES: raise HTTPException(status_code=413,detail="File exceeds the upload size limit.")
+    try:
+        job_id = _jobs.submit(owner,raw,safe_name(file.filename or "upload"),dpi)
+    except JobsBusy:
+        raise HTTPException(status_code=429,detail="The OCR service is busy. Try again shortly.")
+    return {"id":job_id}
+
+
+@app.get("/ocr/jobs/{job_id}")
+def read_ocr_job(request: Request, job_id: str):
+    owner = require_user(request)
+    try: return _jobs.read(owner,job_id)
+    except KeyError: raise HTTPException(status_code=404,detail="Scan not found. Please retry.")
+
+
+@app.delete("/ocr/jobs/{job_id}")
+def cancel_ocr_job(request: Request, job_id: str):
+    owner = require_user(request)
+    try: return _jobs.cancel(owner,job_id)
+    except KeyError: raise HTTPException(status_code=404,detail="Scan not found.")

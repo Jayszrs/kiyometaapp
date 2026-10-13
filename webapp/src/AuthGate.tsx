@@ -4,6 +4,7 @@ import LoginPage from "./LoginPage";
 import { AuthContext, useSession, signOut } from "./lib/auth";
 import type { Lang } from "./App";
 import { DialogProvider } from "./components/AppDialog";
+import { PageLoading } from "./components/LoadingDialog";
 
 export default function AuthGate() {
   const { session, profile, loading, updateProfile } = useSession();
@@ -24,10 +25,7 @@ export default function AuthGate() {
   }, [lang]);
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-      </div>
-    );
+    return <PageLoading />;
   }
 
   if (!session) return <div className={`h-full ${languageChanging ? "language-change" : ""}`}><LoginPage lang={lang} setLang={setLang} /></div>;

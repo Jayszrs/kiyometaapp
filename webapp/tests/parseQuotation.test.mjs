@@ -117,3 +117,35 @@ test('first item cannot borrow a missing quantity from the next table row',()=>{
   assert.equal(p.data.productNumber,'PART-001');assert.equal(p.data.quantity,0);assert.equal(p.data.unitPrice,5000);
   assert.ok(p.warnings.some(w=>w.includes('Multiple items')));
 });
+
+
+test('damaged adjacent table labels still bound amount candidates', () => {
+  const p=parseQuotation([box('合計金額',500,100,100),box('注文?',650,100,80),
+    box('garbled currency',510,140,100),box('210266',660,140,80)]);
+  assert.equal(p.data.orderAmount,0);
+});
+
+test('camera grouping dots retain decimals and ambiguous yen grouping requires review', () => {
+  const p=parseQuotation(pairs([['単価','5.000.00'],['合計金額','￥15.000'],['数量','1.25']]));
+  assert.equal(p.data.unitPrice,5000);
+  assert.equal(p.data.quantity,1.25);
+  assert.equal(p.data.orderAmount,15000);
+  assert.equal(p.fields.find(f=>f.key==='orderAmount').status,'review');
+});
+
+
+test('tablet camera photo after page correction preserves Shinwa item values', () => {
+  const lines=JSON.parse(readFileSync(new URL('./fixtures/tablet-camera-shinwa-ocr.json',import.meta.url),'utf8'));
+  const p=parseQuotation(lines);
+  assert.equal(p.data.client,'伸和テクノス株式会社');
+  assert.equal(p.data.productNumber,'NHD-F1772-11');
+  assert.equal(p.data.productName,'タンク');
+  assert.equal(p.data.orderNumber,'210266');
+  assert.equal(p.data.quantity,3);
+  assert.equal(p.data.unitPrice,5000);
+  assert.equal(p.data.orderAmount,15000);
+  assert.equal(p.data.processName,'酸洗い');
+  assert.equal(p.data.orderDate,'2026-08-17');
+  assert.equal(p.data.deliveryDate,'2026-08-20');
+  assert.equal(p.template,'order-sheet');
+});

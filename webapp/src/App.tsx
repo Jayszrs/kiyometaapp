@@ -1,18 +1,23 @@
-import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
 import { fetchAll, fetchProduct, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
-import { runOcr, sendOcrLog, type OcrLine } from "./lib/ocrClient";
+import PhotoEditor from "./components/PhotoEditor";
+import { runOcr, OcrError, sendOcrLog, type OcrLine } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import UndoButton from "./components/UndoButton";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
-import LoadingDialog from "./components/LoadingDialog";
+import { PageLoading } from "./components/LoadingDialog";
+import { ResizeHandle, useResizablePanel } from "./components/ResizablePanel";
 import { supabase } from "./lib/supabaseClient";
+import { useLoadingScope } from "./lib/loading";
+import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
+import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
   deleteBomItem,
   fetchProductMaterialData,
@@ -21,9 +26,18 @@ import {
   type InventoryItem,
 } from "./lib/operations";
 
-const InventoryPage = lazy(() => import("./InventoryPage"));
-const ManagementPage = lazy(() => import("./ManagementPage"));
-const ProfilePage = lazy(() => import("./ProfilePage"));
+// One loader map so the same dynamic imports can be prefetched on idle. Once a
+// chunk is cached, navigating to that module resolves without suspending, so
+// the transition below swaps pages instantly instead of showing a loader.
+const pageLoaders = {
+  inventory: () => import("./InventoryPage"),
+  management: () => import("./ManagementPage"),
+  profile: () => import("./ProfilePage"),
+} as const;
+
+const InventoryPage = lazy(pageLoaders.inventory);
+const ManagementPage = lazy(pageLoaders.management);
+const ProfilePage = lazy(pageLoaders.profile);
 
 // ---- Types ----
 
@@ -610,8 +624,14 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editedData, setEditedData] = useState<ScanFillData | null>(null);
+  const leftPanel = useResizablePanel<HTMLDivElement>({ initial: 288, min: 220, max: 460, storageKey: "kiyometa.scan.left" });
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState(false);
+  const [lastScan, setLastScan] = useState<File | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => requestRef.current?.abort(), []);
   const custom = useMemo(
     () => ocrLines ? parseQuotation(ocrLines, lang) : null,
     [ocrLines, lang],
@@ -627,19 +647,29 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     return () => clearInterval(interval);
   }, [busy]);
 
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (e.target === cameraRef.current || file.type.startsWith("image/")) {
+      setPhoto(file); setEditingPhoto(true); setError(null);
+    } else { setPhoto(null); setEditingPhoto(false); void scanFile(file); }
+  };
+  const scanFile = async (file: File) => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setLastScan(file);
     setBusy(true);
     setError(null);
     setOcrLines(null);
     setEditedData(null);
     try {
-      const lines = await runOcr(file);
+      const lines = await runOcr(file, controller.signal);
       const parsed = parseQuotation(lines, lang);
       void sendOcrLog(`--- quotation: ${file.name} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
-      if (!parsed.fields.some(f => f.status !== "missing")) {
+      if (!parsed.fields.some(f => f.status !== "missing" &&
+        (!["productName", "processName"].includes(f.key) || f.confidence >= 0.75))) {
         setError(t("scanErrNoFields", lang));
         return;
       }
@@ -654,8 +684,14 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         productName: parsed.data.productName || matchedProduct?.productName || "",
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("scanErrUnreachable", lang));
+      if (!controller.signal.aborted) {
+        const kind = err instanceof OcrError ? err.kind : "service";
+        setError(t(kind === "timeout" ? "scanErrTimeout" : kind === "unreadable" ? "scanErrNoFields"
+          : kind === "auth" ? "scanErrAuth" : kind === "busy" ? "scanErrBusy"
+          : kind === "size" ? "scanErrSize" : "scanErrUnreachable", lang));
+      }
     } finally {
+      requestRef.current = null;
       setBusy(false);
     }
   };
@@ -693,7 +729,6 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
 
 return (
     <div className="popup-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
-      <LoadingDialog active={busy} lang={lang} label={t("workingOnDoc", lang)} />
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div className="popup-panel relative w-full max-w-4xl bg-white rounded-sm shadow-2xl flex flex-col max-h-[88vh] border border-slate-200">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
@@ -707,7 +742,7 @@ return (
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          <div className="w-72 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col">
+          <div ref={leftPanel.panelRef} className="w-72 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col">
             <div className="px-4 py-4 space-y-3">
               <div className="flex items-center gap-2">
                 {busy && <Icon name="loader" size={14} className="text-[#1a3458] animate-spin" />}
@@ -718,10 +753,10 @@ return (
               <input hidden type="file" ref={uploadRef} accept="image/*,.pdf" onChange={handleFile} />
               <input hidden type="file" ref={cameraRef} accept="image/*" capture="environment" onChange={handleFile} />
               <div className="grid grid-cols-1 gap-2">
-                <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy}>
+                <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy || editingPhoto}>
                   <Icon name="upload" size={15} /> {t("scanUploadDoc", lang)}
                 </Btn>
-                <Btn variant="outline" onClick={() => cameraRef.current?.click()} disabled={busy}>
+                <Btn variant="outline" onClick={() => cameraRef.current?.click()} disabled={busy || editingPhoto}>
                   <Icon name="camera" size={15} /> {t("scanTakePhoto", lang)}
                 </Btn>
               </div>
@@ -730,6 +765,8 @@ return (
                   <Icon name="alert-triangle" size={14} className="mt-0.5 shrink-0" /> {error}
                 </p>
               )}
+              {!busy && !editingPhoto && error && lastScan && <Btn variant="outline" onClick={() => void scanFile(lastScan)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
+              {!busy && !editingPhoto && photo && <Btn variant="outline" onClick={() => setEditingPhoto(true)}>{lang === "ja" ? "写真を再編集" : "Edit photo again"}</Btn>}
               {busy && (
                 <div className="pt-1 space-y-1.5">
                   {LOADING_STEP_KEYS.map((key, i) => (
@@ -779,8 +816,13 @@ return (
             )}
           </div>
 
+          <ResizeHandle label={t("resizePanel", lang)} {...leftPanel.handleProps} />
+
           <div className="flex-1 overflow-y-auto min-w-0">
-            {!custom ? (
+            {editingPhoto && photo ? <PhotoEditor key={photo.lastModified + photo.name} file={photo} lang={lang}
+              onCancel={() => setEditingPhoto(false)}
+              onRetake={() => cameraRef.current?.click()}
+              onConfirm={file => { setEditingPhoto(false); void scanFile(file); }} /> : !custom ? (
               busy ? (
                 <div className="h-full flex flex-col items-center justify-center gap-6 px-8">
                   <div className="w-full max-w-sm">
@@ -847,7 +889,7 @@ return (
         <div className="flex items-center gap-3 px-5 py-4 border-t border-slate-200">
           <Btn variant="outline" onClick={onClose}>{t("scanCancel", lang)}</Btn>
           <div className="flex-1" />
-          {custom && (
+          {custom && !editingPhoto && !busy && (
             <Btn variant="primary" size="lg" onClick={() => editedData && onApply(editedData, clientExists, productExists)}>
               <Icon name="check" size={16} />
               {clientExists && productExists ? t("scanApply", lang) : t("scanGuidedImport", lang)}
@@ -1197,6 +1239,10 @@ const LABELS = {
   scanModalTitle:     { ja: "見積書をスキャン",     en: "Scan quotation" },
   captureHeading:     { ja: "見積書撮影",         en: "Capture a quotation" },
   workingOnDoc:       { ja: "処理中",            en: "Working on your document" },
+  resizeFilter:       { ja: "フィルター幅を調整（ドラッグ）", en: "Drag to resize filter" },
+  resizeList:         { ja: "一覧幅を調整（ドラッグ）", en: "Drag to resize list" },
+  resizeDetail:       { ja: "詳細幅を調整（ドラッグ）", en: "Drag to resize details" },
+  resizePanel:        { ja: "パネル幅を調整（ドラッグ）", en: "Drag to resize panel" },
   scanUploadDoc:      { ja: "書類をアップロード",  en: "Upload document" },
   scanTakePhoto:      { ja: "写真を撮る",         en: "Take photo" },
   scanNoDocTitle:     { ja: "まだ書類がありません",  en: "No document captured yet." },
@@ -1217,8 +1263,12 @@ const LABELS = {
   scanStepRetrieving: { ja: "文字を抽出中...",     en: "Retrieving text..." },
   scanStepCleaning:   { ja: "整理・マッチ中...",    en: "Cleaning and matching..." },
   scanStepMaster:     { ja: "マスタと照合中...",   en: "Checking against master data..." },
-  scanErrNoFields:    { ja: "項目を抽出できませんでした。より高解像度の画像をお試しください。", en: "Could not extract any fields from the document. Try a higher-resolution image." },
-  scanErrUnreachable: { ja: "OCRエラー。認識サービスに接続できません。", en: "OCR failed. Is the recognition service reachable?" },
+  scanErrNoFields:    { ja: "項目を抽出できませんでした。明るい場所で、書類の文字が鮮明に写るよう撮り直してください。", en: "No fields could be identified. Retake the photo with better lighting and clearly visible quotation details." },
+  scanErrTimeout: { ja: "読み取りが時間内に完了しませんでした。再試行するか、写真を切り抜いてください。", en: "The scan took too long. Retry or crop the photo before scanning again." },
+  scanErrAuth: { ja: "ログインし直してから再試行してください。", en: "Please sign in again, then retry the scan." },
+  scanErrBusy: { ja: "認識サービスが混雑しています。少し待って再試行してください。", en: "The recognition service is busy. Wait a moment, then retry." },
+  scanErrSize: { ja: "ファイルが大きすぎます。写真を切り抜くか、小さいファイルを選択してください。", en: "This file is too large. Crop the photo or choose a smaller file." },
+  scanErrUnreachable: { ja: "認識サービスに接続できません。しばらくしてから再試行してください。", en: "The recognition service is unavailable. Please retry shortly." },
   scanFldOrderDate:   { ja: "受注日",           en: "Order date" },
   scanFldDeliveryDate:{ ja: "納期",             en: "Delivery date" },
   scanFldClient:      { ja: "取引先",           en: "Client" },
@@ -1325,6 +1375,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const [deliveryFilterDate, setDeliveryFilterDate] = useState(today);
   const [calendarDisplay, setCalendarDisplay] = useState(false);
   const [arrangement, setArrangement] = useState("");
+  const filterPanel = useResizablePanel({ initial: 208, min: 150, max: 420, storageKey: "kiyometa.order-entry.filter" });
+  const listPanel = useResizablePanel({ initial: 224, min: 160, max: 460, storageKey: "kiyometa.order-entry.list" });
 
   useEffect(() => {
     // Fills the blank form when a scan is applied while this page is already
@@ -1453,7 +1505,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       <div className="responsive-workspace flex flex-1 overflow-hidden min-h-0">
 
         {/* Column 1: Filter & Sort */}
-        <aside className="responsive-panel responsive-panel-filter w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
+        <aside ref={filterPanel.panelRef} className="responsive-panel responsive-panel-filter w-52 flex flex-col bg-white border-r-2 border-slate-200 shrink-0 overflow-y-auto">
 
           {/* Display Order */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -1521,8 +1573,10 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
           </div>
         </aside>
 
+        <ResizeHandle label={t("resizeFilter", lang)} {...filterPanel.handleProps} />
+
         {/* Column 2: Search & Record List */}
-        <aside className="responsive-panel responsive-panel-list w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
+        <aside ref={listPanel.panelRef} className="responsive-panel responsive-panel-list w-56 flex flex-col bg-[#f8f9fb] border-r-2 border-slate-200 shrink-0 overflow-hidden">
           <div className="px-3 pt-3 pb-2 border-b border-slate-200 shrink-0">
             <p className="text-xs font-700 text-white bg-[#1a3458] px-2 py-1 mb-2 rounded-sm">{L("searchItem")}</p>
             <div className="flex items-center gap-2 px-2.5 py-2 border-2 border-slate-300 rounded-sm bg-white focus-within:border-[#1a3458] transition-colors">
@@ -1556,6 +1610,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             )}
           </div>
         </aside>
+
+        <ResizeHandle label={t("resizeList", lang)} {...listPanel.handleProps} />
 
         {/* Column 3: Main Activity Form */}
         <main className="page-enter responsive-main flex-1 overflow-y-auto min-h-0 bg-white">
@@ -1852,6 +1908,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   lang: Lang; setLang: (l: Lang) => void;
 }) {
   const dialog = useDialog();
+  const billingAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "処理を開始できませんでした。再試行してください。" : "Could not start this action. Please retry."); });
   const [fromDate, setFromDate] = useState(addDaysJST(today, -30));
   const [toDate, setToDate] = useState(endOfMonthJST(today));
   const [clientFilter, setClientFilter] = useState<Record<string, boolean>>({});
@@ -1878,6 +1935,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelForm, setPanelForm] = useState<OrderRecord>(blankSBForm());
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const filterPanel = useResizablePanel({ initial: 224, min: 150, max: 420, storageKey: "kiyometa.search.filter" });
+  const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.search.detail" });
 
   // The billing and delivery documents are driven by this selection. It lives
   // here rather than in the print pages so the documents reflect what the
@@ -1961,7 +2020,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
     return `"${text.replace(/"/g, '""')}"`;
   };
-  const downloadCsv = () => {
+  const downloadCsv = async () => {
+    if (isAndroidWebView() && !hasNativeBridge()) {
+      void dialog.alert(lang === "ja" ? "このAndroidアプリはまだCSVの保存に対応していません。同じ画面をChromeで開いて保存してください。" : "CSV download is not connected in this Android app yet. Open the same page in Chrome to download it.");
+      return;
+    }
     const headers = lang === "ja"
       ? ["受注ID", "取引先名", "製品番号", "数量", "単価", "合計金額", "納期", "取引状況"]
       : ["Order ID", "Client Name", "Product Number", "Quantity", "Unit Price", "Total Price", "Delivery Date", "Transaction Status"];
@@ -1970,22 +2033,37 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
       order.quantity > 0 ? Math.round(order.orderAmount / order.quantity) : 0,
       order.orderAmount, order.deliveryDate, lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress,
     ])].map(row => row.map(csvCell).join(","));
+    const fileName = `orders-${today}.csv`;
+    if (hasNativeBridge()) {
+      saveFileNative(fileName, "text/csv;charset=utf-8", new TextEncoder().encode("\uFEFF" + lines.join("\r\n")));
+      void dialog.alert(lang === "ja" ? `CSVを保存しました: ${fileName}` : `CSV saved: ${fileName}`);
+      return;
+    }
     const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = `orders-${today}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    document.body.appendChild(link);
+    link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    void dialog.alert(lang === "ja" ? `CSVのダウンロードを開始しました: ${link.download}` : `CSV download started: ${link.download}`);
   };
 
   const printPreparation = async () => {
-    const popup = window.open("", "_blank", "width=960,height=720");
-    if (!popup) {
+    if (billingAction.isBusy()) return;
+    const bridge = hasNativeBridge();
+    if (!bridge && isAndroidWebView()) {
+      await printBillingDocument(lang, message => dialog.alert(message));
+      return;
+    }
+    const popup = bridge ? null : window.open("", "_blank", "width=960,height=720");
+    if (!bridge && !popup) {
       dialog.alert(lang === "ja" ? "印刷画面がブロックされました。このアプリのポップアップを許可して、もう一度お試しください。" : "The print window was blocked. Allow pop-ups for this application and try again.");
       return;
     }
-    popup.opener = null;
+    await billingAction.run(async () => {
+    if (popup) popup.opener = null;
     const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
     const details = await Promise.all(selectedOrders.map(async order => {
       const base = productInfo(order);
@@ -2001,14 +2079,20 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
       const tasks = product?.tasks.filter(task => task.content.trim()).map(task => `${task.content}${task.time === "" ? "" : ` (${task.time}${lang === "ja" ? "分" : " min"})`}`).join("、") || "-";
       return `<tr><td class="mono">${escape(order.id)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="mono">${escape(product?.productNumber ?? "-")}</td><td class="num">${escape(order.quantity)}</td><td>${escape(tasks)}</td><td>${escape(lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress)}</td></tr>`;
     }).join("");
-    popup.document.write(`<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${escape(labels.title)}</title><style>body{font:14px "Noto Sans JP",Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px;color:#1a3458}p{color:#64748b;margin:0 0 24px}.meta{display:flex;justify-content:space-between;border-bottom:2px solid #1a3458;padding-bottom:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ebbd0;padding:9px 8px;text-align:left;vertical-align:top}th{background:#dbeef8;font-size:12px;color:#1a3458}.num{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}@media print{body{padding:0}thead{display:table-header-group}}</style></head><body><div class="meta"><div><h1>${escape(labels.title)}</h1><p>${escape(fromDate)} ～ ${escape(toDate)} ・ ${selectedOrders.length}${lang === "ja" ? "件" : " order(s)"}</p></div><div>${escape(new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US"))}</div></div><table><thead><tr><th>${escape(labels.id)}</th><th>${escape(labels.client)}</th><th>${escape(labels.product)}</th><th>${escape(labels.number)}</th><th class="num">${escape(labels.qty)}</th><th>${escape(labels.tasks)}</th><th>${escape(labels.status)}</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`);
-    popup.document.close();
+    const printHtml = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${escape(labels.title)}</title><style>body{font:14px "Noto Sans JP",Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px;color:#1a3458}p{color:#64748b;margin:0 0 24px}.meta{display:flex;justify-content:space-between;border-bottom:2px solid #1a3458;padding-bottom:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ebbd0;padding:9px 8px;text-align:left;vertical-align:top}th{background:#dbeef8;font-size:12px;color:#1a3458}.num{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}@media print{body{padding:0}thead{display:table-header-group}}</style></head><body><div class="meta"><div><h1>${escape(labels.title)}</h1><p>${escape(fromDate)} ～ ${escape(toDate)} ・ ${selectedOrders.length}${lang === "ja" ? "件" : " order(s)"}</p></div><div>${escape(new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US"))}</div></div><table><thead><tr><th>${escape(labels.id)}</th><th>${escape(labels.client)}</th><th>${escape(labels.product)}</th><th>${escape(labels.number)}</th><th class="num">${escape(labels.qty)}</th><th>${escape(labels.tasks)}</th><th>${escape(labels.status)}</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`;
+    if (bridge) {
+      printNative(printHtml, labels.title);
+    } else if (popup) {
+      popup.document.write(printHtml);
+      popup.document.close();
+    }
     try {
       const updated = await Promise.all(selectedOrders.map(order => upsertOrder({ ...order, preparationPrintStatus: "completed", preparationPrintedAt: new Date().toISOString() })));
       setOrders(previous => previous.map(order => updated.find(next => next.id === order.id) ?? order));
     } catch (error) {
       dialog.alert(lang === "ja" ? `準備印刷の記録を保存できませんでした。${error instanceof Error ? error.message : ""}` : `The preparation print was created, but its completion could not be saved. ${error instanceof Error ? error.message : ""}`);
     }
+    });
   };
 
   const productInfo = (o: OrderRecord) =>
@@ -2017,7 +2101,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   return (
     <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} activePage="search-billing" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       <div className="responsive-workspace flex flex-1 overflow-hidden">
-        <aside className="responsive-panel responsive-panel-filter w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
+        <aside ref={filterPanel.panelRef} className="responsive-panel responsive-panel-filter w-56 bg-white border-r-2 border-slate-200 overflow-y-auto shrink-0 flex flex-col">
 
           {/* Search Period */}
           <div className="px-3 pt-3 pb-3 border-b border-slate-200">
@@ -2080,6 +2164,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
           </div>
         </aside>
 
+        <ResizeHandle label={t("resizeFilter", lang)} {...filterPanel.handleProps} />
+
         <main className="page-enter responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
             {filtered.map(o => {
@@ -2129,7 +2215,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
         </main>
 
         {/* Column 3: Right Edit Panel -- always visible, never overlays */}
-        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
+        <ResizeHandle label={t("resizeDetail", lang)} {...detailPanel.handleProps} />
+        <aside ref={detailPanel.panelRef} className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col">
           {selectedId === null ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
               <div className="w-14 h-14 flex items-center justify-center rounded-full bg-slate-100 text-slate-300 shrink-0">
@@ -2217,7 +2304,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
                     className="px-4 py-2 text-sm bg-slate-100 text-slate-700 rounded-sm font-600 hover:bg-slate-200 cursor-pointer transition-colors">
                     {lang === "ja" ? "キャンセル" : "Cancel"}
                   </button>
-                  <button onClick={handleSave}
+                  <button onClick={() => void billingAction.run(handleSave)}
                     disabled={!panelForm.client || !panelForm.productName || !panelForm.deliveryDate}
                     className="px-4 py-2 text-sm bg-[#1a3458] text-white rounded-sm font-600 hover:bg-[#112240] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                     {t("saveButton", lang)}
@@ -2249,12 +2336,12 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
-          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "single")}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
-          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("delivery-slip", "multiple")}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
-          <Btn variant="action" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={() => onNavigate("invoice")}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
-          <Btn variant="ghost" size="md" className="min-w-[11rem] flex-1 justify-center whitespace-nowrap" disabled={billingOrderIds.length === 0} onClick={downloadCsv}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
+        <div className="billing-actions grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+          <Btn variant="ghost" size="md" className="min-w-0 w-full justify-center" disabled={billingOrderIds.length === 0 || billingAction.busy} onClick={printPreparation}><Icon name="printer" size={15} />{t("prePrepPrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-0 w-full justify-center" disabled={billingOrderIds.length === 0 || billingAction.busy} onClick={() => void billingAction.run(() => onNavigate("delivery-slip", "single"))}><Icon name="truck" size={15} />{t("singleSlipPrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-0 w-full justify-center" disabled={billingOrderIds.length === 0 || billingAction.busy} onClick={() => void billingAction.run(() => onNavigate("delivery-slip", "multiple"))}><Icon name="truck" size={15} />{t("multipleSlipPrint", lang)}</Btn>
+          <Btn variant="action" size="md" className="min-w-0 w-full justify-center" disabled={billingOrderIds.length === 0 || billingAction.busy} onClick={() => void billingAction.run(() => onNavigate("invoice"))}><Icon name="file-invoice" size={15} />{t("invoicePrint", lang)}</Btn>
+          <Btn variant="ghost" size="md" className="min-w-0 w-full justify-center" disabled={billingOrderIds.length === 0 || billingAction.busy} onClick={() => void billingAction.run(downloadCsv)}><Icon name="file-text" size={15} />{t("csvCreate", lang)}</Btn>
         </div>
       </footer>
     </AppShell>
@@ -2267,7 +2354,9 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   orders: OrderRecord[]; clients: Client[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
   const [currentPage, setCurrentPage] = useState(1);
-  const totalPages = 6;
+  const dialog = useDialog();
+  const printAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
+  const pageSize = 15;
   // The previous version pinned these to 2025-11-01 and 2025-12-01, so every
   // invoice printed carried a stale billing date and deadline. They start on the
   // real current day, and the deadline is a month out unless typed.
@@ -2290,6 +2379,8 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
     () => (orderIds.length > 0 ? orderIds.map(id => orders.find(o => o.id === id)).filter((o): o is OrderRecord => !!o) : []),
     [orderIds, orders],
   );
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const visiblePage = Math.min(currentPage, totalPages);
   const clientName = items[0]?.client ?? "";
   const client = clients.find(c => c.name === clientName);
   const mixedClients = new Set(items.map(o => o.client)).size > 1;
@@ -2331,16 +2422,16 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} activePage="invoice" showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0 sm:gap-3 sm:px-4">
-        <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))}><Icon name="chevron-left" size={14} />{t("prevPage", lang)}</Btn>
-        <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</span>
-        <Btn variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>{t("nextPage", lang)}<Icon name="chevron-right" size={14} /></Btn>
+    <AppShell onNavigate={onNavigate} title={t("invoiceTitle", lang)} activePage="invoice" noPrint showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
+      <div className="print:hidden flex flex-wrap items-center gap-2 px-3 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0 sm:gap-3 sm:px-4">
+        <Btn variant="outline" size="sm" disabled={visiblePage <= 1} onClick={() => setCurrentPage(Math.max(1, visiblePage - 1))}><Icon name="chevron-left" size={14} />{t("prevPage", lang)}</Btn>
+        <span className="text-sm text-slate-500 font-mono">{t("pageOf", lang).replace("{c}", String(visiblePage)).replace("{t}", String(totalPages))}</span>
+        <Btn variant="outline" size="sm" disabled={visiblePage >= totalPages} onClick={() => setCurrentPage(Math.min(totalPages, visiblePage + 1))}>{t("nextPage", lang)}<Icon name="chevron-right" size={14} /></Btn>
         <div className="flex-1" />
-        <Btn variant="primary" size="sm" onClick={() => window.print()} disabled={items.length === 0}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
+        <Btn variant="primary" size="sm" onClick={() => void printAction.run(() => printBillingDocument(lang, message => dialog.alert(message)))} disabled={items.length === 0 || printAction.busy}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
-        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
+      <div className="billing-print-viewport flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="billing-document w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <div className="text-center mb-8">
             <h2 className="text-3xl font-700 text-slate-800 inline-block pb-2 border-b-2 border-slate-800">{t("invoiceTitle", lang)}</h2>
           </div>
@@ -2371,10 +2462,10 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
               </div>
             </div>
 
-            <div className="w-64 shrink-0 relative">
+            <div className="invoice-sender w-full min-w-0 relative sm:w-[45%] sm:shrink-0">
               <div className="border border-slate-300 rounded-sm px-4 py-3 text-right">
-                <p className="text-lg font-700 text-[#1a3458]">{t("sendersCompany", lang)}</p>
-                <p className="text-xs text-slate-400 mt-1">kiyometaGoGo@kiyometa.onmicrosoft.com</p>
+                <p className="text-base font-700 text-[#1a3458] break-words leading-snug">{t("sendersCompany", lang)}</p>
+                <p className="text-xs text-slate-600 mt-1 break-all leading-relaxed">kiyometaGoGo@kiyometa.onmicrosoft.com</p>
               </div>
               <div className="mt-3 space-y-2">
                 <div>
@@ -2453,8 +2544,8 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
               </tr>
             </thead>
             <tbody>
-              {items.map(o => (
-                <tr key={o.id} className="bg-white">
+              {items.map((o, itemIndex) => (
+                <tr key={o.id} className={`bg-white ${Math.floor(itemIndex / pageSize) + 1 !== visiblePage ? "hidden print:table-row" : ""}`}>
                   <td className="px-3 py-2.5 text-slate-800 border-b border-slate-100">
                     <span className="block">{o.productName}</span>
                     <span className="block font-mono text-xs text-slate-400">{o.orderNumber} / {o.client}</span>
@@ -2467,7 +2558,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
             </tbody>
           </table>
 
-          <p className="text-center text-xs text-slate-300 mt-8">{t("pageOf", lang).replace("{c}", String(currentPage)).replace("{t}", String(totalPages))}</p>
+          <p className="text-center text-xs text-slate-300 mt-8">{t("pageOf", lang).replace("{c}", String(visiblePage)).replace("{t}", String(totalPages))}</p>
           <div className="mt-6 border-t border-slate-200 pt-3">
             <label className="text-xs font-600 text-slate-500">{lang === "ja" ? "請求書発行メモ" : "Invoice issue note"}</label>
             <textarea value={invoiceNote} onChange={event => setInvoiceNote(event.target.value)} rows={2} placeholder={lang === "ja" ? "備考を入力" : "Add a note"} className="mt-1 w-full resize-none rounded-sm border border-slate-300 px-3 py-2 text-sm" />
@@ -2500,6 +2591,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   const [dirty, setDirty] = useState(isScanRouted);
   const [search, setSearch] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
+  const listPanel = useResizablePanel({ initial: 240, min: 160, max: 460, storageKey: "kiyometa.clients.list" });
 
   const filteredClients = clients.filter(c => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
 
@@ -2594,7 +2686,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         <ScanBanner message={lang === "ja" ? `取引先「${sd?.client}」が取引先マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
       <div className="responsive-workspace flex flex-1 overflow-hidden">
-        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+        <aside ref={listPanel.panelRef} className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2614,6 +2706,8 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
             ))}
           </div>
         </aside>
+
+        <ResizeHandle label={t("resizeList", lang)} {...listPanel.handleProps} />
 
         <main className="page-enter responsive-main flex-1 overflow-y-auto p-4 sm:p-7">
           {Object.values(errors).some(v => v) && (
@@ -2717,6 +2811,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [materialQty, setMaterialQty] = useState(1);
   const [materialBusy, setMaterialBusy] = useState(false);
   const [materialError, setMaterialError] = useState("");
+  const listPanel = useResizablePanel({ initial: 240, min: 160, max: 460, storageKey: "kiyometa.products.list" });
   const fileRef = useRef<HTMLInputElement>(null);
   // The product-drawings bucket is private, so display URLs are signed per
   // product on open rather than stored. signToken guards against a slow sign
@@ -2970,7 +3065,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
         <ScanBanner message={lang === "ja" ? `製品「${sd?.productName}」(${sd?.productNumber}) が製品マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
       <div className="responsive-workspace flex flex-1 overflow-hidden">
-        <aside className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
+        <aside ref={listPanel.panelRef} className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
               <Icon name="search" size={15} className="text-slate-400 shrink-0" />
@@ -2991,6 +3086,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             ))}
           </div>
         </aside>
+
+        <ResizeHandle label={t("resizeList", lang)} {...listPanel.handleProps} />
 
         <main className="page-enter responsive-main flex-1 overflow-y-auto p-4 sm:p-5">
           {(Object.entries(errors).some(([k, v]) => v && !k.startsWith("task_")) || taskErrors.length > 0) && (
@@ -3256,6 +3353,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 function DeliverySlipPage({ mode, orders, clients, products, orderIds, lang, setLang, onNavigate }: {
   mode: DeliverySlipMode; orders: OrderRecord[]; clients: Client[]; products: Product[]; orderIds: string[]; lang: Lang; setLang: (l: Lang) => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const printDialog = useDialog();
+  const printAction = useBillingAction(() => { void printDialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
   const [inCharge, setInCharge] = useState("");
   const [conditions, setConditions] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
@@ -3291,14 +3390,14 @@ function DeliverySlipPage({ mode, orders, clients, products, orderIds, lang, set
   };
 
   return (
-    <AppShell onNavigate={onNavigate} title={t("deliverySlipTitle", lang)} activePage="delivery-slip" showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
+    <AppShell onNavigate={onNavigate} title={t("deliverySlipTitle", lang)} activePage="delivery-slip" noPrint showBack backTarget="search-billing" backLabel={t("searchBilling", lang)} lang={lang} setLang={setLang}>
       <div className="flex items-center justify-between px-4 py-2.5 bg-[#f5f6f8] border-b border-slate-200 shrink-0">
         <Btn variant="outline" size="sm" onClick={() => onNavigate("search-billing")}><Icon name="chevron-left" size={14} />{t("returnButton", lang)}</Btn>
         <div className="flex-1" />
-        <Btn variant="primary" size="sm" onClick={() => window.print()} disabled={items.length === 0}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
+        <Btn variant="primary" size="sm" onClick={() => void printAction.run(() => printBillingDocument(lang, message => printDialog.alert(message)))} disabled={items.length === 0 || printAction.busy}><Icon name="printer" size={15} />{t("printButton", lang)}</Btn>
       </div>
-      <div className="flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
-        <div className="w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
+      <div className="billing-print-viewport flex-1 overflow-y-auto flex justify-center bg-slate-300 p-2 sm:p-8">
+        <div className="billing-document w-full max-w-2xl overflow-x-auto bg-white p-4 shadow-md sm:p-10">
           <h2 className="text-3xl font-700 text-slate-800 pb-2 border-b-2 border-slate-800 inline-block mb-2">{t("deliverySlipTitle", lang)}</h2>
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <FieldBox label={lang === "ja" ? (mode === "single" ? "納品書番号" : "出荷バッチ番号") : (mode === "single" ? "Delivery Slip No." : "Shipment Batch No.")}><TextInput value={deliveryNo} onChange={setDeliveryNumber} /></FieldBox>
@@ -3389,6 +3488,8 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   const [panelForm, setPanelForm] = useState<OrderRecord | null>(null);
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const filterPanel = useResizablePanel({ initial: 192, min: 150, max: 360, storageKey: "kiyometa.schedule.filter" });
+  const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.schedule.detail" });
 
   const productByKey = useMemo(() => {
     const m = new Map<string, Product>();
@@ -3483,7 +3584,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   return (
     <AppShell onNavigate={onNavigate} title={t("scheduleTitle", lang)} activePage="schedule" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
       <div className="responsive-workspace schedule-workspace flex flex-1 overflow-hidden min-h-0 bg-[#f5f6f8]">
-        <aside className="responsive-panel responsive-panel-filter w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
+        <aside ref={filterPanel.panelRef} className="responsive-panel responsive-panel-filter w-48 flex flex-col bg-[#1a3458] border-r border-slate-200 shrink-0 p-2 gap-2 overflow-y-auto min-h-0">
           <p className="mt-1 px-2 text-xs font-700 text-white/60 shrink-0">{t("scheduleFilter", lang)}</p>
           <div className="flex flex-col gap-1.5">
             {Object.entries(SCHEDULE_STATUS_COLORS).map(([status, colorClass]) => {
@@ -3497,6 +3598,8 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
             })}
           </div>
         </aside>
+
+        <ResizeHandle label={t("resizeFilter", lang)} {...filterPanel.handleProps} />
 
         <main className="page-enter responsive-calendar flex-1 flex flex-col min-h-0 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#f0f4f8] px-2 py-2 shrink-0 sm:flex-nowrap sm:px-4">
@@ -3561,7 +3664,9 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
           </div>
         </main>
 
-        <aside className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
+        <ResizeHandle label={t("resizeDetail", lang)} {...detailPanel.handleProps} />
+
+        <aside ref={detailPanel.panelRef} className="responsive-panel responsive-panel-detail w-80 bg-white border-l-2 border-slate-200 shrink-0 overflow-hidden flex flex-col min-h-0">
           <div className="px-4 py-3 bg-[#f5f6f8] border-b border-slate-200 shrink-0 flex items-center justify-between">
             <span className="flex items-center gap-2">
               <span className="text-base font-700 text-slate-800">{t("orderDetailsHeader", lang)}</span>
@@ -3660,6 +3765,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang;
 }) {
   const dialog = useDialog();
+  const printAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
   const order = orders.find(o => o.id === orderId);
   const product = products.find(p => p.clientName === order?.client && p.productName === order?.productName);
 
@@ -3702,7 +3808,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">{lang === "ja" ? "自動保存済み" : "Auto-saved"}</span>
-          <button onClick={() => window.print()} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("printButton", lang)}</button>
+          <button disabled={printAction.busy} onClick={() => void printAction.run(() => printBillingDocument(lang, message => dialog.alert(message)))} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t("printButton", lang)}</button>
         </div>
       </header>
 
@@ -3789,6 +3895,23 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   // because the print pages are reached by navigation, not by props from the
   // search page, and they need to know exactly which rows were selected.
   const [billingOrderIds, setBillingOrderIds] = useState<string[]>([]);
+  const [isPending, startTransition] = useTransition();
+  // While a route transition is in flight (chunk still downloading), drive the
+  // shared global popup so the user sees progress over the page they stay on.
+  useLoadingScope(isPending);
+
+  // Warm the lazy module chunks once the app is idle. After the first visit the
+  // chunks are cached, so navigation no longer suspends and feels instant.
+  useEffect(() => {
+    if (dataState !== "ready") return;
+    const prefetch = () => { for (const load of Object.values(pageLoaders)) void load(); };
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(prefetch);
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(prefetch, 1200);
+    return () => window.clearTimeout(timer);
+  }, [dataState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3845,9 +3968,11 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     const refreshOnVisibility = () => {
       if (document.visibilityState === "visible") void refreshData();
     };
+    const refreshOnAppResume = () => void refreshData();
 
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnVisibility);
+    window.addEventListener("kiyometa-resume", refreshOnAppResume);
 
     return () => {
       cancelled = true;
@@ -3856,13 +3981,17 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       void supabase.removeChannel(realtime);
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
+      window.removeEventListener("kiyometa-resume", refreshOnAppResume);
     };
   }, []);
 
   const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
     if (mode) setDeliveryMode(mode);
     if (orderId) setChecklistOrderId(orderId);
-    setPage(p);
+    // Route changes are a transition: if the target module's chunk is still
+    // downloading, React keeps the current page on screen (and the global popup
+    // shows) instead of swapping to a blank one, then commits once it's ready.
+    startTransition(() => setPage(p));
   };
 
   const openScan = () => setScanOpen(true);
@@ -3887,11 +4016,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   }, [orders]);
 
   if (dataState === "loading") {
-    return (
-      <div className="relative flex h-full items-center justify-center bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
-        <LoadingDialog active lang={lang} label={lang === "ja" ? "データを読み込んでいます…" : "Loading data…"} />
-      </div>
-    );
+    return <PageLoading />;
   }
 
   if (dataState === "error") {
@@ -3918,6 +4043,11 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
 
   return (
     <div className="h-full overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
+      {/* One stable boundary around every page. Because it is always mounted,
+          a transition into a still-downloading module keeps the previous page
+          visible instead of revealing the fallback; the fallback only appears
+          if there is genuinely no page to preserve. */}
+      <Suspense fallback={<PageLoading />}>
       <div className="h-full min-h-0 overflow-hidden">
         {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
         {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
@@ -3928,17 +4058,14 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} clients={clients} products={products} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
-        {page === "inventory"       && <Suspense fallback={<PageLoading lang={lang} />}><InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-        {page === "management" && profile.role === "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-        {page === "management" && profile.role !== "administrator" && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
-        {page === "profile"        && <Suspense fallback={<PageLoading lang={lang} />}><ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} /></Suspense>}
+        {page === "inventory"       && <InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "management" && profile.role === "administrator" && <ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "management" && profile.role !== "administrator" && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "profile"        && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
       </div>
+      </Suspense>
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>
   );
-}
-
-function PageLoading({ lang }: { lang: Lang }) {
-  return <div className="flex h-full items-center justify-center bg-[#f5f6f8] text-sm text-slate-500">{lang === "ja" ? "モジュールを読み込んでいます…" : "Loading module…"}</div>;
 }

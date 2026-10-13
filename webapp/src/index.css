@@ -308,3 +308,94 @@ img, svg {
   content-visibility: auto;
   contain-intrinsic-size: auto 88px;
 }
+
+/* Draggable dividers between workspace columns. The element itself is 10px wide
+   for a comfortable touch target but pulls its neighbours in by 5px on each
+   side, so it costs no layout width: it sits exactly on the seam between two
+   panels. The grip stays faintly visible so a tablet user can find it, and
+   turns teal on hover, focus, or while dragging. Hidden below the 768px
+   breakpoint, where the panels stack and the responsive stylesheet owns width. */
+.resize-handle {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  width: 10px;
+  margin: 0 -5px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.resize-handle-grip {
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 9999px;
+  background: rgba(148, 163, 184, 0.35);
+  transition: background-color 120ms ease, width 120ms ease;
+}
+
+.resize-handle:hover .resize-handle-grip,
+.resize-handle:focus-visible .resize-handle-grip,
+body.is-resizing .resize-handle-grip {
+  width: 4px;
+  background: #0d7377;
+}
+
+.resize-handle:focus-visible {
+  outline: none;
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing * {
+  cursor: col-resize !important;
+}
+
+@media (max-width: 767px) {
+  .resize-handle {
+    display: none;
+  }
+}
+
+
+
+/* Photo tools: small painted handles with a full 44px touch target. */
+.photo-tool { color: #334155; }
+.photo-tool:hover:not(:disabled), .photo-tool:focus-visible { background: #f0f4f8; }
+.photo-tool:focus-visible, .photo-text-action:focus-visible, .photo-primary:focus-visible {
+  outline: 2px solid #0d7377;
+  outline-offset: 3px;
+}
+.photo-text-action:hover:not(:disabled) { color: #1a3458; text-decoration: underline; text-underline-offset: 3px; }
+.photo-primary:hover:not(:disabled) { background: #112240; }
+.photo-primary:active:not(:disabled) { transform: translateY(1px); }
+.photo-crop-area { cursor: grab; }
+.photo-crop-area:active { cursor: grabbing; }
+.photo-corner { cursor: crosshair; background: transparent; }
+.photo-corner-mark { filter: drop-shadow(0 1px 2px rgb(15 23 42 / .6)); }
+.photo-corner:hover .photo-corner-mark, .photo-corner:focus-visible .photo-corner-mark { border-color: #14a085; }
+.photo-straighten { min-height: 44px; accent-color: #0d7377; cursor: ew-resize; }
+.photo-straighten:focus-visible { outline: 2px solid #0d7377; outline-offset: 2px; }
+@media (max-width: 639px) {
+  .photo-editor { padding: 16px; }
+  .photo-stage { padding: 24px; }
+  .photo-adjustments { gap: 4px; }
+}
+
+
+.billing-actions > button { font-size: 13px; line-height: 1.3; white-space: normal; min-width: 0; min-height: 52px; overflow-wrap: anywhere; }
+.invoice-sender { overflow-wrap: anywhere; }
+@media print {
+  .billing-print-viewport { display: block !important; overflow: visible !important; padding: 0 !important; background: white !important; }
+  .billing-document { max-width: none !important; overflow: visible !important; padding: 0 !important; box-shadow: none !important; }
+  .billing-document thead { display: table-header-group; }
+  .billing-document tr { break-inside: avoid; }
+  .popup-backdrop { display: none !important; }
+}

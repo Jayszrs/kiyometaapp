@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useGlobalLoading } from "../lib/loading";
+import { useGlobalLoading, useLoadingScope } from "../lib/loading";
 
 export default function LoadingDialog({ active, lang, label }: {
   active: boolean;
@@ -32,4 +32,14 @@ export function GlobalLoadingDialog() {
   const active = useGlobalLoading();
   const lang = localStorage.getItem("kiyometa-language") === "en" ? "en" : "ja";
   return <LoadingDialog active={active} lang={lang} />;
+}
+
+// Drop-in replacement for the old ad-hoc full-page loaders ("Loading module…",
+// the blank auth boot screen). It paints the neutral app background and
+// registers itself as a loading scope, so the one delayed popup above covers
+// module (lazy route) loads and the session check exactly the way it already
+// covers every network operation.
+export function PageLoading() {
+  useLoadingScope(true);
+  return <div className="h-full w-full bg-[#f5f6f8]" />;
 }

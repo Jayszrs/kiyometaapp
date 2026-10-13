@@ -1,5 +1,8 @@
 import type ExcelJS from "exceljs";
 
+import { hasNativeBridge, saveFileNative } from "./nativeBridge";
+
+
 /* ExcelJS and its dependencies (jszip, saxes, fast-csv) add roughly 270 kB
    gzipped. Importing it at the top level pulled that entire payload into the
    Inventory route chunk, so every visit to Inventory downloaded, parsed and
@@ -63,13 +66,24 @@ function safeFileName(value: string) {
 
 function download(buffer: ExcelJS.Buffer, fileName: string) {
   const bytes = new Uint8Array(buffer as ArrayBuffer);
+  const safeName = safeFileName(fileName);
+  // The Android WebView cannot follow blob: downloads; save through the native
+  // bridge instead so the workbook lands in the device Downloads folder.
+  if (hasNativeBridge()) {
+    saveFileNative(
+      safeName,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      bytes,
+    );
+    return;
+  }
   const blob = new Blob([bytes], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = safeFileName(fileName);
+  anchor.download = safeName;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

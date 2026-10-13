@@ -28,14 +28,36 @@ runtime and never downloads models or sends documents anywhere.
 | Route | Purpose |
 | --- | --- |
 | `GET /health` | `{"ok": true}` |
-| `POST /ocr` | multipart `file` -> `{ source, lines }` |
+| `POST /ocr` | legacy synchronous multipart `file` -> `{ source, lines }` |
+| `POST /ocr/jobs` | multipart `file` -> HTTP 202 `{ id }` |
+| `GET /ocr/jobs/{id}` | `queued`, `running`, `done` with `{ source, lines }`, or terminal error |
+| `DELETE /ocr/jobs/{id}` | request cooperative cancellation |
 | `POST /log` | parser trace; off unless `OCR_LOG_ENDPOINT=1` |
 
 Each line: `text`, `x0`, `y0`, `x1`, `y1`, `score`, zero-based `page`. Coordinates
 refer to the upright page; whole-page rotation is detected before extraction.
-The four reduced-size orientation candidates are scored concurrently (bounded
-by available CPU cores); all candidates are still evaluated before full-page
-recognition, so the orientation and extracted-text behavior is unchanged.
+Orientation uses one reduced-size detector pass. Text-box geometry selects the
+page axis; up to eight representative crops are recognized in two directions.
+Full multilingual/Japanese recognition then runs once on the upright page.
+Both recognizers share one unfiltered detector pass and one crop/classification
+pass; low-confidence multilingual text cannot discard Japanese-only readings.
+
+The web app polls jobs instead of holding one HTTP connection open during OCR.
+Identical submissions by the same authenticated user reuse the active/completed
+job; they do not repeat inference. One worker executes jobs and at most two jobs
+are outstanding. The scan modal keeps its own loading indicator; no loading
+popup is placed above it. Cancel/close requests backend cancellation, checked
+between inference phases and while waiting for the shared engine lock. An ONNX
+call already executing finishes before cancellation releases the engine.
+
+Jobs have a 300-second budget; the frontend has 330 seconds for submission and
+terminal polling. Results are retained for up to ten minutes (32 records maximum)
+and are scoped to the verified JWT subject. Source bytes are released after
+execution. Jobs are in-process: run a **single Uvicorn worker**. Restart loses job
+IDs/results; the user can retry. Multiple-worker deployments require a shared
+job store before enabling them. Update/restart the OCR service before serving
+the updated web app; `/ocr/jobs` and DELETE must pass through the same proxy as
+`/ocr`. The legacy `/ocr` endpoint remains for older integrations.
 
 Uploads are bounded so a single request cannot exhaust the server:
 

@@ -1,0 +1,43 @@
+{
+  "method": "Local CPU, single runs through run_ocr, model startup included in first request; no production network timing.",
+  "results": [
+    {
+      "name": "⓪注文書-1.pdf",
+      "seconds": 15.78200000000652,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      }
+    },
+    {
+      "name": "⓪注文書-2.pdf",
+      "seconds": 11.34299999999348,
+      "data": {
+        "orderDate": "2026-07-27",
+        "deliveryDate": "2026-08-03",
+        "client": "(株)マスダ シートメタル課",
+        "orderNumber": "MS294541",
+        "productNumber": "NSQ-F0124-05",
+        "productName": "タンク(TOP)",
+        "quantity": 1,
+        "unitPrice": 6000,
+        "orderAmount": 6000,
+        "processName": "ドブ漬け酸洗い処理",
+        "clientPostalCode": "399-4301",
+        "clientAddress": "長野県上伊那郡宮田村6623-2",
+        "clientPhone": ""
+      }
+    }
+  ]
+}

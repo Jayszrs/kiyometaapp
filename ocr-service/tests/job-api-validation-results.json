@@ -1,0 +1,65 @@
+{
+  "method": "Local TestClient API with real OCR. PDFs submitted together, second queues; duplicates reused job IDs. Camera submitted after PDFs. Times include queue/polling and cold initialization in first job; no production network.",
+  "results": [
+    {
+      "name": "⓪注文書-1.pdf",
+      "secondsIncludingQueue": 30.016,
+      "ackSeconds": 0.0470000000204891,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      }
+    },
+    {
+      "name": "⓪注文書-2.pdf",
+      "secondsIncludingQueue": 44.187,
+      "ackSeconds": 0.015999999945051968,
+      "data": {
+        "orderDate": "2026-07-27",
+        "deliveryDate": "2026-08-03",
+        "client": "(株)マスダ シートメタル課",
+        "orderNumber": "MS294541",
+        "productNumber": "NSQ-F0124-05",
+        "productName": "タンク(TOP)",
+        "quantity": 1,
+        "unitPrice": 6000,
+        "orderAmount": 6000,
+        "processName": "ドブ漬け酸洗い処理",
+        "clientPostalCode": "399-4301",
+        "clientAddress": "長野県上伊那郡宮田村6623-2",
+        "clientPhone": ""
+      }
+    },
+    {
+      "name": "camera.png",
+      "secondsIncludingQueue": 18.5,
+      "ackSeconds": 0.01600000006146729,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県激訪郡下微訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      }
+    }
+  ]
+}

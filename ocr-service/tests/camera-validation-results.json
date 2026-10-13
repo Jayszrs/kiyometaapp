@@ -1,0 +1,443 @@
+{
+  "method": "Local CPU, loaded engines; single observations, excludes initialization and network. Before uses HEAD OCR/parser. After uses changed OCR/parser. Camera inputs are supplied tablet screenshots of camera previews, not original camera JPEGs. Seed-equivalent records, no live database.",
+  "results": [
+    {
+      "input": "⓪注文書-1.pdf",
+      "version": "before",
+      "seconds": 32.141,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": true,
+      "reviewFields": [
+        "orderDate",
+        "orderNumber",
+        "productNumber",
+        "orderAmount"
+      ],
+      "missingFields": [
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "⓪注文書-2.pdf",
+      "version": "before",
+      "seconds": 24.141,
+      "data": {
+        "orderDate": "2026-07-27",
+        "deliveryDate": "2026-08-03",
+        "client": "(株)マスダ シートメタル課",
+        "orderNumber": "MS294541",
+        "productNumber": "NSQ-F0124-05",
+        "productName": "タンク(TOP)",
+        "quantity": 1,
+        "unitPrice": 6000,
+        "orderAmount": 6000,
+        "processName": "ドブ漬け酸洗い処理",
+        "clientPostalCode": "399-4301",
+        "clientAddress": "長野県上伊那郡宮田村6623-2",
+        "clientPhone": ""
+      },
+      "clientMatched": true,
+      "productMatched": false,
+      "reviewFields": [
+        "deliveryDate",
+        "client",
+        "orderNumber",
+        "productName",
+        "unitPrice",
+        "orderAmount",
+        "processName",
+        "clientPostalCode",
+        "clientAddress"
+      ],
+      "missingFields": [
+        "clientPhone"
+      ]
+    },
+    {
+      "input": "camera-landscape-raw",
+      "version": "before",
+      "seconds": 31.969,
+      "data": {
+        "orderDate": "",
+        "deliveryDate": "",
+        "client": "伸和テクソス株式会社",
+        "orderNumber": "",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 0,
+        "unitPrice": 0,
+        "orderAmount": 210266,
+        "processName": "数豊",
+        "clientPostalCode": "",
+        "clientAddress": "長野県i訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": false,
+      "productMatched": false,
+      "reviewFields": [
+        "client",
+        "productNumber",
+        "orderAmount",
+        "processName",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "orderDate",
+        "deliveryDate",
+        "orderNumber",
+        "quantity",
+        "unitPrice",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-landscape-raw",
+      "version": "after",
+      "seconds": 22.844,
+      "data": {
+        "orderDate": "",
+        "deliveryDate": "",
+        "client": "伸和テクイス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 0,
+        "unitPrice": 0,
+        "orderAmount": 15000,
+        "processName": "酸洗し",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": false,
+      "productMatched": false,
+      "reviewFields": [
+        "client",
+        "orderNumber",
+        "productNumber",
+        "orderAmount",
+        "processName",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "orderDate",
+        "deliveryDate",
+        "quantity",
+        "unitPrice",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-landscape-adjusted",
+      "version": "after",
+      "seconds": 14.079,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクソス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "ウンク",
+        "quantity": 0,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗し",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": false,
+      "productMatched": false,
+      "reviewFields": [
+        "orderDate",
+        "client",
+        "orderNumber",
+        "productNumber",
+        "productName",
+        "unitPrice",
+        "orderAmount",
+        "processName",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "quantity",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-portrait-raw",
+      "version": "before",
+      "seconds": 20.078,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "",
+        "productNumber": "",
+        "productName": "クンク",
+        "quantity": 3,
+        "unitPrice": 0,
+        "orderAmount": 15,
+        "processName": "",
+        "clientPostalCode": "",
+        "clientAddress": "長野県微訪都下通防町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": false,
+      "reviewFields": [
+        "orderDate",
+        "deliveryDate",
+        "client",
+        "productName",
+        "quantity",
+        "orderAmount",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "orderNumber",
+        "productNumber",
+        "unitPrice",
+        "processName",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-portrait-raw",
+      "version": "after",
+      "seconds": 21.61,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "",
+        "productName": "クンク",
+        "quantity": 3,
+        "unitPrice": 0,
+        "orderAmount": 15000,
+        "processName": "",
+        "clientPostalCode": "",
+        "clientAddress": "長野県微訪都下通防町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": false,
+      "reviewFields": [
+        "orderDate",
+        "deliveryDate",
+        "client",
+        "orderNumber",
+        "productName",
+        "quantity",
+        "orderAmount",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "productNumber",
+        "unitPrice",
+        "processName",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-screen2-raw",
+      "version": "before",
+      "seconds": 32.266,
+      "data": {
+        "orderDate": "",
+        "deliveryDate": "",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "",
+        "productNumber": "",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 210266,
+        "orderAmount": 15,
+        "processName": "竈先!",
+        "clientPostalCode": "",
+        "clientAddress": "長野果款訪郡下訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": true,
+      "reviewFields": [
+        "client",
+        "productName",
+        "unitPrice",
+        "orderAmount",
+        "processName",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "orderDate",
+        "deliveryDate",
+        "orderNumber",
+        "productNumber",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "camera-portrait-final",
+      "version": "after",
+      "seconds": 16.281,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "",
+        "productName": "クンク",
+        "quantity": 3,
+        "unitPrice": 0,
+        "orderAmount": 15000,
+        "processName": "",
+        "clientPostalCode": "",
+        "clientAddress": "長野県微訪都下通防町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": false,
+      "reviewFields": [
+        "orderDate",
+        "deliveryDate",
+        "client",
+        "orderNumber",
+        "productName",
+        "quantity",
+        "orderAmount",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "productNumber",
+        "unitPrice",
+        "processName",
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "⓪注文書-1.pdf-final",
+      "version": "after",
+      "seconds": 21.985,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": true,
+      "reviewFields": [
+        "orderDate",
+        "orderNumber",
+        "productNumber",
+        "orderAmount"
+      ],
+      "missingFields": [
+        "clientPostalCode"
+      ]
+    },
+    {
+      "input": "⓪注文書-2.pdf-final",
+      "version": "after",
+      "seconds": 24.985,
+      "data": {
+        "orderDate": "2026-07-27",
+        "deliveryDate": "2026-08-03",
+        "client": "(株)マスダ シートメタル課",
+        "orderNumber": "MS294541",
+        "productNumber": "NSQ-F0124-05",
+        "productName": "タンク(TOP)",
+        "quantity": 1,
+        "unitPrice": 6000,
+        "orderAmount": 6000,
+        "processName": "ドブ漬け酸洗い処理",
+        "clientPostalCode": "399-4301",
+        "clientAddress": "長野県上伊那郡宮田村6623-2",
+        "clientPhone": ""
+      },
+      "clientMatched": true,
+      "productMatched": false,
+      "reviewFields": [
+        "deliveryDate",
+        "client",
+        "orderNumber",
+        "productName",
+        "unitPrice",
+        "orderAmount",
+        "processName",
+        "clientPostalCode",
+        "clientAddress"
+      ],
+      "missingFields": [
+        "clientPhone"
+      ]
+    },
+    {
+      "input": "camera-screen2-final",
+      "version": "after",
+      "seconds": 10.485,
+      "data": {
+        "orderDate": "2026-08-17",
+        "deliveryDate": "2026-08-20",
+        "client": "伸和テクノス株式会社",
+        "orderNumber": "210266",
+        "productNumber": "NHD-F1772-11",
+        "productName": "タンク",
+        "quantity": 3,
+        "unitPrice": 5000,
+        "orderAmount": 15000,
+        "processName": "酸洗い",
+        "clientPostalCode": "",
+        "clientAddress": "長野県激訪郡下微訪町4611番地90",
+        "clientPhone": "0266-28-0105"
+      },
+      "clientMatched": true,
+      "productMatched": true,
+      "reviewFields": [
+        "orderDate",
+        "deliveryDate",
+        "orderNumber",
+        "productNumber",
+        "productName",
+        "unitPrice",
+        "orderAmount",
+        "processName",
+        "clientAddress",
+        "clientPhone"
+      ],
+      "missingFields": [
+        "clientPostalCode"
+      ]
+    }
+  ]
+}

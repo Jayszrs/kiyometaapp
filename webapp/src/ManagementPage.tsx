@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth, type UserRole } from "./lib/auth";
 import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
+import { passwordBreachCount } from "./lib/pwnedPassword";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import { useDialog } from "./components/AppDialog";
 import {
@@ -113,6 +114,12 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   };
 
   const createUser = () => run(async () => {
+    const breaches = await passwordBreachCount(password);
+    if (breaches > 0) {
+      throw new Error(lang === "ja"
+        ? `このパスワードは既知のデータ漏洩に ${breaches} 回出現しています。別のパスワードを選んでください。`
+        : `This password appears in ${breaches} known data breaches. Choose a different password.`);
+    }
     await createManagedUser({ username, displayName, password, role });
     setUsername("");
     setDisplayName("");
@@ -123,6 +130,12 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   const submitReset = () => {
     if (!resetTarget) return;
     void run(async () => {
+      const breaches = await passwordBreachCount(resetPassword);
+      if (breaches > 0) {
+        throw new Error(lang === "ja"
+          ? `このパスワードは既知のデータ漏洩に ${breaches} 回出現しています。別のパスワードを選んでください。`
+          : `This password appears in ${breaches} known data breaches. Choose a different password.`);
+      }
       await resetManagedUserPassword(resetTarget.id, resetPassword);
       setResetTarget(null);
       setResetPassword("operator1234");

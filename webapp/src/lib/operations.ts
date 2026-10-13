@@ -66,6 +66,9 @@ export interface Purchase {
   status: "ordered" | "partial" | "received" | "cancelled";
   pic: string;
   notes: string;
+  version?: number;
+  updatedBy?: string | null;
+  updatedByUsername?: string | null;
 }
 
 export interface StockMovement {
@@ -261,6 +264,9 @@ function purchaseFromRow(row: Record<string, unknown>): Purchase {
     status: row.status as Purchase["status"],
     pic: String(row.pic ?? ""),
     notes: String(row.notes ?? ""),
+    version: Number(row.version ?? 1),
+    updatedBy: row.updated_by ? String(row.updated_by) : null,
+    updatedByUsername: row.updated_by_username ? String(row.updated_by_username) : null,
   };
 }
 
@@ -355,6 +361,19 @@ export async function deleteInventoryItem(id: string): Promise<void> {
   throw error;
 }
 
+// Concurrent edit protection, mirroring the orders guard in db.ts. The old
+// save was a plain update with no precondition, so two operators editing the
+// same purchase silently overwrote each other — and a reverted "received"
+// status could re-post an automatic stock reversal. The database now carries a
+// version column; a save only applies when it still matches, and a miss is a
+// conflict the user has to resolve by reloading, never a silent overwrite.
+export class StalePurchaseError extends Error {
+  constructor(public readonly purchaseId: string) {
+    super("This purchase was changed by someone else while you were editing it. Reload to see the current values, then reapply your change.");
+    this.name = "StalePurchaseError";
+  }
+}
+
 export async function savePurchase(purchase: Purchase) {
   const row = {
     id: purchase.id,
@@ -370,10 +389,20 @@ export async function savePurchase(purchase: Purchase) {
     notes: purchase.notes.trim(),
     updated_at: new Date().toISOString(),
   };
-  const result = purchase.purchaseNo
-    ? await supabase.from("purchases").update(row).eq("id", purchase.id)
-    : await supabase.from("purchases").insert(row);
-  const { error } = result;
+  if (purchase.purchaseNo) {
+    const expectedVersion = purchase.version ?? 1;
+    const { data, error } = await supabase
+      .from("purchases")
+      .update({ ...row, version: expectedVersion + 1 })
+      .eq("id", purchase.id)
+      .eq("version", expectedVersion)
+      .select("id")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new StalePurchaseError(purchase.id);
+    return;
+  }
+  const { error } = await supabase.from("purchases").insert({ ...row, version: 1 });
   if (error) throw error;
 }
 

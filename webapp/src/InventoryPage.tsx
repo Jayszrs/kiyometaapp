@@ -16,6 +16,7 @@ import {
   saveBomItem,
   saveInventoryItem,
   savePurchase,
+  StalePurchaseError,
   type BomItem,
   type InventoryCategory,
   type InventoryItem,
@@ -24,6 +25,8 @@ import {
   type StockMovement,
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
+import { isAndroidWebView, printBillingDocument, useBillingAction } from "./lib/billingActions";
+import { hasNativeBridge } from "./lib/nativeBridge";
 import { supabase } from "./lib/supabaseClient";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
@@ -277,6 +280,19 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [bom, setBom] = useState<BomItem[]>([]);
   const [itemForm, setItemForm] = useState<InventoryItem | null>(null);
   const [purchaseForm, setPurchaseForm] = useState<Purchase | null>(null);
+  const [purchaseEditorLabel, setPurchaseEditorLabel] = useState<string | null>(null);
+  useEffect(() => {
+    if (!purchaseForm?.updatedBy) { setPurchaseEditorLabel(null); return; }
+    let cancelled = false;
+    setPurchaseEditorLabel(null);
+    // The editor's username sits on the row already; user_label only adds the
+    // current display name + role, which are hidden from other users by RLS.
+    void (async () => {
+      const { data } = await supabase.rpc("user_label", { p_user_id: purchaseForm.updatedBy });
+      if (!cancelled) setPurchaseEditorLabel((data as string | null) ?? null);
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, [purchaseForm?.id, purchaseForm?.updatedBy]);
   const [movementOpen, setMovementOpen] = useState(false);
   const [movementItem, setMovementItem] = useState("");
   const [movementType, setMovementType] = useState("material_issue");
@@ -292,6 +308,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [transferDialog, setTransferDialog] = useState<TransferDialogState | null>(null);
   const [search, setSearch] = useState("");
   const isWide = useIsTabletOrWider();
+  const printAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
   const [movementDirection, setMovementDirection] = useState<"all" | "outgoing" | "incoming">("all");
   const langRef = useRef(lang);
   langRef.current = lang;
@@ -403,7 +420,20 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
 
   const submitPurchase = () => {
     if (!purchaseForm?.itemId || !purchaseForm.supplierName.trim()) return;
-    void run(async () => { await savePurchase(purchaseForm); setPurchaseForm(null);     }, text("Purchase and stock receipt saved. Purchase number is generated automatically.", "仕入と入荷を登録しました。仕入番号は自動採番されます。"));
+    void run(async () => {
+      try {
+        await savePurchase(purchaseForm);
+        setPurchaseForm(null);
+      } catch (err) {
+        if (err instanceof StalePurchaseError) {
+          setError(lang === "ja"
+            ? "この仕入は編集している間に別のユーザーが保存しました。最新の内容を読み込んで変更をやり直してください。"
+            : err.message);
+        } else {
+          throw err;
+        }
+      }
+    }, text("Purchase and stock receipt saved. Purchase number is generated automatically.", "仕入と入荷を登録しました。仕入番号は自動採番されます。"));
   };
 
   const submitMovement = () => {
@@ -680,8 +710,13 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   };
 
   const printReceipt = (purchase: Purchase) => {
-    setPrintPurchase(purchase);
-    window.setTimeout(() => window.print(), 80);
+    void printAction.run(async () => {
+      if (hasNativeBridge() || !isAndroidWebView()) {
+        setPrintPurchase(purchase);
+        await new Promise<void>(resolve => setTimeout(resolve, 120));
+      }
+      await printBillingDocument(lang, message => dialog.alert(message));
+    });
   };
 
   return (
@@ -771,6 +806,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
 
       {purchaseForm && <div className="popup-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 pt-4 print:hidden sm:items-center sm:p-4"><div className="popup-panel max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-4 shadow-2xl sm:max-h-[90vh] sm:p-6">
         <div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-700 text-[#1a3458]">{text("Purchase inventory", "在庫品を仕入")}</h2><p className="text-sm text-slate-500">{text("Received quantity is posted directly into stock.", "入荷数は在庫に直接反映されます。")}</p></div><button onClick={() => setPurchaseForm(null)} className="text-xl text-slate-400">×</button></div>
+        {purchaseForm.updatedByUsername && <p className="-mt-2 mb-4 text-xs text-slate-400">{text("Last edited by", "最終編集")}: {purchaseEditorLabel ?? purchaseForm.updatedByUsername}</p>}
         <div className="grid gap-4 sm:grid-cols-2"><Field label={text("Purchase number", "仕入番号")}><input value={purchaseForm.purchaseNo || text("Generated automatically", "自動採番")} readOnly className={`${inputClass} cursor-not-allowed bg-slate-100 font-mono text-slate-500`} /></Field><Field label={text("Purchase date", "仕入日")}><input type="date" value={purchaseForm.purchaseDate} onChange={e => setPurchaseForm({ ...purchaseForm, purchaseDate: e.target.value })} className={inputClass} /></Field><Field label={text("Supplier", "仕入先")}><input value={purchaseForm.supplierName} onChange={e => setPurchaseForm({ ...purchaseForm, supplierName: e.target.value })} className={inputClass} /></Field><Field label={text("Inventory item", "在庫品目")}><select value={purchaseForm.itemId} onChange={e => { const selected = items.find(item => item.id === e.target.value); setPurchaseForm({ ...purchaseForm, itemId: e.target.value, unitPrice: selected?.unitCost ?? purchaseForm.unitPrice, supplierName: purchaseForm.supplierName || selected?.supplierName || "" }); }} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field><Field label={text("Ordered quantity", "発注数")}><input type="number" min="0.001" step="0.001" value={purchaseForm.orderedQty} onChange={e => setPurchaseForm({ ...purchaseForm, orderedQty: number(e.target.value) })} className={inputClass} /></Field><Field label={text("Received quantity", "入荷数")}><input type="number" min="0" max={purchaseForm.orderedQty} step="0.001" value={purchaseForm.receivedQty} onChange={e => setPurchaseForm({ ...purchaseForm, receivedQty: number(e.target.value) })} className={inputClass} /></Field><Field label={text("Unit price", "単価")}><input type="number" min="0" value={purchaseForm.unitPrice} onChange={e => setPurchaseForm({ ...purchaseForm, unitPrice: number(e.target.value) })} className={inputClass} /></Field><Field label={text("Due date", "納期")}><input type="date" value={purchaseForm.dueDate} onChange={e => setPurchaseForm({ ...purchaseForm, dueDate: e.target.value })} className={inputClass} /></Field><Field label={text("Status", "状態")}><select value={purchaseForm.status} onChange={e => setPurchaseForm({ ...purchaseForm, status: e.target.value as Purchase["status"] })} className={inputClass}><option value="ordered">{purchaseStatusLabel("ordered")}</option><option value="partial">{purchaseStatusLabel("partial")}</option><option value="received">{purchaseStatusLabel("received")}</option><option value="cancelled">{purchaseStatusLabel("cancelled")}</option></select></Field><Field label={text("PIC", "担当者")}><input value={purchaseForm.pic} onChange={e => setPurchaseForm({ ...purchaseForm, pic: e.target.value })} className={inputClass} /></Field></div>
         <Field label={text("Notes", "備考")}><textarea value={purchaseForm.notes} onChange={e => setPurchaseForm({ ...purchaseForm, notes: e.target.value })} className={`${inputClass} mt-4 min-h-20`} /></Field>
         <div className="mt-6 flex justify-end gap-2"><button onClick={() => setPurchaseForm(null)} className={outlineButton}>{text("Cancel", "キャンセル")}</button><button disabled={busy || !purchaseForm.itemId || !purchaseForm.supplierName.trim() || purchaseForm.orderedQty <= 0 || purchaseForm.receivedQty > purchaseForm.orderedQty} onClick={submitPurchase} className="rounded bg-[#1a3458] px-5 py-2 font-700 text-white disabled:opacity-40">{text("Save purchase", "仕入を保存")}</button></div>
