@@ -867,7 +867,7 @@ return (
                       const chosen = key ? String(editedData?.[key] ?? "") : "";
                       return (
                         <div key={a.id}
-                          className={`text-sm rounded-sm px-3 py-2 space-y-2 ${a.kind === "missingOptional" ? "text-slate-600 bg-slate-100 border border-slate-200" : "text-amber-800 bg-amber-50 border border-amber-100"}`}>
+                          className="text-sm rounded-sm px-3 py-2 space-y-2 text-amber-800 bg-amber-50 border border-amber-100">
                           <p>{a.message}</p>
                           {a.candidates && key && (
                             <div className="flex flex-wrap gap-2">
