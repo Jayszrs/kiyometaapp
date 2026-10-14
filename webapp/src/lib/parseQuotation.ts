@@ -310,8 +310,8 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
       alternatives[key] = [...new Set([best.value, ...candidates.filter(c => c.box.page === best.box.page && Math.abs(c.cost-best.cost) < 0.25).map(c => c.value)])];
       alerts.push({ id:`ambiguous:${key}`, kind:"ambiguous", key, candidates: alternatives[key],
         message: lang === "ja"
-          ? `${fieldName(key, lang)}: 書類の「${best.label}」付近に複数の読み取り候補があります（${best.box.page+1}ページ）。マスタの類似度ではありません。書類と比較し、この欄で正しい候補を選ぶか、値を修正してください。`
-          : `${fieldName(key, lang)}: OCR found several possible values near “${best.label}” on page ${best.box.page+1}. This refers to their position in the document, not a master-data match. Compare with your document, then choose the correct reading or edit this field.` });
+          ? `${fieldName(key, lang)}：「${best.label}」付近に候補が${alternatives[key]?.length ?? 2}件（${best.box.page+1}ページ）。位置が近いだけでマスタ照合ではありません。1つ選ぶか、この欄を修正してください。`
+          : `${fieldName(key, lang)}: ${alternatives[key]?.length ?? 2} possible readings near "${best.label}" on page ${best.box.page+1}. These come from nearby text, not a master-data match. Pick one or edit the field.` });
       best.confidence = Math.min(best.confidence,0.6);
     }
     return best;
@@ -361,24 +361,28 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   const data = Object.fromEntries(keys.map(k => [k,numeric.has(k) ? Number(hits[k]?.value ?? 0) : hits[k]?.value ?? ""])) as unknown as ScanFillData;
   const productCodes = new Set(anchors.filter(a => a.key === "productNumber" && a.label === hits.productNumber?.label).flatMap(a => values.filter(b => b.page === a.page && b.y0 >= a.y1 && b.y0-a.y1 < height(a)*7 && b.x0 >= a.x0-height(a)*8 && b.x0 <= a.x1).map(b => valueFor("productNumber",b.text))).filter(Boolean));
   if (productCodes.size > 1) alerts.push({ id:"multiItem", kind:"multiItem", message: lang === "ja"
-    ? "複数の品目が検出されました。最初の品目のみを読み込みます。各項目が同じ行に属するか確認してください。"
-    : "Multiple items detected. This form imports the first item; confirm that all item fields belong to the same row." });
+    ? "複数の品目が検出されました。最初の品目のみ読み込みます。同じ行の項目か確認してください。"
+    : "Multiple items detected. Only the first item is imported. Confirm the others share its row." });
   if (hits.quantity && hits.unitPrice && hits.orderAmount && Math.abs(data.quantity*data.unitPrice-data.orderAmount)>0.01) {
     const money = (n: number) => (Math.round(n * 10000) / 10000).toLocaleString("en-US");
     const calculated = money(data.quantity * data.unitPrice);
     alerts.push({ id:"mismatch", kind:"mismatch",
       message: lang === "ja"
-        ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があります。値が違う場合は単価の欄を先に修正してください。値引きや複数明細で差が出る場合は、この内容のままフォームに反映できます。`
-        : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread. If the field is wrong, correct it first. If a discount or several items explain the difference, you can still apply these values to the order form.` });
+        ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} です。単価の誤読がないか確認してください。値引きや複数明細による差であれば、そのまま反映できます。`
+        : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. Check the unit price, or apply as is if a discount or several items explain the difference.` });
   }
   const missing = keys.filter(k => !hits[k]);
   for (const k of missing) {
     const optional = k === "clientPhone";
     const label = fieldName(k, lang);
     alerts.push({ id:`missing:${k}`, kind: optional ? "missingOptional" : "missing", key:k,
-      message: lang === "ja"
-        ? `${label}: 検出できませんでした。書類を確認してこの欄を入力してください。${optional ? "任意項目のため、書類に記載がなければ空欄のままで構いません。" : ""}`
-        : `Not found: ${label}. Check your document and fill in this field.${optional ? " Phone is optional; leave it blank if it is not printed." : ""}` });
+      message: optional
+        ? (lang === "ja"
+          ? `${label}: 検出できませんでした。任意項目のため、書類に記載がなければ空欄のままで構いません。`
+          : `${label}: not found. Phone is optional, so leave it blank if it is not printed.`)
+        : (lang === "ja"
+          ? `${label}: 検出できませんでした。書類を見て入力してください。`
+          : `Not found: ${label}. Fill it in from the document.`) });
   }
   const text = compact(lines.map(l => l.text).join(" "));
   const template: ScanTemplate = text.includes("注文書") ? "order-sheet" : text.includes("発注書") ? "purchase-order" : "unnamed";
