@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
-import { fetchAll, fetchProduct, upsertOrder, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
+import { fetchAll, fetchProduct, upsertOrder, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
@@ -2086,11 +2086,53 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
       popup.document.write(printHtml);
       popup.document.close();
     }
-    try {
-      const updated = await Promise.all(selectedOrders.map(order => upsertOrder({ ...order, preparationPrintStatus: "completed", preparationPrintedAt: new Date().toISOString() })));
-      setOrders(previous => previous.map(order => updated.find(next => next.id === order.id) ?? order));
-    } catch (error) {
-      dialog.alert(lang === "ja" ? `準備印刷の記録を保存できませんでした。${error instanceof Error ? error.message : ""}` : `The preparation print was created, but its completion could not be saved. ${error instanceof Error ? error.message : ""}`);
+    const printedAt = new Date().toISOString();
+    let pendingPrintOrders = selectedOrders;
+    while (pendingPrintOrders.length) {
+    const results = await Promise.allSettled(pendingPrintOrders.map(order => markPreparationPrinted(order, printedAt)));
+    const saved = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+    // Keep successful updates even when one row conflicts; otherwise our own
+    // successful writes leave stale versions and cause another false conflict.
+    setOrders(previous => previous.map(order => saved.find(next => next.id === order.id) ?? order));
+    const failures = results.flatMap((result, index) => result.status === "rejected" ? [{ order: pendingPrintOrders[index], error: result.reason }] : []);
+    if (failures.length) {
+      const details = failures.map(({order, error}) => error instanceof StaleOrderError
+        ? `${order.orderNumber || order.id}: ${error.latestEditor
+          ? (lang === "ja" ? `最終更新者: ${error.latestEditor}` : `Last changed by ${error.latestEditor}`)
+          : (lang === "ja" ? "最終更新者の情報がありません" : "Latest editor username unavailable")}`
+        : `${order.orderNumber || order.id}: ${error?.code === "42501" ? (lang === "ja" ? "データベースの権限により保存できません" : "Database permission denied while saving") : error instanceof Error ? error.message : typeof error?.message === "string" ? error.message : (lang === "ja" ? "保存できませんでした" : "Could not save print status")}`).join("\n");
+      if (!failures.some(({error}) => error instanceof StaleOrderError)) {
+        if (failures.some(({error}) => error?.code === "42501")) {
+          void dialog.alert((lang === "ja" ? "印刷記録の保存がデータベースの権限で拒否されました。他のユーザーによる変更ではありません。管理者に権限の確認を依頼してください。再読み込みでは解決しません。\n\n" : "Saving print status was denied by database permissions. This is not another user editing the order. Ask an administrator to check access; reloading will not fix it.\n\n") + details);
+          return;
+        }
+        const retry = await dialog.confirm((lang === "ja" ? "印刷データは作成済みですが、記録の保存に失敗しました。保存のみ再試行できます。再印刷は行いません。\n\n" : "The print was created, but saving its status failed. Retry saving only; this will not print another copy.\n\n") + details,
+          { confirmLabel: lang === "ja" ? "保存を再試行" : "Retry saving status", cancelLabel: lang === "ja" ? "後で" : "Later" });
+        if (!retry) return;
+        pendingPrintOrders = failures.map(({order}) => order);
+        continue;
+      }
+      const reload = await dialog.confirm((lang === "ja"
+        ? "印刷データは作成済みですが、一部の印刷記録を保存できませんでした。最新の受注を読み込み、変更内容を確認してから再度印刷してください。\n\n"
+        : "The print was created, but some print statuses could not be saved. Load the latest orders, review their changes, then print again.\n\n") + details,
+        { confirmLabel: lang === "ja" ? "最新の受注を読み込む" : "Load latest orders", cancelLabel: lang === "ja" ? "後で" : "Later" });
+      if (reload) {
+        try {
+          const ids = selectedOrders.map(order => order.id);
+          const latest = await fetchOrdersByIds(ids);
+          const refreshedIds = new Set(ids);
+          const latestById = new Map(latest.map(order => [order.id, order]));
+          setOrders(previous => previous.flatMap(order => refreshedIds.has(order.id) ? (latestById.has(order.id) ? [latestById.get(order.id)!] : []) : [order]));
+          setBillingOrderIds(previous => previous.filter(id => !refreshedIds.has(id) || latestById.has(id)));
+          // Preserve unsaved form edits; the refreshed search rows show server
+          // values and the next print uses those versions, without an app reload.
+          void dialog.alert(lang === "ja" ? "最新の受注を読み込みました。変更内容を確認して、事前準備印刷をもう一度実行してください。" : "Latest orders loaded. Review the updated rows, then choose Preparation Print again.");
+        } catch {
+          void dialog.alert(lang === "ja" ? "受注を読み込めませんでした。接続を確認して再試行してください。" : "Could not load the latest orders. Check the connection and retry Preparation Print.");
+        }
+      }
+    }
+    break;
     }
     });
   };

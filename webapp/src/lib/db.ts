@@ -54,6 +54,7 @@ interface OrderRow {
   preparation_printed_at?: string | null;
   version: number;
   inventory_stock_applied: boolean;
+  updated_by_username?: string | null;
 }
 
 function clientFromRow(r: ClientRow): Client {
@@ -368,8 +369,10 @@ export async function deleteProduct(id: string): Promise<void> {
 // A save sends the version it read and only applies if it still matches. A miss
 // is a conflict the user has to resolve by reloading, never a silent overwrite.
 export class StaleOrderError extends Error {
-  constructor(public readonly orderId: string) {
-    super("This order was changed by someone else while you were editing it. Reload to see the current values, then reapply your change.");
+  constructor(public readonly orderId: string, public readonly latestEditor?: string) {
+    super(latestEditor
+      ? `This order was last changed by ${latestEditor}. Load the latest order before retrying.`
+      : "This order has a newer version. The latest editor's username is unavailable. Load the latest order before retrying.");
     this.name = "StaleOrderError";
   }
 }
@@ -386,15 +389,20 @@ export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
     .single();
 
   if (error) {
+    if (error.code !== "PGRST116") throw error;
     // Postgres reports a missing row on .single() as 0 rows. That is either a
     // genuinely new order or a version that has moved on, so distinguish the
     // two before deciding to insert.
-    const { data: existing } = await supabase
+    const { data: existing, error: lookupError } = await supabase
       .from("orders")
-      .select("id, version")
+      .select("*")
       .eq("id", o.id)
       .maybeSingle();
-    if (existing) throw new StaleOrderError(o.id);
+    if (lookupError) throw lookupError;
+    if (existing) {
+      if (existing.version !== expectedVersion) throw new StaleOrderError(o.id, existing.updated_by_username?.trim() || undefined);
+      throw error;
+    }
   }
 
   if (data) return orderFromRow(data as OrderRow);
@@ -406,6 +414,29 @@ export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
     .single();
   if (insertError) throw insertError;
   return orderFromRow(inserted as OrderRow);
+}
+
+// Print metadata is a narrow update: never re-submit the printed snapshot's
+// quantity/progress/financial fields while another operator is editing them.
+export async function markPreparationPrinted(order: OrderRecord, printedAt: string): Promise<OrderRecord> {
+  const expectedVersion = order.version ?? 1;
+  const { data, error } = await supabase.from("orders")
+    .update({ preparation_print_status: "completed", preparation_printed_at: printedAt, version: expectedVersion + 1 })
+    .eq("id", order.id).eq("version", expectedVersion).select().single();
+  if (data) return orderFromRow(data as OrderRow);
+  if (error && error.code !== "PGRST116") throw error;
+  const { data: latest, error: lookupError } = await supabase.from("orders").select("*").eq("id", order.id).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (!latest) throw new Error("This order is no longer available. Load the latest orders.");
+  if (latest.version !== expectedVersion) throw new StaleOrderError(order.id, latest.updated_by_username?.trim() || undefined);
+  throw error ?? new Error("Could not save the preparation print status.");
+}
+
+export async function fetchOrdersByIds(ids: string[]): Promise<OrderRecord[]> {
+  if (!ids.length) return [];
+  const { data, error } = await supabase.from("orders").select("*").in("id", ids);
+  if (error) throw error;
+  return (data as OrderRow[]).map(orderFromRow);
 }
 
 export async function deleteOrder(id: string): Promise<void> {
