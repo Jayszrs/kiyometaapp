@@ -776,8 +776,8 @@ return (
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          <div ref={leftPanel.panelRef} className="w-72 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col">
-            <div className="px-4 py-4 space-y-3">
+          <div ref={leftPanel.panelRef} className="w-72 shrink-0 border-r border-slate-200 bg-slate-50 flex flex-col overflow-y-auto">
+            <div className="px-4 py-4 space-y-3 shrink-0">
               <div className="flex items-center gap-2">
                 {busy && <Icon name="loader" size={14} className="text-[#1a3458] animate-spin" />}
                 <p className="text-sm font-600 text-slate-600">
@@ -821,7 +821,7 @@ return (
             </div>
 
             {custom && (
-              <div className="px-4 py-4 border-t border-slate-200 space-y-3">
+              <div className="px-4 py-4 border-t border-slate-200 space-y-3 shrink-0">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-600 text-slate-700 min-w-0">
                     {t("scanParsedAs", lang)} <span className="font-700 text-[#1a3458]">{custom.title}</span>
