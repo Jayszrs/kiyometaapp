@@ -76,7 +76,10 @@ export function useResizablePanel<T extends HTMLElement = HTMLElement>({ initial
     const main = parent.querySelector(":scope > main") as HTMLElement | null;
     let siblings = 0;
     for (const child of Array.from(parent.children) as HTMLElement[]) {
-      if (child === panel || child === main) continue;
+      // Skip the main column whether it is a real <main> or just the flex-1
+      // sibling. Counting it as a sibling collapsed the drag range to zero on
+      // any page that forgot the tag, pinning the panel at 0px with no way back.
+      if (child === panel || child === main || child.classList.contains("flex-1")) continue;
       siblings += child.getBoundingClientRect().width;
     }
     const upper = Math.max(0, Math.min(max, parent.clientWidth - siblings - MAIN_MIN_WIDTH));

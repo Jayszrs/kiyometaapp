@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useMemo, useEffect, useRef, useTransition } from "react";
+import { createContext, lazy, Suspense, useContext, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
 import { fetchAll, fetchProduct, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import RecoveryStatus from "./components/RecoveryStatus";
@@ -465,6 +465,10 @@ function ScanBanner({ message }: { message: string }) {
 
 // ---- Shell ----
 
+// Shared so every page's header can send the operator to the screen they came
+// from instead of a fixed target. Pages keep their own fallback label/target.
+const BackNavContext = createContext<(() => void) | null>(null);
+
 function AppShell({ children, onNavigate, showBack = false, backTarget = "home" as Page, backLabel = "Home", title, lang, setLang, noPrint = false, activePage }: {
   children: React.ReactNode; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
   showBack?: boolean; backTarget?: Page; backLabel?: string; title?: string;
@@ -472,6 +476,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   lang?: "ja" | "en"; setLang?: (l: "ja" | "en") => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const goBack = useContext(BackNavContext);
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
       <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} onNavigate={onNavigate} lang={lang} activePage={activePage} />
@@ -484,7 +489,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
           <Icon name="menu" size={20} />
         </button>
         {showBack && (
-          <button onClick={() => onNavigate(backTarget)} title={backLabel} aria-label={backLabel} className="header-control is-button">
+          <button onClick={() => (goBack ? goBack() : onNavigate(backTarget))} title={backLabel} aria-label={backLabel} className="header-control is-button">
             <Icon name="arrow-left" size={20} />
           </button>
         )}
@@ -643,7 +648,11 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   const scanLinesRef = useRef(ocrLines);
   scanLinesRef.current = ocrLines;
   const requestRef = useRef<AbortController | null>(null);
-  useEffect(() => () => requestRef.current?.abort(), []);
+  // Detach polling on unmount, but clear the ref so the next mount — and React
+  // Strict Mode's mount → cleanup → mount — can still resume a saved scan.
+  // Leaving the ref set made the resume guard below skip forever, so reopening
+  // a scan that finished on the server showed an empty dialog.
+  useEffect(() => () => { const inflight = requestRef.current; requestRef.current = null; inflight?.abort(); }, []);
   const custom = useMemo(
     () => ocrLines ? parseQuotation(ocrLines, lang) : null,
     [ocrLines, lang],
@@ -696,15 +705,19 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         productName: parsed.data.productName || matchedProduct?.productName || "",
       });
     } catch (err) {
-      if (!controller.signal.aborted) {
+      if (requestRef.current === controller && !controller.signal.aborted) {
         const kind = err instanceof OcrError ? err.kind : "service";
         setError(t(kind === "timeout" ? "scanErrTimeout" : kind === "unreadable" ? "scanErrNoFields"
           : kind === "auth" ? "scanErrAuth" : kind === "busy" ? "scanErrBusy"
           : kind === "size" ? "scanErrSize" : "scanErrUnreachable", lang));
       }
     } finally {
-      requestRef.current = null;
-      setBusy(false);
+      // A resumed request can overlap the aborted one from an earlier mount;
+      // only the request still recorded here may release the busy state.
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
@@ -787,6 +800,7 @@ return (
                 </p>
               )}
               {!busy && !editingPhoto && error && (lastScan || getOcrRecovery(profile.id)) && <Btn variant="outline" onClick={() => void scanFile(getOcrRecovery(profile.id) ? undefined : lastScan ?? undefined)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
+              {!busy && !editingPhoto && !custom && getOcrRecovery(profile.id) && <Btn variant="outline" onClick={clearCustom}>{t("scanDiscard", lang)}</Btn>}
               {!busy && !editingPhoto && photo && <Btn variant="outline" onClick={() => setEditingPhoto(true)}>{lang === "ja" ? "写真を再編集" : "Edit photo again"}</Btn>}
               {busy && (
                 <div className="pt-1 space-y-1.5">
@@ -839,7 +853,7 @@ return (
 
           <ResizeHandle label={t("resizePanel", lang)} {...leftPanel.handleProps} />
 
-          <div className="flex-1 overflow-y-auto min-w-0">
+          <main className="flex-1 overflow-y-auto min-w-0">
             {editingPhoto && photo ? <PhotoEditor key={photo.lastModified + photo.name} file={photo} lang={lang}
               onCancel={() => setEditingPhoto(false)}
               onRetake={() => cameraRef.current?.click()}
@@ -904,7 +918,7 @@ return (
                 })}
               </div>
             )}
-          </div>
+          </main>
         </div>
 
         <div className="flex items-center gap-3 px-5 py-4 border-t border-slate-200">
@@ -3966,6 +3980,11 @@ function sameRows<T extends object>(previous: T[], next: T[]): boolean {
 export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lang) => void }) {
   const { profile, signOut } = useAuth();
   const [page, setPage] = useDurableState<Page>("page", "home");
+  // Screens the operator has left, newest last. Back walks this so returning
+  // from a submenu lands on the menu they actually came from, not always Home.
+  const [navHistory, setNavHistory] = useState<Page[]>([]);
+  const pageRef = useRef(page);
+  pageRef.current = page;
   const [deliveryMode, setDeliveryMode] = useDurableState<DeliverySlipMode>("delivery-mode", "single");
   const cached = useMemo(() => readRecovery<{clients: Client[]; products: Product[]; orders: OrderRecord[]}>(profile.id, "data-cache"), [profile.id]);
   const [clients, setClients] = useState<Client[]>(cached?.clients ?? []);
@@ -4086,10 +4105,20 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
     if (mode) setDeliveryMode(mode);
     if (orderId) setChecklistOrderId(orderId);
+    // Record the page being left, capped so a long session cannot grow forever.
+    if (p !== pageRef.current) setNavHistory(history => [...history.slice(-19), pageRef.current]);
     // Route changes are a transition: if the target module's chunk is still
     // downloading, React keeps the current page on screen (and the global popup
     // shows) instead of swapping to a blank one, then commits once it's ready.
     startTransition(() => setPage(p));
+  };
+
+  // Back returns to the last screen opened; with nothing on the stack it falls
+  // back to Home, which is what the arrow used to do unconditionally.
+  const goBack = () => {
+    const target = navHistory.length ? navHistory[navHistory.length - 1] : "home";
+    setNavHistory(history => history.slice(0, -1));
+    startTransition(() => setPage(target));
   };
 
   const openScan = () => setScanOpen(true);
@@ -4141,12 +4170,13 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
 
   return (
     <div className="flex h-full flex-col overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
-      <RecoveryStatus lang={lang} onOpenScan={openScan} />
+      <RecoveryStatus lang={lang} onOpenScan={openScan} scanOpen={scanOpen} />
       {/* One stable boundary around every page. Because it is always mounted,
           a transition into a still-downloading module keeps the previous page
           visible instead of revealing the fallback; the fallback only appears
           if there is genuinely no page to preserve. */}
       <Suspense fallback={<PageLoading />}>
+      <BackNavContext.Provider value={goBack}>
       <div className="flex-1 min-h-0 overflow-hidden">
         {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
         {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
@@ -4162,6 +4192,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "management" && profile.role !== "administrator" && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "profile"        && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
       </div>
+      </BackNavContext.Provider>
       </Suspense>
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}

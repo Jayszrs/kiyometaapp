@@ -4,9 +4,9 @@ import { useDialog } from "./AppDialog";
 import { pendingOrders, syncOrders, discardSubmission, retryReviewedSubmission, type PendingOrder } from "../lib/orderOutbox";
 import { fetchOrdersByIds } from "../lib/db";
 import type { Lang, OrderRecord } from "../App";
-import { getOcrRecovery } from "../lib/ocrClient";
+import { getOcrRecovery, clearOcrRecovery } from "../lib/ocrClient";
 
-export default function RecoveryStatus({ lang, onOpenScan }: { lang: Lang; onOpenScan: () => void }) {
+export default function RecoveryStatus({ lang, onOpenScan, scanOpen }: { lang: Lang; onOpenScan: () => void; scanOpen: boolean }) {
   const { profile } = useAuth();
   const dialog = useDialog();
   const [online, setOnline] = useState(navigator.onLine);
@@ -58,16 +58,23 @@ export default function RecoveryStatus({ lang, onOpenScan }: { lang: Lang; onOpe
     } catch (error) { await dialog.alert(error instanceof Error ? error.message : text("Could not retry. Your draft is retained.", "再試行できません。下書きは保持されています。")); }
     finally { setBusy(false); }
   };
-  if (online && !items.length && !storageError && !scan) return null;
+  // The amber bar is for exceptional states only. It stays out of the way while
+  // the operator is online and the scan dialog is already showing its own progress.
+  const showOcr = !!scan && !scanOpen;
+  if (online && !items.length && !storageError && !showOcr) return null;
   return <aside className="shrink-0 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 print:hidden" aria-label={text("Connection and pending submissions", "接続と保留中の送信")}>
     <div className="flex flex-wrap items-center justify-between gap-2" role="status">
-      <span>{storageError ? text("Device storage unavailable. Keep the app open; drafts cannot survive closing.", "端末に保存できません。下書きを保持するためアプリを閉じないでください。")
-        : !online ? text("Offline · drafts stay on this device. Submitted orders sync when connected.", "オフライン · 下書きは端末に保存されます。送信した受注は再接続後に同期します。")
-        : items.length ? text(`${items.length} pending submission(s) · not confirmed saved yet`, `未確認の送信 ${items.length}件`)
-        : scan?.lines ? text("OCR result ready", "OCR結果を取得しました")
-        : scan?.id ? text("OCR continues on the server", "サーバーでOCR処理中") : text("OCR source saved · upload can resume", "OCR画像を保存しました · アップロードを再開できます")}</span>
-      {!!scan && <button onClick={onOpenScan} className="rounded border border-amber-400 px-3 py-1 font-600">{text("Open scan", "スキャンを開く")}</button>}
-      {!!items.length && <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className="rounded border border-amber-400 px-3 py-1 font-600">{text("Pending submissions", "保留中の送信")}</button>}
+      <span className="min-w-0 flex-1">{storageError ? text("This device can't save changes right now. Keep the app open so nothing is lost.", "この端末に保存できません。入力内容を失わないよう、アプリを閉じないでください。")
+        : !online ? text("No connection · your work is saved here and syncs automatically when you're back online.", "接続がありません · 入力は端末に保存され、再接続すると自動で同期します。")
+        : items.length ? text(`${items.length} waiting to sync · they'll send automatically.`, `同期待ち ${items.length}件 · 自動で送信されます。`)
+        : scan?.lines ? text("Your scan result is ready.", "スキャン結果の準備ができました。")
+        : scan?.id ? text("Reading your scan · it's saved, so the result will appear on its own.", "スキャンを読み取り中です · 保存済みなので結果は自動で表示されます。")
+        : text("Your scan is saved · sending resumes automatically.", "スキャン画像を保存しました · 送信は自動で再開します。")}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        {!!scan && <button onClick={onOpenScan} className="rounded border border-amber-600 bg-amber-600 px-3 py-1 font-600 text-white transition-colors hover:bg-amber-700">{text("Open scan", "スキャンを開く")}</button>}
+        {!!scan && <button onClick={() => { clearOcrRecovery(profile.id); setScan(undefined); }} className="rounded border border-amber-300 px-3 py-1 text-amber-800 transition-colors hover:bg-amber-100">{text("Discard", "破棄")}</button>}
+        {!!items.length && <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className="rounded border border-amber-400 px-3 py-1 font-600">{text("Pending submissions", "保留中の送信")}</button>}
+      </div>
     </div>
     {expanded && <ul className="mt-2 max-h-44 space-y-2 overflow-y-auto">
       {items.map(item => <li key={item.requestId} className="flex flex-wrap items-center gap-2 border-t border-amber-200 pt-2">
