@@ -1,0 +1,3 @@
+-r requirements.txt
+# Current Starlette TestClient uses httpx2; not needed by the OCR runtime.
+httpx2>=2.13,<3

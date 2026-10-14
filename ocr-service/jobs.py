@@ -24,6 +24,7 @@ class Job:
     fingerprint: str
     created: float
     status: str = "queued"
+    stage: str = "queued"
     cancelled: Event = field(default_factory=Event)
     result: object = None
     error: str = ""
@@ -59,9 +60,11 @@ class OcrJobs:
         return job.id
 
     def _run(self, job, raw, name, dpi):
-        def check():
+        def check(stage=None):
             if job.cancelled.is_set(): raise JobStopped("cancelled")
             if time.monotonic()-job.created > self.timeout: raise JobStopped("timeout")
+            if stage is not None:
+                with self.lock: job.stage = stage
         try:
             check()
             with self.lock: job.status = "running"
@@ -87,7 +90,7 @@ class OcrJobs:
         with self.lock:
             job = self.records.get(job_id)
             if job is None or job.owner != owner: raise KeyError(job_id)
-            return {"id":job.id,"status":job.status,"result":job.result if job.status == "done" else None,"error":job.error}
+            return {"id":job.id,"status":job.status,"stage":job.stage,"result":job.result if job.status == "done" else None,"error":job.error}
 
     def cancel(self, owner, job_id):
         with self.lock:

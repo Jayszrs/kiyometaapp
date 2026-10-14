@@ -7,6 +7,34 @@ const source = readFileSync(new URL('../src/lib/parseQuotation.ts', import.meta.
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
 const { parseQuotation, normalizeClientName } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 const box = (text, x0, y0, width=100, page=0, score=.99) => ({text,x0,y0,x1:x0+width,y1:y0+20,page,score});
+
+test('ambiguous OCR readings expose real choices and explain document proximity',()=>{
+  const parsed=parseQuotation([box('処理名',0,0,80),box('酸洗い',100,0,60),box('研磨',105,0,60)],'en');
+  const process=parsed.fields.find(f=>f.key==='processName');
+  assert.ok(process.alternatives.includes('酸洗い'));
+  assert.ok(process.alternatives.includes('研磨'));
+  assert.equal(process.status,'review');
+  assert.match(parsed.warnings.join(' '),/not a master-data match/);
+  assert.match(parsed.warnings.join(' '),/Phone is optional/);
+});
+
+test('unique single-character damaged headers recover their printed values without repairing identifiers',()=>{
+ const parsed=parseQuotation([
+  box('(注文香号)',0,0),box('ABC-456',0,24),
+  box('(品目コード)',0,70),box('XYZ-F0124-05',0,94),
+  box('(発注数量)',0,140,70),box('(免注单面)',100,140,70),box('(指定納入日)',210,140,100),
+  box('2',0,164,40),box('1,250',100,164,60),box('26/11/04',210,164,100),
+ ]);
+ assert.equal(parsed.data.orderNumber,'ABC-456');
+ assert.equal(parsed.data.productNumber,'XYZ-F0124-05');
+ assert.equal(parsed.data.quantity,2);
+ assert.equal(parsed.data.unitPrice,1250);
+ assert.equal(parsed.fields.find(field=>field.key==='unitPrice').status,'review');
+});
+test('a missing unit-price value is never fabricated from a neighboring total',()=>{
+ const parsed=parseQuotation([box('(発注数量)',0,0,70),box('(免注单面)',100,0,70),box('(発注金額)',210,0,100),box('2',0,24,40),box('2,500',210,24,90)]);
+ assert.equal(parsed.data.unitPrice,0);
+});
 const pairs = entries => entries.flatMap(([label,value],i) => [box(label,10,40*i,140),box(value,170,40*i,250)]);
 
 test('all aliases work on an unfamiliar quotation title; values need no whitespace after labels', () => {

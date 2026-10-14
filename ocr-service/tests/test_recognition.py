@@ -15,6 +15,34 @@ BOX = [[0, 0], [150, 0], [150, 20], [0, 20]]
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_heic_primary_frame_is_decoded_without_thumbnail_loss(self):
+        from PIL import Image
+        from pillow_heif import register_heif_opener
+        register_heif_opener(thumbnails=False)
+        source=Image.new("RGB",(96,48),(245,245,245))
+        encoded=io.BytesIO()
+        source.save(encoded,format="HEIF",quality=95)
+        decoded=main.decode_image(encoded.getvalue())
+        self.assertEqual(decoded.shape,(48,96,3))
+        self.assertGreater(float(decoded.mean()),235)
+
+    def test_known_header_and_company_do_not_get_replaced_by_damaged_japanese_reads(self):
+        multi=[(BOX,"品目コード",.72),(BOX,"サンプルテクノス株式会社",.87)]
+        japanese=[(BOX,"品目ユール",.85)]
+        self.assertEqual(merge_recognition(multi[:1],japanese)[0][1],"品目コード")
+        self.assertEqual(merge_recognition(multi[1:],[(BOX,"サンプルテクリス株式会社",.99)])[0][1],"サンプルテクノス株式会社")
+
+    def test_confident_codes_are_not_recognized_again_by_japanese_model(self):
+        class Engine:
+            def __call__(self,*args,**kwargs): return [BOX],None
+            def get_crop_img_list(self,*args): return [np.zeros((20,100,3),np.uint8)]
+            def text_cls(self,crops): return crops,[],0
+            def text_rec(self,crops): return [("ABC-123",.99)],0
+        class Japanese:
+            def text_rec(self,crops): raise AssertionError("Confident Latin code was recognized twice")
+        result,_=recognize_page(np.zeros((30,150,3),np.uint8),Engine(),Japanese(),lambda *a,**k:(None,None))
+        self.assertEqual(result[0][1],"ABC-123")
+
     def test_orientation_uses_one_detection_and_bounded_crop_recognition(self):
         class Preview:
             def __init__(self): self.detections=0; self.recognized=[]
@@ -33,7 +61,7 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual(preview.detections,1)
         self.assertFalse(preview.assertions['use_cls'])
         self.assertFalse(preview.assertions['use_rec'])
-        self.assertEqual(preview.recognized,[8,8])
+        self.assertEqual(preview.recognized,[4,4])
         np.testing.assert_array_equal(upright,image)
         flipped=np.rot90(image,2).copy()
         corrected,angle=orient_page(flipped,Preview())

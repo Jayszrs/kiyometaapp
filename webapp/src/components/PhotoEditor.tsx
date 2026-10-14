@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { preparePhoto } from "../lib/ocrClient";
 
 type Crop = { left: number; top: number; right: number; bottom: number };
 const full: Crop = { left: 0, top: 0, right: 100, bottom: 100 };
@@ -31,13 +32,19 @@ export default function PhotoEditor({ file, lang, onConfirm, onCancel, onRetake 
     return () => window.removeEventListener("blur", endDrag);
   }, []);
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
+    const controller = new AbortController();
+    let url: string | undefined;
     let active = true;
-    img.onload = () => { if (active) setImage(img); };
-    img.onerror = () => { if (active) setError(true); };
-    img.src = url;
-    return () => { active = false; URL.revokeObjectURL(url); };
+    setImage(null); setError(false); setPreview(false); setCrop(full);
+    void preparePhoto(file, controller.signal).then(blob => {
+      if (!active) return;
+      url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => { if (active) setImage(img); };
+      img.onerror = () => { if (active) setError(true); };
+      img.src = url;
+    }).catch(() => { if (active) setError(true); });
+    return () => { active = false; controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [file]);
   const rotated = useMemo(() => {
     if (!image) return null;

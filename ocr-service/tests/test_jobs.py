@@ -74,3 +74,29 @@ class JobTests(unittest.TestCase):
         result=self.terminal('user',job_id)
         self.assertEqual(result['status'],'error')
         self.assertEqual(result['error'],'timeout')
+
+    def test_stage_changes_only_when_work_reports_progress(self):
+        preparing = Event()
+        advance = Event()
+        recognizing = Event()
+        def work(raw, name, dpi, check):
+            check('preparing')
+            preparing.set()
+            advance.wait(1)
+            check('recognizing')
+            recognizing.set()
+            self.stop.wait(1)
+            return {'lines': []}
+        self.jobs.work = work
+        job_id = self.jobs.submit('user', b'image', 'photo.jpg', 300)
+        try:
+            self.assertTrue(preparing.wait(1))
+            self.assertEqual(self.jobs.read('user', job_id)['stage'], 'preparing')
+            time.sleep(.02)
+            self.assertEqual(self.jobs.read('user', job_id)['stage'], 'preparing')
+            advance.set()
+            self.assertTrue(recognizing.wait(1))
+            self.assertEqual(self.jobs.read('user', job_id)['stage'], 'recognizing')
+        finally:
+            advance.set()
+            self.stop.set()

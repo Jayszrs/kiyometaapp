@@ -40,6 +40,22 @@ function responseError(status: number): OcrError {
     : status === 429 ? "busy" : status === 413 ? "size" : "service");
 }
 
+export function isHeicPhoto(file: File): boolean {
+  return /\.(heic|heif|hif)$/i.test(file.name) || /image\/hei[cf]/i.test(file.type);
+}
+
+// Decode only: creating a crop preview must never start an OCR job.
+export async function preparePhoto(file: File, signal: AbortSignal): Promise<Blob> {
+  if (!isHeicPhoto(file)) return file;
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(`${OCR_URL}/prepare-image`, {
+    method: "POST", headers: await authHeaders(), body, signal,
+  });
+  if (!response.ok) throw responseError(response.status);
+  return response.blob();
+}
+
 function pollDelay(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const abort = () => { clearTimeout(timer); reject(new OcrError("timeout")); };
@@ -78,7 +94,9 @@ export function clearOcrRecovery(owner: string): void {
   void sourceFile(owner, undefined, true).catch(() => {});
 }
 
-export async function runOcr(file?: File, signal?: AbortSignal): Promise<OcrLine[]> {
+export type OcrProgress = "uploading" | "queued" | "preparing" | "recognizing" | "cleaning" | "master";
+
+export async function runOcr(file?: File, signal?: AbortSignal, onProgress?: (stage: OcrProgress) => void): Promise<OcrLine[]> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   signal?.addEventListener("abort", cancel, { once: true });
@@ -103,6 +121,7 @@ export async function runOcr(file?: File, signal?: AbortSignal): Promise<OcrLine
     if (!recovery) throw new OcrError("service");
     headers = await authHeaders().catch(() => { throw new OcrError("auth"); });
     const upload = async () => {
+      onProgress?.("uploading");
       const source = file ?? await sourceFile(owner);
       if (!source) throw new OcrError("service");
       const body = new FormData();
@@ -114,6 +133,7 @@ export async function runOcr(file?: File, signal?: AbortSignal): Promise<OcrLine
       recovery = { name: recovery!.name, id: accepted.id };
       writeRecovery(owner, "ocr-job", recovery);
       jobUrl = `${OCR_URL}/jobs/${accepted.id}`;
+      onProgress?.("queued");
     };
     if (recovery.id) jobUrl = `${OCR_URL}/jobs/${recovery.id}`;
     else await upload();
@@ -148,6 +168,9 @@ export async function runOcr(file?: File, signal?: AbortSignal): Promise<OcrLine
           : job.error === "size" ? "size" : "service");
       }
       if (!["queued", "running", "cancelling"].includes(job.status)) throw new OcrError("service");
+      onProgress?.(job.status === "queued" ? "queued"
+        : job.stage === "preparing" ? "preparing"
+        : job.stage === "queued" ? "queued" : "recognizing");
       await pollDelay(controller.signal);
     }
     throw new OcrError("timeout");

@@ -5,5 +5,7 @@ rapidocr-onnxruntime==1.4.4
 pymupdf>=1.24
 opencv-python-headless>=4.9
 numpy>=1.26
+pillow>=11.1,<13
+pillow-heif>=1.8,<2
 # Verifies the Supabase access token signature when SUPABASE_JWKS_URL is used.
 cryptography>=42

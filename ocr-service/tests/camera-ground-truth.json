@@ -1,0 +1,40 @@
+{
+  "shinwa": {
+    "sourcePdf": "⓪注文書-1.pdf",
+    "data": {
+      "orderDate": "2026-08-17",
+      "deliveryDate": "2026-08-20",
+      "client": "伸和テクノス株式会社",
+      "orderNumber": "210266",
+      "productNumber": "NHD-F1772-11",
+      "productName": "タンク",
+      "quantity": 3,
+      "unitPrice": 5000,
+      "orderAmount": 15000,
+      "processName": "酸洗い",
+      "clientPostalCode": "",
+      "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+      "clientPhone": "0266-28-0105"
+    },
+    "sha256": "68c27cb0b2c81719e67ac66e7ce6ffed5eac73a70497f193b1c96929eb0f32ab"
+  },
+  "masuda": {
+    "sourcePdf": "⓪注文書-2.pdf",
+    "data": {
+      "orderDate": "2026-07-27",
+      "deliveryDate": "2026-08-03",
+      "client": "株式会社マスダ シートメタル課",
+      "orderNumber": "MS294541",
+      "productNumber": "NSQ-F0124-05",
+      "productName": "タンク (TOP)",
+      "quantity": 1,
+      "unitPrice": 6000,
+      "orderAmount": 6000,
+      "processName": "ドブ漬け酸洗い処理",
+      "clientPostalCode": "399-4301",
+      "clientAddress": "長野県上伊那郡宮田村6623-2",
+      "clientPhone": ""
+    },
+    "sha256": "3eb896ebe2b9214718dce91ede214c9d3fa1e643314564f0230db0530bce9445"
+  }
+}

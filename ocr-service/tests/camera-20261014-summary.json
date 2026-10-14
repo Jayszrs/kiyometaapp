@@ -1,0 +1,190 @@
+{
+  "normalization": "NFKC, whitespace, corporate abbreviations; empty unprinted fields excluded",
+  "timing": "Local CPU; upload/network excluded; model startup separate; paired timings share warmed engines",
+  "startupSeconds": 2.65,
+  "initialBaseline": [
+    {
+      "file": "20261014_162323.jpg",
+      "seconds": 14.564,
+      "correct": 4,
+      "populated": 12
+    },
+    {
+      "file": "20261014_162333.jpg",
+      "seconds": 14.375,
+      "correct": 7,
+      "populated": 12
+    },
+    {
+      "file": "20261014_162031.heic",
+      "seconds": 0.01,
+      "error": "Unrecognized image format.",
+      "correct": 0,
+      "populated": 12
+    },
+    {
+      "file": "20261014_162042.heic",
+      "seconds": 0.007,
+      "error": "Unrecognized image format.",
+      "correct": 0,
+      "populated": 12
+    }
+  ],
+  "final": [
+    {
+      "file": "20261014_162323.jpg",
+      "reference": "masuda",
+      "seconds": 22.204,
+      "populated": 12,
+      "correct": 11,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": [
+        {
+          "field": "processName",
+          "expected": "ドブ漬け酸洗い処理",
+          "actual": "ト清け酸洗い処理",
+          "review": "review"
+        }
+      ]
+    },
+    {
+      "file": "20261014_162333.jpg",
+      "reference": "shinwa",
+      "seconds": 18.506,
+      "populated": 12,
+      "correct": 12,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": []
+    },
+    {
+      "file": "20261014_162031.heic",
+      "reference": "masuda",
+      "seconds": 21.425,
+      "populated": 12,
+      "correct": 11,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": [
+        {
+          "field": "processName",
+          "expected": "ドブ漬け酸洗い処理",
+          "actual": "ト`フ漬け酸洗い処理",
+          "review": "review"
+        }
+      ]
+    },
+    {
+      "file": "20261014_162042.heic",
+      "reference": "shinwa",
+      "seconds": 19.123,
+      "populated": 12,
+      "correct": 12,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": []
+    },
+    {
+      "file": "⓪注文書-1.pdf",
+      "reference": "shinwa",
+      "seconds": 14.813,
+      "populated": 12,
+      "correct": 12,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": []
+    },
+    {
+      "file": "⓪注文書-2.pdf",
+      "reference": "masuda",
+      "seconds": 15.776,
+      "populated": 12,
+      "correct": 12,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": []
+    },
+    {
+      "file": "shinwa-rotated.local.jpg",
+      "reference": "shinwa",
+      "seconds": 24.924,
+      "populated": 12,
+      "correct": 12,
+      "coreCorrect": 9,
+      "coreTotal": 9,
+      "mismatches": []
+    }
+  ],
+  "pairedTiming": [
+    {
+      "name": "20261014_162323.jpg",
+      "variant": "before",
+      "seconds": 15.758,
+      "lineCount": 57
+    },
+    {
+      "name": "20261014_162323.jpg",
+      "variant": "after",
+      "seconds": 12.555,
+      "lineCount": 54
+    },
+    {
+      "name": "20261014_162333.jpg",
+      "variant": "before",
+      "seconds": 16.999,
+      "lineCount": 61
+    },
+    {
+      "name": "20261014_162333.jpg",
+      "variant": "after",
+      "seconds": 10.844,
+      "lineCount": 41
+    }
+  ],
+  "initialBaselineParser": "Current parser applied to legacy OCR lines; paired inference timing isolates recognition changes.",
+  "serviceRuntime": {
+    "python": "project .venv",
+    "rapidOcr": "1.4.4",
+    "onnxRuntime": "1.30.0",
+    "startupSeconds": 4.366,
+    "files": [
+      {
+        "file": "20261014_162323.jpg",
+        "seconds": 29.856,
+        "mismatches": [
+          "processName"
+        ]
+      },
+      {
+        "file": "20261014_162333.jpg",
+        "seconds": 19.642,
+        "mismatches": []
+      },
+      {
+        "file": "20261014_162031.heic",
+        "seconds": 26.527,
+        "mismatches": [
+          "processName"
+        ]
+      },
+      {
+        "file": "20261014_162042.heic",
+        "seconds": 19.274,
+        "mismatches": []
+      },
+      {
+        "file": "⓪注文書-1.pdf",
+        "seconds": 16.673,
+        "mismatches": []
+      },
+      {
+        "file": "⓪注文書-2.pdf",
+        "seconds": 15.38,
+        "mismatches": [
+          "processName"
+        ]
+      }
+    ]
+  }
+}

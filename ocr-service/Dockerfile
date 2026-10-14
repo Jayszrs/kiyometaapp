@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY prepare_models.py .
 RUN python prepare_models.py
-COPY main.py recognition.py ./
+COPY main.py recognition.py jobs.py ./
 
 # CORS_ORIGINS is deliberately not set here: unset means no CORS headers, so
 # only same-origin callers work. Set it at run time to the exact web origins,

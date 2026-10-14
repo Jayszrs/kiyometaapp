@@ -47,7 +47,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from rapidocr_onnxruntime import RapidOCR
 from prepare_models import model_path
@@ -147,7 +147,7 @@ def get_ocr() -> RapidOCR:
         _ocr = RapidOCR(
             rec_model_path=str(path), rec_img_shape=[3, 48, 320],
             det_limit_side_len=1600, det_limit_type="max", max_side_len=4000,
-            text_score=0.3, intra_op_num_threads=4, inter_op_num_threads=2,
+            text_score=0.3, intra_op_num_threads=2, inter_op_num_threads=1,
         )
     return _ocr
 
@@ -157,7 +157,7 @@ def get_preview_ocr() -> RapidOCR:
     if _preview_ocr is None:
         # The bundled lightweight model only selects the page orientation.
         _preview_ocr = RapidOCR(det_limit_side_len=960, det_limit_type="max",
-                               intra_op_num_threads=4, inter_op_num_threads=2)
+                               intra_op_num_threads=2, inter_op_num_threads=1)
     return _preview_ocr
 
 
@@ -170,7 +170,7 @@ def get_japanese_ocr() -> RapidOCR:
         _japanese_ocr = RapidOCR(
             rec_model_path=str(path), rec_img_shape=[3, 48, 320],
             det_limit_side_len=1600, det_limit_type="max", max_side_len=4000,
-            text_score=0.3, intra_op_num_threads=4, inter_op_num_threads=2,
+            text_score=0.3, intra_op_num_threads=2, inter_op_num_threads=1,
         )
     return _japanese_ocr
 
@@ -425,7 +425,18 @@ def decode_image(data: bytes) -> np.ndarray:
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        raise ValueError("Unrecognized image format.")
+        # Tablet HEIC/HEIF sources are not decoded by OpenCV. Use the primary
+        # full-resolution frame, including orientation metadata, not thumbnails.
+        from PIL import Image, ImageOps
+        from pillow_heif import register_heif_opener
+        register_heif_opener(thumbnails=False)
+        try:
+            with Image.open(io.BytesIO(data)) as source:
+                check_pixels(*source.size, "Image")
+                rgb = ImageOps.exif_transpose(source).convert("RGB")
+                img = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+        except (OSError, SyntaxError) as error:
+            raise ValueError("Unrecognized image format.") from error
     check_pixels(img.shape[1], img.shape[0], "Image")
     return img
 
@@ -463,6 +474,25 @@ def log_message(request: Request, payload: LogIn) -> dict:
     return {"ok": True}
 
 
+@app.post("/ocr/prepare-image")
+def prepare_image(request: Request, file: UploadFile = File(...)) -> Response:
+    """Browser-readable full-resolution crop source; no OCR or job creation."""
+    require_user(request)
+    raw = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the upload size limit.")
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty image.")
+    try:
+        image = decode_image(raw)
+    except (ValueError, cv2.error) as error:
+        raise HTTPException(status_code=400, detail="Could not decode this image.") from error
+    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 98])
+    if not ok:
+        raise HTTPException(status_code=422, detail="Could not prepare this image.")
+    return Response(encoded.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/ocr", response_model=OcrResponse)
 def ocr(request: Request, file: UploadFile = File(...), dpi: int = 300) -> OcrResponse:
     # The token is checked before the queue slot is taken, so an unauthenticated
@@ -476,7 +506,7 @@ def ocr(request: Request, file: UploadFile = File(...), dpi: int = 300) -> OcrRe
         _slots.release()
 
 
-def run_ocr(file: UploadFile, dpi: int, check=lambda: None) -> OcrResponse:
+def run_ocr(file: UploadFile, dpi: int, check=lambda stage=None: None) -> OcrResponse:
     # Read one byte past the limit so an oversized body is detected without
     # buffering the whole thing.
     raw = file.file.read(MAX_UPLOAD_BYTES + 1) if file.file else None
@@ -488,7 +518,7 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda: None) -> OcrResponse:
             detail=f"File is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
         )
 
-    check()
+    check("preparing")
     started = time.monotonic()
     name = safe_name(file.filename or "upload")
     is_pdf = name.lower().endswith(".pdf")
@@ -517,10 +547,11 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda: None) -> OcrResponse:
     lines: list[LineOut] = []
     for pi, img in enumerate(images):
         try:
+            check("queued")
             while not _inference_lock.acquire(timeout=0.25):
                 check()
             try:
-                check()
+                check("recognizing")
                 result, rotation = recognize_page(img, get_ocr(), get_japanese_ocr(), get_preview_ocr(), photo=not is_pdf, check=check)
             finally:
                 _inference_lock.release()

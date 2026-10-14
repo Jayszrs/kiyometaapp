@@ -16,10 +16,36 @@ console.error=()=>{};
 after(()=>{console.error=diagnostic;});
 const normalTimer=(callback,ms)=>{if(ms<300000)queueMicrotask(callback);return 0;};
 globalThis.window=Object.assign(new EventTarget(),{location:{origin:'https://test.invalid'},setTimeout:normalTimer,clearTimeout});
-const {runOcr,OcrError,getOcrRecovery}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const {runOcr,OcrError,getOcrRecovery,preparePhoto,isHeicPhoto}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 const file = new File(['pixels'],'camera.jpg',{type:'image/jpeg'});
 const response=body=>({ok:true,json:async()=>body});
 const lines=[{text:'数量',x0:0,y0:0,x1:50,y1:20,score:.99}];
+
+test('HEIC crop preparation converts once without starting OCR; JPEG stays local',async()=>{
+  const source=new File(['heic pixels'],'tablet.HEIC');
+  const jpeg=new Blob(['jpeg pixels'],{type:'image/jpeg'});
+  const controller=new AbortController();
+  const calls=[];
+  globalThis.fetch=async(url,request)=>{
+    calls.push(url);
+    assert.equal(request.headers.Authorization,'Bearer test-token');
+    assert.equal(request.body.get('file').name,'tablet.HEIC');
+    assert.equal(request.signal,controller.signal);
+    return {ok:true,blob:async()=>jpeg};
+  };
+  assert.ok(isHeicPhoto(source));
+  assert.ok(isHeicPhoto(new File(['pixels'],'tablet',{type:'image/heif'})));
+  assert.equal(await preparePhoto(source,controller.signal),jpeg);
+  assert.equal(await preparePhoto(file,controller.signal),file);
+  assert.deepEqual(calls,['https://test.invalid/ocr/prepare-image']);
+});
+
+test('failed HEIC preparation surfaces an error without starting OCR',async()=>{
+  let calls=0;
+  globalThis.fetch=async()=>{calls++;return {ok:false,status:400};};
+  await assert.rejects(preparePhoto(new File(['bad'],'tablet.heic'),new AbortController().signal),error=>error.kind==='unreadable');
+  assert.equal(calls,1);
+});
 
 test('OCR failures are typed and never expose service details',async()=>{
   for (const [status,kind] of [[524,'timeout'],[504,'timeout'],[422,'unreadable'],[503,'service'],[429,'busy'],[401,'auth'],[413,'size']]) {
@@ -42,6 +68,16 @@ test('job upload occurs once; polling waits for queued/running result',async()=>
   assert.equal(uploads,1); assert.equal(polls,3);
   assert.ok(deadlines.includes(330000)); assert.ok(!deadlines.includes(90000));
   window.setTimeout=normalTimer;
+});
+
+test('OCR progress follows backend stages without timer advancement',async()=>{
+  const stages=[];
+  const pending=[{status:'queued',stage:'queued'},{status:'running',stage:'preparing'},
+    {status:'running',stage:'preparing'},{status:'running',stage:'recognizing'},
+    {status:'done',result:{lines}}];
+  globalThis.fetch=async(url,request)=>response(request.method==='POST'?{id:'progress-job'}:pending.shift());
+  assert.deepEqual(await runOcr(file,undefined,stage=>stages.push(stage)),lines);
+  assert.deepEqual(stages,['uploading','queued','queued','preparing','preparing','recognizing']);
 });
 
 test('backend terminal failure ends scan with the actual error kind',async()=>{

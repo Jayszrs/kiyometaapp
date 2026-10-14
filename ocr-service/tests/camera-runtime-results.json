@@ -1,0 +1,3587 @@
+{
+  "startupSeconds": 4.366,
+  "files": [
+    {
+      "name": "20261014_162323.jpg",
+      "seconds": 29.856,
+      "lines": [
+        {
+          "text": "=399-0651",
+          "x0": 368,
+          "y0": 274,
+          "x1": 626,
+          "y1": 333,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "発注先",
+          "x0": 275,
+          "y0": 320,
+          "x1": 325,
+          "y1": 442,
+          "score": 0.99805615345637,
+          "page": 0
+        },
+        {
+          "text": "長野県塩尻市北小野2131-1",
+          "x0": 368,
+          "y0": 336,
+          "x1": 877,
+          "y1": 389,
+          "score": 0.9849440534909566,
+          "page": 0
+        },
+        {
+          "text": "*MS294541*",
+          "x0": 1788,
+          "y0": 396,
+          "x1": 1983,
+          "y1": 433,
+          "score": 0.9929798781871796,
+          "page": 0
+        },
+        {
+          "text": "キヨメタ",
+          "x0": 361,
+          "y0": 440,
+          "x1": 471,
+          "y1": 494,
+          "score": 0.972064658999443,
+          "page": 0
+        },
+        {
+          "text": "御中",
+          "x0": 1292,
+          "y0": 453,
+          "x1": 1399,
+          "y1": 517,
+          "score": 0.9996161460876465,
+          "page": 0
+        },
+        {
+          "text": "納入者コート",
+          "x0": 2105,
+          "y0": 472,
+          "x1": 2250,
+          "y1": 510,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "発注書",
+          "x0": 1634,
+          "y0": 478,
+          "x1": 1875,
+          "y1": 541,
+          "score": 0.9997207522392273,
+          "page": 0
+        },
+        {
+          "text": "2586",
+          "x0": 2129,
+          "y0": 518,
+          "x1": 2234,
+          "y1": 567,
+          "score": 0.9991538375616074,
+          "page": 0
+        },
+        {
+          "text": "（注文番号）",
+          "x0": 351,
+          "y0": 551,
+          "x1": 476,
+          "y1": 585,
+          "score": 0.8333738545576731,
+          "page": 0
+        },
+        {
+          "text": "（発注日）",
+          "x0": 787,
+          "y0": 555,
+          "x1": 892,
+          "y1": 596,
+          "score": 0.958711850643158,
+          "page": 0
+        },
+        {
+          "text": "（発注数量）",
+          "x0": 1044,
+          "y0": 563,
+          "x1": 1168,
+          "y1": 600,
+          "score": 0.8607843418916067,
+          "page": 0
+        },
+        {
+          "text": "（免注单面）",
+          "x0": 1295,
+          "y0": 566,
+          "x1": 1418,
+          "y1": 602,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（指定入日）",
+          "x0": 1546,
+          "y0": 571,
+          "x1": 1693,
+          "y1": 605,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(指定約入数)",
+          "x0": 1795,
+          "y0": 574,
+          "x1": 1944,
+          "y1": 607,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（発注金额）",
+          "x0": 2045,
+          "y0": 574,
+          "x1": 2172,
+          "y1": 611,
+          "score": 0.877568781375885,
+          "page": 0
+        },
+        {
+          "text": "MS294541",
+          "x0": 431,
+          "y0": 601,
+          "x1": 684,
+          "y1": 660,
+          "score": 0.9991430267691612,
+          "page": 0
+        },
+        {
+          "text": "26/07/27",
+          "x0": 807,
+          "y0": 608,
+          "x1": 1008,
+          "y1": 661,
+          "score": 0.9948673695325851,
+          "page": 0
+        },
+        {
+          "text": "6,000.",
+          "x0": 1382,
+          "y0": 623,
+          "x1": 1519,
+          "y1": 670,
+          "score": 0.9886771738529205,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 1231,
+          "y0": 624,
+          "x1": 1262,
+          "y1": 661,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "26/08/03",
+          "x0": 1563,
+          "y0": 624,
+          "x1": 1760,
+          "y1": 670,
+          "score": 0.9965990334749222,
+          "page": 0
+        },
+        {
+          "text": "6,000",
+          "x0": 2171,
+          "y0": 629,
+          "x1": 2302,
+          "y1": 681,
+          "score": 0.9607880353927613,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 1981,
+          "y0": 632,
+          "x1": 2017,
+          "y1": 671,
+          "score": 0.9900197684764862,
+          "page": 0
+        },
+        {
+          "text": "（品目コード）",
+          "x0": 276,
+          "y0": 668,
+          "x1": 427,
+          "y1": 705,
+          "score": 0.6974137510572161,
+          "page": 0
+        },
+        {
+          "text": "（单位）",
+          "x0": 785,
+          "y0": 675,
+          "x1": 865,
+          "y1": 714,
+          "score": 0.9017466455698013,
+          "page": 0
+        },
+        {
+          "text": "（支給予定日）",
+          "x0": 1043,
+          "y0": 679,
+          "x1": 1192,
+          "y1": 718,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（纳入单価）",
+          "x0": 1294,
+          "y0": 682,
+          "x1": 1442,
+          "y1": 721,
+          "score": 0.7764439632495245,
+          "page": 0
+        },
+        {
+          "text": "（纳入数）",
+          "x0": 1793,
+          "y0": 686,
+          "x1": 1914,
+          "y1": 729,
+          "score": 0.7949493587017059,
+          "page": 0
+        },
+        {
+          "text": "（辆入日）",
+          "x0": 1545,
+          "y0": 688,
+          "x1": 1661,
+          "y1": 722,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（纳入金额）",
+          "x0": 2048,
+          "y0": 693,
+          "x1": 2197,
+          "y1": 731,
+          "score": 0.897360493739446,
+          "page": 0
+        },
+        {
+          "text": "NSQ-F0124-05",
+          "x0": 284,
+          "y0": 722,
+          "x1": 586,
+          "y1": 772,
+          "score": 0.9976284901301066,
+          "page": 0
+        },
+        {
+          "text": "（品目名）",
+          "x0": 274,
+          "y0": 787,
+          "x1": 374,
+          "y1": 822,
+          "score": 0.88477783203125,
+          "page": 0
+        },
+        {
+          "text": "（製香）",
+          "x0": 785,
+          "y0": 792,
+          "x1": 866,
+          "y1": 831,
+          "score": 0.7220914661884308,
+          "page": 0
+        },
+        {
+          "text": "1C662843",
+          "x0": 786,
+          "y0": 846,
+          "x1": 986,
+          "y1": 894,
+          "score": 0.9980420619249344,
+          "page": 0
+        },
+        {
+          "text": "タンク（TOP）",
+          "x0": 284,
+          "y0": 866,
+          "x1": 505,
+          "y1": 923,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（検収日）",
+          "x0": 1675,
+          "y0": 892,
+          "x1": 1795,
+          "y1": 930,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "合格",
+          "x0": 1921,
+          "y0": 896,
+          "x1": 2080,
+          "y1": 962,
+          "score": 0.9970918595790863,
+          "page": 0
+        },
+        {
+          "text": "分納",
+          "x0": 1327,
+          "y0": 935,
+          "x1": 1435,
+          "y1": 995,
+          "score": 0.9996450245380402,
+          "page": 0
+        },
+        {
+          "text": "完納",
+          "x0": 1517,
+          "y0": 937,
+          "x1": 1625,
+          "y1": 997,
+          "score": 0.9869013428688049,
+          "page": 0
+        },
+        {
+          "text": "(工程)",
+          "x0": 273,
+          "y0": 981,
+          "x1": 347,
+          "y1": 1017,
+          "score": 0.8108775019645691,
+          "page": 0
+        },
+        {
+          "text": "（名称)",
+          "x0": 785,
+          "y0": 986,
+          "x1": 862,
+          "y1": 1022,
+          "score": 0.7582486569881439,
+          "page": 0
+        },
+        {
+          "text": "ト清け酸洗い処理",
+          "x0": 790,
+          "y0": 1023,
+          "x1": 1223,
+          "y1": 1076,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "外注加工1",
+          "x0": 282,
+          "y0": 1030,
+          "x1": 508,
+          "y1": 1087,
+          "score": 0.998445725440979,
+          "page": 0
+        },
+        {
+          "text": "(残数)",
+          "x0": 1291,
+          "y0": 1046,
+          "x1": 1382,
+          "y1": 1085,
+          "score": 0.8965940475463867,
+          "page": 0
+        },
+        {
+          "text": "(検収担当)",
+          "x0": 1674,
+          "y0": 1051,
+          "x1": 1824,
+          "y1": 1093,
+          "score": 0.7886605064074198,
+          "page": 0
+        },
+        {
+          "text": "不合格",
+          "x0": 1919,
+          "y0": 1058,
+          "x1": 2080,
+          "y1": 1123,
+          "score": 0.9984111189842224,
+          "page": 0
+        },
+        {
+          "text": "（次工程）",
+          "x0": 272,
+          "y0": 1099,
+          "x1": 372,
+          "y1": 1137,
+          "score": 0.8050996780395507,
+          "page": 0
+        },
+        {
+          "text": "担当",
+          "x0": 1742,
+          "y0": 1144,
+          "x1": 1826,
+          "y1": 1180,
+          "score": 0.9869670271873474,
+          "page": 0
+        },
+        {
+          "text": "シートメタル(事)",
+          "x0": 280,
+          "y0": 1150,
+          "x1": 521,
+          "y1": 1207,
+          "score": 0.8914537231127421,
+          "page": 0
+        },
+        {
+          "text": "(備考〕",
+          "x0": 283,
+          "y0": 1218,
+          "x1": 362,
+          "y1": 1257,
+          "score": 0.7389586865901947,
+          "page": 0
+        },
+        {
+          "text": "㈱マスダ",
+          "x0": 1554,
+          "y0": 1236,
+          "x1": 1709,
+          "y1": 1290,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "シートメタル課",
+          "x0": 1757,
+          "y0": 1239,
+          "x1": 1972,
+          "y1": 1295,
+          "score": 0.9232456513813564,
+          "page": 0
+        },
+        {
+          "text": "干399-4301長野県上伊那郡宮田村6623-2",
+          "x0": 1552,
+          "y0": 1294,
+          "x1": 2134,
+          "y1": 1338,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "糸本喜に記する金顔には消受税は含まれておりません。",
+          "x0": 267,
+          "y0": 1354,
+          "x1": 932,
+          "y1": 1392,
+          "score": 0.74,
+          "page": 0
+        }
+      ],
+      "reference": "masuda",
+      "parsed": {
+        "template": "purchase-order",
+        "title": "Purchase order",
+        "data": {
+          "orderDate": "2026-07-27",
+          "deliveryDate": "2026-08-03",
+          "client": "(株)マスダ シートメタル課",
+          "orderNumber": "MS294541",
+          "productNumber": "NSQ-F0124-05",
+          "productName": "タンク(TOP)",
+          "quantity": 1,
+          "unitPrice": 6000,
+          "orderAmount": 6000,
+          "processName": "ト清け酸洗い処理",
+          "clientPostalCode": "399-4301",
+          "clientAddress": "長野県上伊那郡宮田村6623-2",
+          "clientPhone": ""
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-07-27",
+            "page": "P1",
+            "sourceLabel": "発注日",
+            "confidence": 0.958711850643158,
+            "status": "found"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-03",
+            "page": "P1",
+            "sourceLabel": "指定納入日",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "(株)マスダ シートメタル課",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "MS294541",
+            "page": "P1",
+            "sourceLabel": "注文番号",
+            "confidence": 0.8333738545576731,
+            "status": "found"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NSQ-F0124-05",
+            "page": "P1",
+            "sourceLabel": "品目コード",
+            "confidence": 0.6974137510572161,
+            "status": "review"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク(TOP)",
+            "page": "P1",
+            "sourceLabel": "品目名",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "1",
+            "page": "P1",
+            "sourceLabel": "発注数量",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "Unit price column (damaged label)",
+            "confidence": 0.6,
+            "status": "review"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "発注金額",
+            "confidence": 0.877568781375885,
+            "status": "found"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "ト清け酸洗い処理",
+            "page": "P1",
+            "sourceLabel": "名称",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "399-4301",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県上伊那郡宮田村6623-2",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          }
+        ],
+        "warnings": [
+          "Not found: Phone. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-07-27 [発注日, page 1, confidence 0.96]\ndeliveryDate: 2026-08-03 [指定納入日, page 1, confidence 0.74]\nclient: (株)マスダ シートメタル課 [Issuing company, page 1, confidence 0.74]\norderNumber: MS294541 [注文番号, page 1, confidence 0.83]\nproductNumber: NSQ-F0124-05 [品目コード, page 1, confidence 0.70]\nproductName: タンク(TOP) [品目名, page 1, confidence 0.74]\nquantity: 1 [発注数量, page 1, confidence 0.74]\nunitPrice: 6000 [Unit price column (damaged label), page 1, confidence 0.60]\norderAmount: 6000 [発注金額, page 1, confidence 0.88]\nprocessName: ト清け酸洗い処理 [名称, page 1, confidence 0.74]\nclientPostalCode: 399-4301 [Issuing company contact, page 1, confidence 0.74]\nclientAddress: 長野県上伊那郡宮田村6623-2 [Issuing company contact, page 1, confidence 0.74]\nclientPhone: not found\nNot found: Phone. Enter these values or leave optional fields blank."
+      }
+    },
+    {
+      "name": "20261014_162333.jpg",
+      "seconds": 19.642,
+      "lines": [
+        {
+          "text": "2026/08/17",
+          "x0": 2100,
+          "y0": 12,
+          "x1": 2277,
+          "y1": 49,
+          "score": 0.9976124346256257,
+          "page": 0
+        },
+        {
+          "text": "注文書",
+          "x0": 1057,
+          "y0": 68,
+          "x1": 1321,
+          "y1": 120,
+          "score": 0.9999222358067831,
+          "page": 0
+        },
+        {
+          "text": "株式会社扫御中",
+          "x0": 112,
+          "y0": 128,
+          "x1": 531,
+          "y1": 184,
+          "score": 0.9933275835854667,
+          "page": 0
+        },
+        {
+          "text": "伸和テクノス株式会社",
+          "x0": 1628,
+          "y0": 212,
+          "x1": 1983,
+          "y1": 252,
+          "score": 0.9368016600608826,
+          "page": 0
+        },
+        {
+          "text": "長野県諏訪郡下諏訪町4611番地90",
+          "x0": 1626,
+          "y0": 268,
+          "x1": 2257,
+          "y1": 309,
+          "score": 0.9856003026167551,
+          "page": 0
+        },
+        {
+          "text": "合計金額",
+          "x0": 1300,
+          "y0": 309,
+          "x1": 1449,
+          "y1": 354,
+          "score": 0.9751648008823395,
+          "page": 0
+        },
+        {
+          "text": "本社工場",
+          "x0": 357,
+          "y0": 310,
+          "x1": 501,
+          "y1": 351,
+          "score": 0.9854014664888382,
+          "page": 0
+        },
+        {
+          "text": "納入場所",
+          "x0": 93,
+          "y0": 311,
+          "x1": 236,
+          "y1": 352,
+          "score": 0.9610863775014877,
+          "page": 0
+        },
+        {
+          "text": "税率",
+          "x0": 953,
+          "y0": 311,
+          "x1": 1034,
+          "y1": 355,
+          "score": 0.9996541738510132,
+          "page": 0
+        },
+        {
+          "text": "消賛税額",
+          "x0": 1073,
+          "y0": 311,
+          "x1": 1218,
+          "y1": 352,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "税込合計金额",
+          "x0": 703,
+          "y0": 312,
+          "x1": 917,
+          "y1": 352,
+          "score": 0.8990668952465057,
+          "page": 0
+        },
+        {
+          "text": "TEL 0266-28-0105",
+          "x0": 1719,
+          "y0": 325,
+          "x1": 2006,
+          "y1": 363,
+          "score": 0.9805736877024174,
+          "page": 0
+        },
+        {
+          "text": "お支払い条件",
+          "x0": 92,
+          "y0": 367,
+          "x1": 301,
+          "y1": 410,
+          "score": 0.983985443909963,
+          "page": 0
+        },
+        {
+          "text": "￥15.000",
+          "x0": 1381,
+          "y0": 368,
+          "x1": 1505,
+          "y1": 408,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "￥16.500",
+          "x0": 817,
+          "y0": 369,
+          "x1": 939,
+          "y1": 409,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "従来通り",
+          "x0": 356,
+          "y0": 370,
+          "x1": 497,
+          "y1": 411,
+          "score": 0.9884124994277954,
+          "page": 0
+        },
+        {
+          "text": "10%",
+          "x0": 974,
+          "y0": 370,
+          "x1": 1038,
+          "y1": 406,
+          "score": 0.9300786455472311,
+          "page": 0
+        },
+        {
+          "text": "￥1.500",
+          "x0": 1136,
+          "y0": 370,
+          "x1": 1241,
+          "y1": 408,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "FAX 0266-75-1008",
+          "x0": 1714,
+          "y0": 380,
+          "x1": 2007,
+          "y1": 424,
+          "score": 0.9691143333911896,
+          "page": 0
+        },
+        {
+          "text": "裂品の受入検查は実働7日以内に行い、合否判定を致します。",
+          "x0": 858,
+          "y0": 438,
+          "x1": 1478,
+          "y1": 465,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "担当大島",
+          "x0": 1714,
+          "y0": 438,
+          "x1": 1882,
+          "y1": 482,
+          "score": 0.99958835542202,
+          "page": 0
+        },
+        {
+          "text": "下記のとおり御注文申し上げます",
+          "x0": 86,
+          "y0": 440,
+          "x1": 605,
+          "y1": 479,
+          "score": 0.9207231163978576,
+          "page": 0
+        },
+        {
+          "text": "支払条件については取引基本契約書によります。",
+          "x0": 878,
+          "y0": 471,
+          "x1": 1355,
+          "y1": 498,
+          "score": 0.9425523010167208,
+          "page": 0
+        },
+        {
+          "text": "単価",
+          "x0": 1505,
+          "y0": 577,
+          "x1": 1588,
+          "y1": 626,
+          "score": 0.9532551765441895,
+          "page": 0
+        },
+        {
+          "text": "部品名",
+          "x0": 706,
+          "y0": 578,
+          "x1": 820,
+          "y1": 624,
+          "score": 0.9995920856793722,
+          "page": 0
+        },
+        {
+          "text": "納期",
+          "x0": 1037,
+          "y0": 579,
+          "x1": 1118,
+          "y1": 623,
+          "score": 0.9997019469738007,
+          "page": 0
+        },
+        {
+          "text": "処理名",
+          "x0": 1179,
+          "y0": 579,
+          "x1": 1283,
+          "y1": 621,
+          "score": 0.9738009174664816,
+          "page": 0
+        },
+        {
+          "text": "数量",
+          "x0": 1349,
+          "y0": 579,
+          "x1": 1430,
+          "y1": 623,
+          "score": 0.9995750486850739,
+          "page": 0
+        },
+        {
+          "text": "合計金额",
+          "x0": 1662,
+          "y0": 579,
+          "x1": 1813,
+          "y1": 624,
+          "score": 0.8808492571115494,
+          "page": 0
+        },
+        {
+          "text": "図面番号",
+          "x0": 208,
+          "y0": 581,
+          "x1": 351,
+          "y1": 623,
+          "score": 0.8260368630290031,
+          "page": 0
+        },
+        {
+          "text": "注文Na",
+          "x0": 1864,
+          "y0": 581,
+          "x1": 1980,
+          "y1": 623,
+          "score": 0.9714885801076889,
+          "page": 0
+        },
+        {
+          "text": "タンク",
+          "x0": 508,
+          "y0": 640,
+          "x1": 569,
+          "y1": 676,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "NHD-F1772-11",
+          "x0": 56,
+          "y0": 644,
+          "x1": 246,
+          "y1": 673,
+          "score": 0.9976064960161845,
+          "page": 0
+        },
+        {
+          "text": "酸洗い",
+          "x0": 1185,
+          "y0": 644,
+          "x1": 1280,
+          "y1": 681,
+          "score": 0.9921741088231405,
+          "page": 0
+        },
+        {
+          "text": "5.000.00",
+          "x0": 1500,
+          "y0": 646,
+          "x1": 1628,
+          "y1": 682,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "08/20",
+          "x0": 1045,
+          "y0": 647,
+          "x1": 1136,
+          "y1": 685,
+          "score": 0.996298611164093,
+          "page": 0
+        },
+        {
+          "text": "￥15.000",
+          "x0": 1721,
+          "y0": 648,
+          "x1": 1836,
+          "y1": 685,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "3",
+          "x0": 1432,
+          "y0": 649,
+          "x1": 1456,
+          "y1": 681,
+          "score": 0.9969401359558105,
+          "page": 0
+        },
+        {
+          "text": "210266",
+          "x0": 1888,
+          "y0": 651,
+          "x1": 2001,
+          "y1": 689,
+          "score": 0.9990557432174683,
+          "page": 0
+        },
+        {
+          "text": "備考",
+          "x0": 67,
+          "y0": 718,
+          "x1": 144,
+          "y1": 763,
+          "score": 0.9963071942329407,
+          "page": 0
+        },
+        {
+          "text": "B",
+          "x0": 70,
+          "y0": 780,
+          "x1": 94,
+          "y1": 814,
+          "score": 0.9919524788856506,
+          "page": 0
+        }
+      ],
+      "reference": "shinwa",
+      "parsed": {
+        "template": "order-sheet",
+        "title": "Order sheet",
+        "data": {
+          "orderDate": "2026-08-17",
+          "deliveryDate": "2026-08-20",
+          "client": "伸和テクノス株式会社",
+          "orderNumber": "210266",
+          "productNumber": "NHD-F1772-11",
+          "productName": "タンク",
+          "quantity": 3,
+          "unitPrice": 5000,
+          "orderAmount": 15000,
+          "processName": "酸洗い",
+          "clientPostalCode": "",
+          "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+          "clientPhone": "0266-28-0105"
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-08-17",
+            "page": "P1",
+            "sourceLabel": "Unlabelled document date",
+            "confidence": 0.7,
+            "status": "review"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-20",
+            "page": "P1",
+            "sourceLabel": "納期",
+            "confidence": 0.996298611164093,
+            "status": "found"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "伸和テクノス株式会社",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.9368016600608826,
+            "status": "found"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "210266",
+            "page": "P1",
+            "sourceLabel": "注文Na",
+            "confidence": 0.9714885801076889,
+            "status": "found"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NHD-F1772-11",
+            "page": "P1",
+            "sourceLabel": "図面番号",
+            "confidence": 0.8260368630290031,
+            "status": "found"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク",
+            "page": "P1",
+            "sourceLabel": "部品名",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "3",
+            "page": "P1",
+            "sourceLabel": "数量",
+            "confidence": 0.9969401359558105,
+            "status": "found"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "5000",
+            "page": "P1",
+            "sourceLabel": "単価",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "15000",
+            "page": "P1",
+            "sourceLabel": "合計金額",
+            "confidence": 0.6,
+            "status": "review"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "酸洗い",
+            "page": "P1",
+            "sourceLabel": "処理名",
+            "confidence": 0.9738009174664816,
+            "status": "found"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県諏訪郡下諏訪町4611番地90",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.9856003026167551,
+            "status": "found"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "0266-28-0105",
+            "page": "P1",
+            "sourceLabel": "TEL",
+            "confidence": 0.9805736877024174,
+            "status": "found"
+          }
+        ],
+        "warnings": [
+          "Not found: Postal code. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-08-17 [Unlabelled document date, page 1, confidence 0.70]\ndeliveryDate: 2026-08-20 [納期, page 1, confidence 1.00]\nclient: 伸和テクノス株式会社 [Issuing company, page 1, confidence 0.94]\norderNumber: 210266 [注文Na, page 1, confidence 0.97]\nproductNumber: NHD-F1772-11 [図面番号, page 1, confidence 0.83]\nproductName: タンク [部品名, page 1, confidence 0.74]\nquantity: 3 [数量, page 1, confidence 1.00]\nunitPrice: 5000 [単価, page 1, confidence 0.74]\norderAmount: 15000 [合計金額, page 1, confidence 0.60]\nprocessName: 酸洗い [処理名, page 1, confidence 0.97]\nclientPostalCode: not found\nclientAddress: 長野県諏訪郡下諏訪町4611番地90 [Issuing company contact, page 1, confidence 0.99]\nclientPhone: 0266-28-0105 [TEL, page 1, confidence 0.98]\nNot found: Postal code. Enter these values or leave optional fields blank."
+      }
+    },
+    {
+      "name": "20261014_162031.heic",
+      "seconds": 26.527,
+      "lines": [
+        {
+          "text": "T399-0651",
+          "x0": 332,
+          "y0": 230,
+          "x1": 597,
+          "y1": 294,
+          "score": 0.9577828910615709,
+          "page": 0
+        },
+        {
+          "text": "発注先",
+          "x0": 236,
+          "y0": 277,
+          "x1": 286,
+          "y1": 401,
+          "score": 0.9986957510312399,
+          "page": 0
+        },
+        {
+          "text": "長野県塩尻市北小野2131-1",
+          "x0": 330,
+          "y0": 294,
+          "x1": 854,
+          "y1": 358,
+          "score": 0.990244197845459,
+          "page": 0
+        },
+        {
+          "text": "*MS294541*",
+          "x0": 1797,
+          "y0": 383,
+          "x1": 2004,
+          "y1": 425,
+          "score": 0.9971475064754486,
+          "page": 0
+        },
+        {
+          "text": "キヨメタ",
+          "x0": 319,
+          "y0": 398,
+          "x1": 438,
+          "y1": 462,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "御中",
+          "x0": 1276,
+          "y0": 434,
+          "x1": 1388,
+          "y1": 502,
+          "score": 0.9996085166931152,
+          "page": 0
+        },
+        {
+          "text": "発注書",
+          "x0": 1628,
+          "y0": 464,
+          "x1": 1886,
+          "y1": 539,
+          "score": 0.9997765223185221,
+          "page": 0
+        },
+        {
+          "text": "納入者ユード",
+          "x0": 2126,
+          "y0": 468,
+          "x1": 2284,
+          "y1": 514,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(注文番号)",
+          "x0": 309,
+          "y0": 513,
+          "x1": 443,
+          "y1": 557,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "2586",
+          "x0": 2147,
+          "y0": 516,
+          "x1": 2262,
+          "y1": 571,
+          "score": 0.9991185665130615,
+          "page": 0
+        },
+        {
+          "text": "（発注日）",
+          "x0": 756,
+          "y0": 530,
+          "x1": 864,
+          "y1": 574,
+          "score": 0.9118118524551392,
+          "page": 0
+        },
+        {
+          "text": "（発注数量）",
+          "x0": 1018,
+          "y0": 543,
+          "x1": 1148,
+          "y1": 581,
+          "score": 0.8948151171207428,
+          "page": 0
+        },
+        {
+          "text": "(発注単口)",
+          "x0": 1275,
+          "y0": 552,
+          "x1": 1404,
+          "y1": 591,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（指定纳入日）",
+          "x0": 1535,
+          "y0": 562,
+          "x1": 1689,
+          "y1": 599,
+          "score": 0.8226658808333533,
+          "page": 0
+        },
+        {
+          "text": "MS294541",
+          "x0": 397,
+          "y0": 569,
+          "x1": 653,
+          "y1": 635,
+          "score": 0.9994467124342918,
+          "page": 0
+        },
+        {
+          "text": "(指定け入数)",
+          "x0": 1796,
+          "y0": 570,
+          "x1": 1951,
+          "y1": 608,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（発注金额）",
+          "x0": 2059,
+          "y0": 577,
+          "x1": 2192,
+          "y1": 618,
+          "score": 0.8031182785828909,
+          "page": 0
+        },
+        {
+          "text": "26/07/27",
+          "x0": 776,
+          "y0": 584,
+          "x1": 983,
+          "y1": 645,
+          "score": 0.9968140125274658,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 1206,
+          "y0": 606,
+          "x1": 1248,
+          "y1": 653,
+          "score": 0.9689667224884033,
+          "page": 0
+        },
+        {
+          "text": "6,000.",
+          "x0": 1362,
+          "y0": 609,
+          "x1": 1508,
+          "y1": 663,
+          "score": 0.9901631077130636,
+          "page": 0
+        },
+        {
+          "text": "26/08/03",
+          "x0": 1549,
+          "y0": 615,
+          "x1": 1758,
+          "y1": 670,
+          "score": 0.9956198558211327,
+          "page": 0
+        },
+        {
+          "text": "（品目コード)",
+          "x0": 233,
+          "y0": 633,
+          "x1": 390,
+          "y1": 676,
+          "score": 0.8044802163328443,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 1988,
+          "y0": 635,
+          "x1": 2028,
+          "y1": 675,
+          "score": 0.9869202971458435,
+          "page": 0
+        },
+        {
+          "text": "6,000",
+          "x0": 2191,
+          "y0": 639,
+          "x1": 2327,
+          "y1": 691,
+          "score": 0.9757407307624817,
+          "page": 0
+        },
+        {
+          "text": "（单位）",
+          "x0": 753,
+          "y0": 651,
+          "x1": 835,
+          "y1": 695,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（支給予定日）",
+          "x0": 1014,
+          "y0": 662,
+          "x1": 1170,
+          "y1": 706,
+          "score": 0.9183002369744437,
+          "page": 0
+        },
+        {
+          "text": "（纳入单面）",
+          "x0": 1273,
+          "y0": 672,
+          "x1": 1425,
+          "y1": 715,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（纳入日）",
+          "x0": 1528,
+          "y0": 679,
+          "x1": 1653,
+          "y1": 724,
+          "score": 0.7748034715652465,
+          "page": 0
+        },
+        {
+          "text": "(納入数)",
+          "x0": 1788,
+          "y0": 688,
+          "x1": 1918,
+          "y1": 734,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "NSQ-F0124-05",
+          "x0": 243,
+          "y0": 691,
+          "x1": 553,
+          "y1": 750,
+          "score": 0.9984264373779297,
+          "page": 0
+        },
+        {
+          "text": "(納入金顔)",
+          "x0": 2054,
+          "y0": 697,
+          "x1": 2215,
+          "y1": 744,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（品目名）",
+          "x0": 228,
+          "y0": 755,
+          "x1": 337,
+          "y1": 797,
+          "score": 0.8892186403274536,
+          "page": 0
+        },
+        {
+          "text": "（製香）",
+          "x0": 753,
+          "y0": 775,
+          "x1": 832,
+          "y1": 814,
+          "score": 0.6891631335020065,
+          "page": 0
+        },
+        {
+          "text": "1C662843",
+          "x0": 750,
+          "y0": 829,
+          "x1": 954,
+          "y1": 885,
+          "score": 0.9997101351618767,
+          "page": 0
+        },
+        {
+          "text": "タンク（TOP)",
+          "x0": 238,
+          "y0": 838,
+          "x1": 466,
+          "y1": 902,
+          "score": 0.9218253865838051,
+          "page": 0
+        },
+        {
+          "text": "(検収日)",
+          "x0": 1657,
+          "y0": 896,
+          "x1": 1784,
+          "y1": 941,
+          "score": 0.8744267463684082,
+          "page": 0
+        },
+        {
+          "text": "合格",
+          "x0": 1914,
+          "y0": 911,
+          "x1": 2081,
+          "y1": 981,
+          "score": 0.9973162710666656,
+          "page": 0
+        },
+        {
+          "text": "分納",
+          "x0": 1296,
+          "y0": 932,
+          "x1": 1410,
+          "y1": 999,
+          "score": 0.9998610615730286,
+          "page": 0
+        },
+        {
+          "text": "完納",
+          "x0": 1490,
+          "y0": 938,
+          "x1": 1607,
+          "y1": 1007,
+          "score": 0.9997775554656982,
+          "page": 0
+        },
+        {
+          "text": "（工程）",
+          "x0": 229,
+          "y0": 957,
+          "x1": 304,
+          "y1": 992,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(名称）",
+          "x0": 748,
+          "y0": 974,
+          "x1": 825,
+          "y1": 1009,
+          "score": 0.7641648650169373,
+          "page": 0
+        },
+        {
+          "text": "外注加工1",
+          "x0": 239,
+          "y0": 1006,
+          "x1": 468,
+          "y1": 1069,
+          "score": 0.9991320610046387,
+          "page": 0
+        },
+        {
+          "text": "ト`フ漬け酸洗い処理",
+          "x0": 753,
+          "y0": 1011,
+          "x1": 1190,
+          "y1": 1076,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(残数)",
+          "x0": 1257,
+          "y0": 1045,
+          "x1": 1352,
+          "y1": 1090,
+          "score": 0.9618424326181412,
+          "page": 0
+        },
+        {
+          "text": "(検収担当)",
+          "x0": 1652,
+          "y0": 1062,
+          "x1": 1808,
+          "y1": 1110,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(次工程)",
+          "x0": 223,
+          "y0": 1073,
+          "x1": 328,
+          "y1": 1117,
+          "score": 0.8713945746421814,
+          "page": 0
+        },
+        {
+          "text": "不合格",
+          "x0": 1907,
+          "y0": 1080,
+          "x1": 2073,
+          "y1": 1148,
+          "score": 0.9987549583117167,
+          "page": 0
+        },
+        {
+          "text": "シートメタル(事)",
+          "x0": 234,
+          "y0": 1128,
+          "x1": 481,
+          "y1": 1189,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "担当者",
+          "x0": 1717,
+          "y0": 1157,
+          "x1": 1809,
+          "y1": 1200,
+          "score": 0.9626715779304504,
+          "page": 0
+        },
+        {
+          "text": "（備考）",
+          "x0": 235,
+          "y0": 1194,
+          "x1": 317,
+          "y1": 1237,
+          "score": 0.7343129590153694,
+          "page": 0
+        },
+        {
+          "text": "㈱マスダシートメタル課",
+          "x0": 1520,
+          "y0": 1247,
+          "x1": 1956,
+          "y1": 1327,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "干399-4301長野県上伊那郡宮田村6623-2",
+          "x0": 1520,
+          "y0": 1309,
+          "x1": 2119,
+          "y1": 1371,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "泳本書に記載する金額には消費税は含まれておりません。",
+          "x0": 217,
+          "y0": 1331,
+          "x1": 890,
+          "y1": 1390,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "Battery status:29% available (plugged in)",
+          "x0": 1875,
+          "y0": 1586,
+          "x1": 2368,
+          "y1": 1643,
+          "score": 0.9732609129533535,
+          "page": 0
+        }
+      ],
+      "reference": "masuda",
+      "parsed": {
+        "template": "purchase-order",
+        "title": "Purchase order",
+        "data": {
+          "orderDate": "2026-07-27",
+          "deliveryDate": "2026-08-03",
+          "client": "(株)マスダシートメタル課",
+          "orderNumber": "MS294541",
+          "productNumber": "NSQ-F0124-05",
+          "productName": "タンク(TOP)",
+          "quantity": 1,
+          "unitPrice": 6000,
+          "orderAmount": 6000,
+          "processName": "ト`フ漬け酸洗い処理",
+          "clientPostalCode": "399-4301",
+          "clientAddress": "長野県上伊那郡宮田村6623-2",
+          "clientPhone": ""
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-07-27",
+            "page": "P1",
+            "sourceLabel": "発注日",
+            "confidence": 0.9118118524551392,
+            "status": "found"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-03",
+            "page": "P1",
+            "sourceLabel": "指定納入日",
+            "confidence": 0.8226658808333533,
+            "status": "found"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "(株)マスダシートメタル課",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "MS294541",
+            "page": "P1",
+            "sourceLabel": "注文番号",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NSQ-F0124-05",
+            "page": "P1",
+            "sourceLabel": "品目コード",
+            "confidence": 0.8044802163328443,
+            "status": "found"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク(TOP)",
+            "page": "P1",
+            "sourceLabel": "品目名",
+            "confidence": 0.8892186403274536,
+            "status": "found"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "1",
+            "page": "P1",
+            "sourceLabel": "発注数量",
+            "confidence": 0.8948151171207428,
+            "status": "found"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "発注単価",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "発注金額",
+            "confidence": 0.8031182785828909,
+            "status": "found"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "ト`フ漬け酸洗い処理",
+            "page": "P1",
+            "sourceLabel": "名称",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "399-4301",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県上伊那郡宮田村6623-2",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          }
+        ],
+        "warnings": [
+          "Not found: Phone. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-07-27 [発注日, page 1, confidence 0.91]\ndeliveryDate: 2026-08-03 [指定納入日, page 1, confidence 0.82]\nclient: (株)マスダシートメタル課 [Issuing company, page 1, confidence 0.74]\norderNumber: MS294541 [注文番号, page 1, confidence 0.74]\nproductNumber: NSQ-F0124-05 [品目コード, page 1, confidence 0.80]\nproductName: タンク(TOP) [品目名, page 1, confidence 0.89]\nquantity: 1 [発注数量, page 1, confidence 0.89]\nunitPrice: 6000 [発注単価, page 1, confidence 0.74]\norderAmount: 6000 [発注金額, page 1, confidence 0.80]\nprocessName: ト`フ漬け酸洗い処理 [名称, page 1, confidence 0.74]\nclientPostalCode: 399-4301 [Issuing company contact, page 1, confidence 0.74]\nclientAddress: 長野県上伊那郡宮田村6623-2 [Issuing company contact, page 1, confidence 0.74]\nclientPhone: not found\nNot found: Phone. Enter these values or leave optional fields blank."
+      }
+    },
+    {
+      "name": "20261014_162042.heic",
+      "seconds": 19.274,
+      "lines": [
+        {
+          "text": "2026/08/17",
+          "x0": 2118,
+          "y0": 13,
+          "x1": 2294,
+          "y1": 49,
+          "score": 0.9983937680721283,
+          "page": 0
+        },
+        {
+          "text": "注文書",
+          "x0": 1096,
+          "y0": 66,
+          "x1": 1352,
+          "y1": 116,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "株式会社キヨメ",
+          "x0": 145,
+          "y0": 127,
+          "x1": 433,
+          "y1": 171,
+          "score": 0.877071133681706,
+          "page": 0
+        },
+        {
+          "text": "御中",
+          "x0": 460,
+          "y0": 127,
+          "x1": 567,
+          "y1": 175,
+          "score": 0.9996148645877838,
+          "page": 0
+        },
+        {
+          "text": "伸和テクノス株式会社",
+          "x0": 1654,
+          "y0": 207,
+          "x1": 2000,
+          "y1": 245,
+          "score": 0.9056936621665954,
+          "page": 0
+        },
+        {
+          "text": "長野県諏訪郡下諏訪町4611番地90",
+          "x0": 1654,
+          "y0": 262,
+          "x1": 2271,
+          "y1": 299,
+          "score": 0.9666439493497213,
+          "page": 0
+        },
+        {
+          "text": "納入場所",
+          "x0": 128,
+          "y0": 300,
+          "x1": 277,
+          "y1": 342,
+          "score": 0.9987063705921173,
+          "page": 0
+        },
+        {
+          "text": "合計金额",
+          "x0": 1338,
+          "y0": 300,
+          "x1": 1481,
+          "y1": 342,
+          "score": 0.9747714698314667,
+          "page": 0
+        },
+        {
+          "text": "本社工場",
+          "x0": 400,
+          "y0": 301,
+          "x1": 547,
+          "y1": 342,
+          "score": 0.9981339126825333,
+          "page": 0
+        },
+        {
+          "text": "税込合計金额",
+          "x0": 746,
+          "y0": 301,
+          "x1": 958,
+          "y1": 341,
+          "score": 0.940488467613856,
+          "page": 0
+        },
+        {
+          "text": "税率",
+          "x0": 994,
+          "y0": 301,
+          "x1": 1072,
+          "y1": 341,
+          "score": 0.9986893236637115,
+          "page": 0
+        },
+        {
+          "text": "消費税額",
+          "x0": 1113,
+          "y0": 303,
+          "x1": 1254,
+          "y1": 340,
+          "score": 0.8515464812517166,
+          "page": 0
+        },
+        {
+          "text": "TEL0266-28-0105",
+          "x0": 1742,
+          "y0": 317,
+          "x1": 2019,
+          "y1": 350,
+          "score": 0.9976301471392314,
+          "page": 0
+        },
+        {
+          "text": "￥1,500",
+          "x0": 1174,
+          "y0": 354,
+          "x1": 1278,
+          "y1": 396,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "10%",
+          "x0": 1016,
+          "y0": 357,
+          "x1": 1078,
+          "y1": 393,
+          "score": 0.9731391469637553,
+          "page": 0
+        },
+        {
+          "text": "￥15.000",
+          "x0": 1417,
+          "y0": 357,
+          "x1": 1535,
+          "y1": 394,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "お支払い条件",
+          "x0": 132,
+          "y0": 358,
+          "x1": 345,
+          "y1": 394,
+          "score": 0.9534920950730642,
+          "page": 0
+        },
+        {
+          "text": "従来通り",
+          "x0": 400,
+          "y0": 358,
+          "x1": 542,
+          "y1": 399,
+          "score": 0.9955075085163116,
+          "page": 0
+        },
+        {
+          "text": "￥16.500",
+          "x0": 861,
+          "y0": 358,
+          "x1": 980,
+          "y1": 396,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "FAX 0266-75-1008",
+          "x0": 1739,
+          "y0": 370,
+          "x1": 2021,
+          "y1": 409,
+          "score": 0.9762497283518314,
+          "page": 0
+        },
+        {
+          "text": "裂品の受入検查は実働7日以内に行い、合否判定を致します。",
+          "x0": 901,
+          "y0": 422,
+          "x1": 1511,
+          "y1": 450,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "担当大岛",
+          "x0": 1740,
+          "y0": 424,
+          "x1": 1900,
+          "y1": 465,
+          "score": 0.9298823922872543,
+          "page": 0
+        },
+        {
+          "text": "下記のとおり御注文申し上げます",
+          "x0": 125,
+          "y0": 427,
+          "x1": 652,
+          "y1": 466,
+          "score": 0.9600647926330567,
+          "page": 0
+        },
+        {
+          "text": "支払条件については取引基本突約書によります。",
+          "x0": 923,
+          "y0": 455,
+          "x1": 1391,
+          "y1": 482,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "納期",
+          "x0": 1080,
+          "y0": 557,
+          "x1": 1160,
+          "y1": 602,
+          "score": 0.9995622634887695,
+          "page": 0
+        },
+        {
+          "text": "部品名",
+          "x0": 756,
+          "y0": 558,
+          "x1": 866,
+          "y1": 602,
+          "score": 0.9997237920761108,
+          "page": 0
+        },
+        {
+          "text": "処理名",
+          "x0": 1221,
+          "y0": 558,
+          "x1": 1320,
+          "y1": 597,
+          "score": 0.9527570207913717,
+          "page": 0
+        },
+        {
+          "text": "数量",
+          "x0": 1386,
+          "y0": 558,
+          "x1": 1464,
+          "y1": 599,
+          "score": 0.9996138513088226,
+          "page": 0
+        },
+        {
+          "text": "単価",
+          "x0": 1540,
+          "y0": 558,
+          "x1": 1615,
+          "y1": 599,
+          "score": 0.9167108833789825,
+          "page": 0
+        },
+        {
+          "text": "合計金额",
+          "x0": 1689,
+          "y0": 558,
+          "x1": 1833,
+          "y1": 601,
+          "score": 0.9755373746156693,
+          "page": 0
+        },
+        {
+          "text": "注文No.",
+          "x0": 1883,
+          "y0": 558,
+          "x1": 1996,
+          "y1": 601,
+          "score": 0.8524300456047058,
+          "page": 0
+        },
+        {
+          "text": "図面番号",
+          "x0": 256,
+          "y0": 563,
+          "x1": 402,
+          "y1": 604,
+          "score": 0.9029917269945145,
+          "page": 0
+        },
+        {
+          "text": "タンク",
+          "x0": 560,
+          "y0": 619,
+          "x1": 619,
+          "y1": 655,
+          "score": 0.9252116680145264,
+          "page": 0
+        },
+        {
+          "text": "￥15,000",
+          "x0": 1744,
+          "y0": 620,
+          "x1": 1857,
+          "y1": 661,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "酸洗い",
+          "x0": 1227,
+          "y0": 622,
+          "x1": 1316,
+          "y1": 657,
+          "score": 0.9938185413678488,
+          "page": 0
+        },
+        {
+          "text": "5.000.00",
+          "x0": 1533,
+          "y0": 622,
+          "x1": 1656,
+          "y1": 656,
+          "score": 0.9633879736065865,
+          "page": 0
+        },
+        {
+          "text": "210266",
+          "x0": 1905,
+          "y0": 623,
+          "x1": 2015,
+          "y1": 662,
+          "score": 0.9993685185909271,
+          "page": 0
+        },
+        {
+          "text": "08/20",
+          "x0": 1089,
+          "y0": 625,
+          "x1": 1177,
+          "y1": 660,
+          "score": 0.9958469152450562,
+          "page": 0
+        },
+        {
+          "text": "NHD-F1772-11",
+          "x0": 103,
+          "y0": 626,
+          "x1": 295,
+          "y1": 655,
+          "score": 0.9972010254859924,
+          "page": 0
+        },
+        {
+          "text": "3",
+          "x0": 1466,
+          "y0": 626,
+          "x1": 1492,
+          "y1": 656,
+          "score": 0.9971804618835449,
+          "page": 0
+        },
+        {
+          "text": "備考",
+          "x0": 116,
+          "y0": 697,
+          "x1": 195,
+          "y1": 742,
+          "score": 0.9971049726009369,
+          "page": 0
+        },
+        {
+          "text": "B",
+          "x0": 119,
+          "y0": 755,
+          "x1": 148,
+          "y1": 793,
+          "score": 0.9960826635360718,
+          "page": 0
+        }
+      ],
+      "reference": "shinwa",
+      "parsed": {
+        "template": "order-sheet",
+        "title": "Order sheet",
+        "data": {
+          "orderDate": "2026-08-17",
+          "deliveryDate": "2026-08-20",
+          "client": "伸和テクノス株式会社",
+          "orderNumber": "210266",
+          "productNumber": "NHD-F1772-11",
+          "productName": "タンク",
+          "quantity": 3,
+          "unitPrice": 5000,
+          "orderAmount": 15000,
+          "processName": "酸洗い",
+          "clientPostalCode": "",
+          "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+          "clientPhone": "0266-28-0105"
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-08-17",
+            "page": "P1",
+            "sourceLabel": "Unlabelled document date",
+            "confidence": 0.7,
+            "status": "review"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-20",
+            "page": "P1",
+            "sourceLabel": "納期",
+            "confidence": 0.9958469152450562,
+            "status": "found"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "伸和テクノス株式会社",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.9056936621665954,
+            "status": "found"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "210266",
+            "page": "P1",
+            "sourceLabel": "注文No.",
+            "confidence": 0.8524300456047058,
+            "status": "found"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NHD-F1772-11",
+            "page": "P1",
+            "sourceLabel": "図面番号",
+            "confidence": 0.9029917269945145,
+            "status": "found"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク",
+            "page": "P1",
+            "sourceLabel": "部品名",
+            "confidence": 0.9252116680145264,
+            "status": "found"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "3",
+            "page": "P1",
+            "sourceLabel": "数量",
+            "confidence": 0.9971804618835449,
+            "status": "found"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "5000",
+            "page": "P1",
+            "sourceLabel": "単価",
+            "confidence": 0.9167108833789825,
+            "status": "found"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "15000",
+            "page": "P1",
+            "sourceLabel": "合計金額",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "酸洗い",
+            "page": "P1",
+            "sourceLabel": "処理名",
+            "confidence": 0.9527570207913717,
+            "status": "found"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県諏訪郡下諏訪町4611番地90",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.9666439493497213,
+            "status": "found"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "0266-28-0105",
+            "page": "P1",
+            "sourceLabel": "TEL",
+            "confidence": 0.9976301471392314,
+            "status": "found"
+          }
+        ],
+        "warnings": [
+          "Not found: Postal code. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-08-17 [Unlabelled document date, page 1, confidence 0.70]\ndeliveryDate: 2026-08-20 [納期, page 1, confidence 1.00]\nclient: 伸和テクノス株式会社 [Issuing company, page 1, confidence 0.91]\norderNumber: 210266 [注文No., page 1, confidence 0.85]\nproductNumber: NHD-F1772-11 [図面番号, page 1, confidence 0.90]\nproductName: タンク [部品名, page 1, confidence 0.93]\nquantity: 3 [数量, page 1, confidence 1.00]\nunitPrice: 5000 [単価, page 1, confidence 0.92]\norderAmount: 15000 [合計金額, page 1, confidence 0.74]\nprocessName: 酸洗い [処理名, page 1, confidence 0.95]\nclientPostalCode: not found\nclientAddress: 長野県諏訪郡下諏訪町4611番地90 [Issuing company contact, page 1, confidence 0.97]\nclientPhone: 0266-28-0105 [TEL, page 1, confidence 1.00]\nNot found: Postal code. Enter these values or leave optional fields blank."
+      }
+    },
+    {
+      "name": "⓪注文書-1.pdf",
+      "seconds": 16.673,
+      "lines": [
+        {
+          "text": "2026/08/17",
+          "x0": 3065,
+          "y0": 30,
+          "x1": 3321,
+          "y1": 85,
+          "score": 0.999019879102707,
+          "page": 0
+        },
+        {
+          "text": "注文書",
+          "x0": 1571,
+          "y0": 111,
+          "x1": 1954,
+          "y1": 183,
+          "score": 0.9997868537902832,
+          "page": 0
+        },
+        {
+          "text": "御中",
+          "x0": 670,
+          "y0": 210,
+          "x1": 811,
+          "y1": 282,
+          "score": 0.999658614397049,
+          "page": 0
+        },
+        {
+          "text": "株式会社",
+          "x0": 207,
+          "y0": 215,
+          "x1": 613,
+          "y1": 280,
+          "score": 0.9985971003770828,
+          "page": 0
+        },
+        {
+          "text": "伸和テクノス株式会社",
+          "x0": 2392,
+          "y0": 315,
+          "x1": 2897,
+          "y1": 379,
+          "score": 0.8849027901887894,
+          "page": 0
+        },
+        {
+          "text": "長野県諏訪郡下諏訪町4611番地90",
+          "x0": 2395,
+          "y0": 400,
+          "x1": 3288,
+          "y1": 456,
+          "score": 0.9956167274051242,
+          "page": 0
+        },
+        {
+          "text": "税率",
+          "x0": 1427,
+          "y0": 461,
+          "x1": 1544,
+          "y1": 527,
+          "score": 0.9995661377906799,
+          "page": 0
+        },
+        {
+          "text": "消費税額",
+          "x0": 1601,
+          "y0": 461,
+          "x1": 1813,
+          "y1": 523,
+          "score": 0.9594670087099075,
+          "page": 0
+        },
+        {
+          "text": "合計金额",
+          "x0": 1934,
+          "y0": 461,
+          "x1": 2145,
+          "y1": 523,
+          "score": 0.9395042657852173,
+          "page": 0
+        },
+        {
+          "text": "税込合計金额",
+          "x0": 1063,
+          "y0": 465,
+          "x1": 1375,
+          "y1": 527,
+          "score": 0.9671804408232371,
+          "page": 0
+        },
+        {
+          "text": "本社工場",
+          "x0": 576,
+          "y0": 470,
+          "x1": 781,
+          "y1": 532,
+          "score": 0.9792679101228714,
+          "page": 0
+        },
+        {
+          "text": "納入場所",
+          "x0": 185,
+          "y0": 472,
+          "x1": 397,
+          "y1": 534,
+          "score": 0.9991731494665146,
+          "page": 0
+        },
+        {
+          "text": "TEL0266-28-0105",
+          "x0": 2524,
+          "y0": 481,
+          "x1": 2929,
+          "y1": 537,
+          "score": 0.998727265993754,
+          "page": 0
+        },
+        {
+          "text": "￥15,000",
+          "x0": 2048,
+          "y0": 544,
+          "x1": 2226,
+          "y1": 604,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "￥16,500",
+          "x0": 1231,
+          "y0": 548,
+          "x1": 1408,
+          "y1": 608,
+          "score": 0.9413250514439174,
+          "page": 0
+        },
+        {
+          "text": "￥1,500",
+          "x0": 1694,
+          "y0": 548,
+          "x1": 1844,
+          "y1": 604,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "10%",
+          "x0": 1459,
+          "y0": 550,
+          "x1": 1551,
+          "y1": 602,
+          "score": 0.977586587270101,
+          "page": 0
+        },
+        {
+          "text": "お支払い条件",
+          "x0": 189,
+          "y0": 555,
+          "x1": 495,
+          "y1": 613,
+          "score": 0.9898531337579092,
+          "page": 0
+        },
+        {
+          "text": "従来通り",
+          "x0": 574,
+          "y0": 555,
+          "x1": 777,
+          "y1": 615,
+          "score": 0.9944715797901154,
+          "page": 0
+        },
+        {
+          "text": "FAX0266-75-1008",
+          "x0": 2521,
+          "y0": 558,
+          "x1": 2931,
+          "y1": 626,
+          "score": 0.9987859050432841,
+          "page": 0
+        },
+        {
+          "text": "製品の受入検査は実働7日以内に行い、合否判定を致します。",
+          "x0": 1291,
+          "y0": 643,
+          "x1": 2191,
+          "y1": 689,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "担当大島",
+          "x0": 2525,
+          "y0": 645,
+          "x1": 2754,
+          "y1": 705,
+          "score": 0.9655042588710785,
+          "page": 0
+        },
+        {
+          "text": "下記のとおり御注文申し上げます",
+          "x0": 180,
+          "y0": 655,
+          "x1": 931,
+          "y1": 717,
+          "score": 0.9906305988629659,
+          "page": 0
+        },
+        {
+          "text": "支払条件については取引基本契約書によります。",
+          "x0": 1325,
+          "y0": 690,
+          "x1": 2016,
+          "y1": 736,
+          "score": 0.9424522275274451,
+          "page": 0
+        },
+        {
+          "text": "注文No.",
+          "x0": 2732,
+          "y0": 843,
+          "x1": 2896,
+          "y1": 911,
+          "score": 0.9338610768318176,
+          "page": 0
+        },
+        {
+          "text": "処理名",
+          "x0": 1763,
+          "y0": 847,
+          "x1": 1912,
+          "y1": 916,
+          "score": 0.9934971531232198,
+          "page": 0
+        },
+        {
+          "text": "単価",
+          "x0": 2233,
+          "y0": 847,
+          "x1": 2346,
+          "y1": 914,
+          "score": 0.8242194056510925,
+          "page": 0
+        },
+        {
+          "text": "数量",
+          "x0": 2009,
+          "y0": 849,
+          "x1": 2125,
+          "y1": 916,
+          "score": 0.9995893836021423,
+          "page": 0
+        },
+        {
+          "text": "合計金额",
+          "x0": 2452,
+          "y0": 849,
+          "x1": 2662,
+          "y1": 911,
+          "score": 0.9182954877614975,
+          "page": 0
+        },
+        {
+          "text": "納期",
+          "x0": 1558,
+          "y0": 851,
+          "x1": 1673,
+          "y1": 918,
+          "score": 0.9977659285068512,
+          "page": 0
+        },
+        {
+          "text": "部品名",
+          "x0": 1086,
+          "y0": 854,
+          "x1": 1245,
+          "y1": 923,
+          "score": 0.999345084031423,
+          "page": 0
+        },
+        {
+          "text": "図面番号",
+          "x0": 373,
+          "y0": 861,
+          "x1": 578,
+          "y1": 923,
+          "score": 0.9758294224739075,
+          "page": 0
+        },
+        {
+          "text": "タンク",
+          "x0": 804,
+          "y0": 941,
+          "x1": 894,
+          "y1": 1013,
+          "score": 0.9568513035774231,
+          "page": 0
+        },
+        {
+          "text": "5,000.00",
+          "x0": 2226,
+          "y0": 942,
+          "x1": 2408,
+          "y1": 1004,
+          "score": 0.9820595011115074,
+          "page": 0
+        },
+        {
+          "text": "￥15,000",
+          "x0": 2535,
+          "y0": 942,
+          "x1": 2696,
+          "y1": 999,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "210266",
+          "x0": 2765,
+          "y0": 942,
+          "x1": 2926,
+          "y1": 1004,
+          "score": 0.9994238317012787,
+          "page": 0
+        },
+        {
+          "text": "酸洗い",
+          "x0": 1770,
+          "y0": 944,
+          "x1": 1908,
+          "y1": 1008,
+          "score": 0.9860166509946188,
+          "page": 0
+        },
+        {
+          "text": "3",
+          "x0": 2127,
+          "y0": 944,
+          "x1": 2166,
+          "y1": 1006,
+          "score": 0.9643296599388123,
+          "page": 0
+        },
+        {
+          "text": "NHD-F1772-11",
+          "x0": 150,
+          "y0": 947,
+          "x1": 430,
+          "y1": 1004,
+          "score": 0.9979114780823389,
+          "page": 0
+        },
+        {
+          "text": "08/20",
+          "x0": 1571,
+          "y0": 948,
+          "x1": 1703,
+          "y1": 1011,
+          "score": 0.9943721055984497,
+          "page": 0
+        },
+        {
+          "text": "備考",
+          "x0": 171,
+          "y0": 1059,
+          "x1": 286,
+          "y1": 1126,
+          "score": 0.9974246621131897,
+          "page": 0
+        },
+        {
+          "text": "B",
+          "x0": 177,
+          "y0": 1145,
+          "x1": 217,
+          "y1": 1205,
+          "score": 0.9959218502044678,
+          "page": 0
+        },
+        {
+          "text": "ページ",
+          "x0": 2880,
+          "y0": 2315,
+          "x1": 3045,
+          "y1": 2391,
+          "score": 0.990373690923055,
+          "page": 0
+        },
+        {
+          "text": "1/1",
+          "x0": 3282,
+          "y0": 2320,
+          "x1": 3371,
+          "y1": 2392,
+          "score": 0.9935158491134644,
+          "page": 0
+        }
+      ],
+      "reference": "shinwa",
+      "parsed": {
+        "template": "order-sheet",
+        "title": "Order sheet",
+        "data": {
+          "orderDate": "2026-08-17",
+          "deliveryDate": "2026-08-20",
+          "client": "伸和テクノス株式会社",
+          "orderNumber": "210266",
+          "productNumber": "NHD-F1772-11",
+          "productName": "タンク",
+          "quantity": 3,
+          "unitPrice": 5000,
+          "orderAmount": 15000,
+          "processName": "酸洗い",
+          "clientPostalCode": "",
+          "clientAddress": "長野県諏訪郡下諏訪町4611番地90",
+          "clientPhone": "0266-28-0105"
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-08-17",
+            "page": "P1",
+            "sourceLabel": "Unlabelled document date",
+            "confidence": 0.7,
+            "status": "review"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-20",
+            "page": "P1",
+            "sourceLabel": "納期",
+            "confidence": 0.9943721055984497,
+            "status": "found"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "伸和テクノス株式会社",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.8849027901887894,
+            "status": "found"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "210266",
+            "page": "P1",
+            "sourceLabel": "注文No.",
+            "confidence": 0.9338610768318176,
+            "status": "found"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NHD-F1772-11",
+            "page": "P1",
+            "sourceLabel": "図面番号",
+            "confidence": 0.9758294224739075,
+            "status": "found"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク",
+            "page": "P1",
+            "sourceLabel": "部品名",
+            "confidence": 0.9568513035774231,
+            "status": "found"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "3",
+            "page": "P1",
+            "sourceLabel": "数量",
+            "confidence": 0.9643296599388123,
+            "status": "found"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "5000",
+            "page": "P1",
+            "sourceLabel": "単価",
+            "confidence": 0.8242194056510925,
+            "status": "found"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "15000",
+            "page": "P1",
+            "sourceLabel": "合計金額",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "酸洗い",
+            "page": "P1",
+            "sourceLabel": "処理名",
+            "confidence": 0.9860166509946188,
+            "status": "found"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県諏訪郡下諏訪町4611番地90",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.9956167274051242,
+            "status": "found"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "0266-28-0105",
+            "page": "P1",
+            "sourceLabel": "TEL",
+            "confidence": 0.998727265993754,
+            "status": "found"
+          }
+        ],
+        "warnings": [
+          "Not found: Postal code. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-08-17 [Unlabelled document date, page 1, confidence 0.70]\ndeliveryDate: 2026-08-20 [納期, page 1, confidence 0.99]\nclient: 伸和テクノス株式会社 [Issuing company, page 1, confidence 0.88]\norderNumber: 210266 [注文No., page 1, confidence 0.93]\nproductNumber: NHD-F1772-11 [図面番号, page 1, confidence 0.98]\nproductName: タンク [部品名, page 1, confidence 0.96]\nquantity: 3 [数量, page 1, confidence 0.96]\nunitPrice: 5000 [単価, page 1, confidence 0.82]\norderAmount: 15000 [合計金額, page 1, confidence 0.74]\nprocessName: 酸洗い [処理名, page 1, confidence 0.99]\nclientPostalCode: not found\nclientAddress: 長野県諏訪郡下諏訪町4611番地90 [Issuing company contact, page 1, confidence 1.00]\nclientPhone: 0266-28-0105 [TEL, page 1, confidence 1.00]\nNot found: Postal code. Enter these values or leave optional fields blank."
+      }
+    },
+    {
+      "name": "⓪注文書-2.pdf",
+      "seconds": 15.38,
+      "lines": [
+        {
+          "text": "T399-0651",
+          "x0": 1456,
+          "y0": 305,
+          "x1": 1707,
+          "y1": 352,
+          "score": 0.9233051372898949,
+          "page": 0
+        },
+        {
+          "text": "発注先",
+          "x0": 1364,
+          "y0": 345,
+          "x1": 1415,
+          "y1": 474,
+          "score": 0.9968992869059244,
+          "page": 0
+        },
+        {
+          "text": "長野県塩尻市北小野2131-1",
+          "x0": 1452,
+          "y0": 357,
+          "x1": 1956,
+          "y1": 409,
+          "score": 0.9891597867012024,
+          "page": 0
+        },
+        {
+          "text": "*MS294541*",
+          "x0": 2858,
+          "y0": 378,
+          "x1": 3058,
+          "y1": 425,
+          "score": 0.9976752996444702,
+          "page": 0
+        },
+        {
+          "text": "納入者ユード",
+          "x0": 3174,
+          "y0": 449,
+          "x1": 3322,
+          "y1": 495,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "御中",
+          "x0": 2364,
+          "y0": 451,
+          "x1": 2477,
+          "y1": 516,
+          "score": 0.9995857179164886,
+          "page": 0
+        },
+        {
+          "text": "キヨメタ",
+          "x0": 1447,
+          "y0": 461,
+          "x1": 1562,
+          "y1": 520,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "発注書",
+          "x0": 2704,
+          "y0": 461,
+          "x1": 2952,
+          "y1": 534,
+          "score": 0.9344825347264608,
+          "page": 0
+        },
+        {
+          "text": "2586",
+          "x0": 3198,
+          "y0": 495,
+          "x1": 3309,
+          "y1": 551,
+          "score": 0.9991054534912109,
+          "page": 0
+        },
+        {
+          "text": "（指定纳入日）",
+          "x0": 2616,
+          "y0": 558,
+          "x1": 2774,
+          "y1": 605,
+          "score": 0.8519293240138462,
+          "page": 0
+        },
+        {
+          "text": "（発注金额）",
+          "x0": 3118,
+          "y0": 558,
+          "x1": 3245,
+          "y1": 595,
+          "score": 0.9203901092211405,
+          "page": 0
+        },
+        {
+          "text": "(発注単価）",
+          "x0": 2363,
+          "y0": 560,
+          "x1": 2497,
+          "y1": 606,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（指定纳入数）",
+          "x0": 2869,
+          "y0": 560,
+          "x1": 3019,
+          "y1": 597,
+          "score": 0.896786766392844,
+          "page": 0
+        },
+        {
+          "text": "（発注数量）",
+          "x0": 2109,
+          "y0": 565,
+          "x1": 2246,
+          "y1": 608,
+          "score": 0.8827846050262451,
+          "page": 0
+        },
+        {
+          "text": "（発注日）",
+          "x0": 1857,
+          "y0": 569,
+          "x1": 1973,
+          "y1": 611,
+          "score": 0.9416815638542175,
+          "page": 0
+        },
+        {
+          "text": "(注文番号)",
+          "x0": 1438,
+          "y0": 576,
+          "x1": 1567,
+          "y1": 613,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "6,000",
+          "x0": 3243,
+          "y0": 604,
+          "x1": 3380,
+          "y1": 665,
+          "score": 0.9677304625511169,
+          "page": 0
+        },
+        {
+          "text": "26/08/03",
+          "x0": 2634,
+          "y0": 609,
+          "x1": 2843,
+          "y1": 668,
+          "score": 0.9988179728388786,
+          "page": 0
+        },
+        {
+          "text": "6,000.",
+          "x0": 2455,
+          "y0": 612,
+          "x1": 2605,
+          "y1": 672,
+          "score": 0.9937642018000284,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 3053,
+          "y0": 613,
+          "x1": 3099,
+          "y1": 659,
+          "score": 0.9729123413562775,
+          "page": 0
+        },
+        {
+          "text": "26/07/27",
+          "x0": 1887,
+          "y0": 620,
+          "x1": 2092,
+          "y1": 675,
+          "score": 0.999083548784256,
+          "page": 0
+        },
+        {
+          "text": "1.",
+          "x0": 2302,
+          "y0": 620,
+          "x1": 2351,
+          "y1": 669,
+          "score": 0.97177454829216,
+          "page": 0
+        },
+        {
+          "text": "MS294541",
+          "x0": 1525,
+          "y0": 622,
+          "x1": 1770,
+          "y1": 676,
+          "score": 0.9996235072612762,
+          "page": 0
+        },
+        {
+          "text": "（纳入金额）",
+          "x0": 3119,
+          "y0": 669,
+          "x1": 3274,
+          "y1": 717,
+          "score": 0.893592119216919,
+          "page": 0
+        },
+        {
+          "text": "（纳入数）",
+          "x0": 2871,
+          "y0": 676,
+          "x1": 2993,
+          "y1": 719,
+          "score": 0.8452754855155945,
+          "page": 0
+        },
+        {
+          "text": "(納入目)",
+          "x0": 2622,
+          "y0": 678,
+          "x1": 2744,
+          "y1": 722,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（纳入单価）",
+          "x0": 2371,
+          "y0": 682,
+          "x1": 2523,
+          "y1": 724,
+          "score": 0.7472667495409647,
+          "page": 0
+        },
+        {
+          "text": "(単位)",
+          "x0": 1867,
+          "y0": 685,
+          "x1": 1949,
+          "y1": 729,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "（支給予定日）",
+          "x0": 2118,
+          "y0": 687,
+          "x1": 2272,
+          "y1": 724,
+          "score": 0.9344877941267831,
+          "page": 0
+        },
+        {
+          "text": "(品目コード)",
+          "x0": 1371,
+          "y0": 694,
+          "x1": 1519,
+          "y1": 731,
+          "score": 0.8942074945994786,
+          "page": 0
+        },
+        {
+          "text": "8",
+          "x0": 2655,
+          "y0": 720,
+          "x1": 2706,
+          "y1": 780,
+          "score": 0.4071255624294281,
+          "page": 0
+        },
+        {
+          "text": "NSQ-F0124-05",
+          "x0": 1378,
+          "y0": 743,
+          "x1": 1677,
+          "y1": 800,
+          "score": 0.9988066703081131,
+          "page": 0
+        },
+        {
+          "text": "（品目名）",
+          "x0": 1365,
+          "y0": 806,
+          "x1": 1474,
+          "y1": 853,
+          "score": 0.9380196809768677,
+          "page": 0
+        },
+        {
+          "text": "(製番）",
+          "x0": 1869,
+          "y0": 807,
+          "x1": 1949,
+          "y1": 845,
+          "score": 0.7055043578147888,
+          "page": 0
+        },
+        {
+          "text": "1C662843",
+          "x0": 1869,
+          "y0": 858,
+          "x1": 2070,
+          "y1": 911,
+          "score": 0.9996426850557327,
+          "page": 0
+        },
+        {
+          "text": "合格",
+          "x0": 2996,
+          "y0": 880,
+          "x1": 3165,
+          "y1": 952,
+          "score": 0.9992664456367493,
+          "page": 0
+        },
+        {
+          "text": "(検収日）",
+          "x0": 2754,
+          "y0": 884,
+          "x1": 2880,
+          "y1": 926,
+          "score": 0.8375936031341553,
+          "page": 0
+        },
+        {
+          "text": "タンク（TOP)",
+          "x0": 1382,
+          "y0": 886,
+          "x1": 1604,
+          "y1": 949,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "完納",
+          "x0": 2594,
+          "y0": 928,
+          "x1": 2714,
+          "y1": 999,
+          "score": 0.9990898966789246,
+          "page": 0
+        },
+        {
+          "text": "分納",
+          "x0": 2406,
+          "y0": 934,
+          "x1": 2521,
+          "y1": 999,
+          "score": 0.9988394677639008,
+          "page": 0
+        },
+        {
+          "text": "(名称）",
+          "x0": 1871,
+          "y0": 999,
+          "x1": 1949,
+          "y1": 1036,
+          "score": 0.797573134303093,
+          "page": 0
+        },
+        {
+          "text": "(工租)",
+          "x0": 1373,
+          "y0": 1004,
+          "x1": 1450,
+          "y1": 1041,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "ドブ漬け酸洗い処理",
+          "x0": 1874,
+          "y0": 1032,
+          "x1": 2311,
+          "y1": 1087,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "(検収担当)",
+          "x0": 2759,
+          "y0": 1046,
+          "x1": 2911,
+          "y1": 1089,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "不合格",
+          "x0": 3002,
+          "y0": 1046,
+          "x1": 3162,
+          "y1": 1108,
+          "score": 0.9993638793627421,
+          "page": 0
+        },
+        {
+          "text": "(残数)",
+          "x0": 2374,
+          "y0": 1052,
+          "x1": 2466,
+          "y1": 1090,
+          "score": 0.9827228337526321,
+          "page": 0
+        },
+        {
+          "text": "外注加工1",
+          "x0": 1385,
+          "y0": 1053,
+          "x1": 1606,
+          "y1": 1108,
+          "score": 0.9993938565254211,
+          "page": 0
+        },
+        {
+          "text": "(次工程)",
+          "x0": 1373,
+          "y0": 1120,
+          "x1": 1475,
+          "y1": 1162,
+          "score": 0.9154519438743591,
+          "page": 0
+        },
+        {
+          "text": "担当者",
+          "x0": 2828,
+          "y0": 1136,
+          "x1": 2915,
+          "y1": 1175,
+          "score": 0.9908943374951681,
+          "page": 0
+        },
+        {
+          "text": "シートメタル (事)",
+          "x0": 1385,
+          "y0": 1171,
+          "x1": 1625,
+          "y1": 1226,
+          "score": 0.9831662952899933,
+          "page": 0
+        },
+        {
+          "text": "㈱マスダ",
+          "x0": 2639,
+          "y0": 1232,
+          "x1": 2801,
+          "y1": 1292,
+          "score": 0.74,
+          "page": 0
+        },
+        {
+          "text": "シートメタル課",
+          "x0": 2843,
+          "y0": 1233,
+          "x1": 3058,
+          "y1": 1286,
+          "score": 0.9990286145891462,
+          "page": 0
+        },
+        {
+          "text": "（備考）",
+          "x0": 1387,
+          "y0": 1236,
+          "x1": 1468,
+          "y1": 1281,
+          "score": 0.8206060528755188,
+          "page": 0
+        },
+        {
+          "text": "399-4301長野県上伊那郡宮田村6623-2",
+          "x0": 2639,
+          "y0": 1286,
+          "x1": 3221,
+          "y1": 1332,
+          "score": 0.9800041615962982,
+          "page": 0
+        },
+        {
+          "text": "冬本書に記載する金額には消費税は含まれておりません。",
+          "x0": 1373,
+          "y0": 1367,
+          "x1": 2025,
+          "y1": 1411,
+          "score": 0.74,
+          "page": 0
+        }
+      ],
+      "reference": "masuda",
+      "parsed": {
+        "template": "purchase-order",
+        "title": "Purchase order",
+        "data": {
+          "orderDate": "2026-07-27",
+          "deliveryDate": "2026-08-03",
+          "client": "(株)マスダ シートメタル課",
+          "orderNumber": "MS294541",
+          "productNumber": "NSQ-F0124-05",
+          "productName": "タンク(TOP)",
+          "quantity": 1,
+          "unitPrice": 6000,
+          "orderAmount": 6000,
+          "processName": "ドブ漬け酸洗い処理",
+          "clientPostalCode": "399-4301",
+          "clientAddress": "長野県上伊那郡宮田村6623-2",
+          "clientPhone": ""
+        },
+        "fields": [
+          {
+            "key": "orderDate",
+            "label": "Order date",
+            "target": "Order entry: order date",
+            "source": "2026-07-27",
+            "page": "P1",
+            "sourceLabel": "発注日",
+            "confidence": 0.9416815638542175,
+            "status": "found"
+          },
+          {
+            "key": "deliveryDate",
+            "label": "Delivery date",
+            "target": "Order entry: delivery date",
+            "source": "2026-08-03",
+            "page": "P1",
+            "sourceLabel": "指定納入日",
+            "confidence": 0.8519293240138462,
+            "status": "found"
+          },
+          {
+            "key": "client",
+            "label": "Client",
+            "target": "Order entry: client / Client master: name",
+            "source": "(株)マスダ シートメタル課",
+            "page": "P1",
+            "sourceLabel": "Issuing company",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderNumber",
+            "label": "Order no.",
+            "target": "Order entry: order number",
+            "source": "MS294541",
+            "page": "P1",
+            "sourceLabel": "注文番号",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "productNumber",
+            "label": "Drawing / item no.",
+            "target": "Product master: product number",
+            "source": "NSQ-F0124-05",
+            "page": "P1",
+            "sourceLabel": "品目コード",
+            "confidence": 0.8942074945994786,
+            "status": "found"
+          },
+          {
+            "key": "productName",
+            "label": "Product name",
+            "target": "Order entry: product name / Product master: name",
+            "source": "タンク(TOP)",
+            "page": "P1",
+            "sourceLabel": "品目名",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "quantity",
+            "label": "Quantity",
+            "target": "Order entry: quantity",
+            "source": "1",
+            "page": "P1",
+            "sourceLabel": "発注数量",
+            "confidence": 0.8827846050262451,
+            "status": "found"
+          },
+          {
+            "key": "unitPrice",
+            "label": "Unit price",
+            "target": "Product master: unit price",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "発注単価",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "orderAmount",
+            "label": "Amount (excl. tax)",
+            "target": "Order entry: order amount",
+            "source": "6000",
+            "page": "P1",
+            "sourceLabel": "発注金額",
+            "confidence": 0.9203901092211405,
+            "status": "found"
+          },
+          {
+            "key": "processName",
+            "label": "Process",
+            "target": "Product master: tasks",
+            "source": "ドブ漬け酸洗い処理",
+            "page": "P1",
+            "sourceLabel": "名称",
+            "confidence": 0.74,
+            "status": "review"
+          },
+          {
+            "key": "clientPostalCode",
+            "label": "Postal code",
+            "target": "Client master: postal code",
+            "source": "399-4301",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.9800041615962982,
+            "status": "found"
+          },
+          {
+            "key": "clientAddress",
+            "label": "Address",
+            "target": "Client master: address",
+            "source": "長野県上伊那郡宮田村6623-2",
+            "page": "P1",
+            "sourceLabel": "Issuing company contact",
+            "confidence": 0.9800041615962982,
+            "status": "found"
+          },
+          {
+            "key": "clientPhone",
+            "label": "Phone",
+            "target": "Client master: phone number",
+            "source": "",
+            "page": "",
+            "sourceLabel": "",
+            "confidence": 0,
+            "status": "missing"
+          }
+        ],
+        "warnings": [
+          "Not found: Phone. Enter these values or leave optional fields blank."
+        ],
+        "debug": "orderDate: 2026-07-27 [発注日, page 1, confidence 0.94]\ndeliveryDate: 2026-08-03 [指定納入日, page 1, confidence 0.85]\nclient: (株)マスダ シートメタル課 [Issuing company, page 1, confidence 0.74]\norderNumber: MS294541 [注文番号, page 1, confidence 0.74]\nproductNumber: NSQ-F0124-05 [品目コード, page 1, confidence 0.89]\nproductName: タンク(TOP) [品目名, page 1, confidence 0.74]\nquantity: 1 [発注数量, page 1, confidence 0.88]\nunitPrice: 6000 [発注単価, page 1, confidence 0.74]\norderAmount: 6000 [発注金額, page 1, confidence 0.92]\nprocessName: ドブ漬け酸洗い処理 [名称, page 1, confidence 0.74]\nclientPostalCode: 399-4301 [Issuing company contact, page 1, confidence 0.98]\nclientAddress: 長野県上伊那郡宮田村6623-2 [Issuing company contact, page 1, confidence 0.98]\nclientPhone: not found\nNot found: Phone. Enter these values or leave optional fields blank."
+      }
+    }
+  ]
+}
