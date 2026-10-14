@@ -76,13 +76,18 @@ class _WebViewHomeState extends State<WebViewHome> with WidgetsBindingObserver {
             _loading = false;
             _pageLoaded = true;
           }),
-          onWebResourceError: (error) => setState(() {
+          onWebResourceError: (error) {
+            // An API/image failure must not replace the live WebView and its
+            // draft fields with a page-load error screen.
+            if (error.isForMainFrame != true || !mounted) return;
+            setState(() {
             _loading = false;
             _error =
                 'Failed to load $kServerUrl\n(${error.description})\n\n'
                 'Run the app through option 4 so the project runner can start '
                 'the web server and connect it to the Android emulator.';
-          }),
+            });
+          },
         ),
       );
 

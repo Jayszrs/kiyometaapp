@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { readRecovery, writeRecovery, removeRecovery } from "./recoveryStorage";
 
 export interface OcrLine {
   text: string;
@@ -48,7 +49,36 @@ function pollDelay(signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function runOcr(file: File, signal?: AbortSignal): Promise<OcrLine[]> {
+interface OcrRecovery { id?: string; name: string; lines?: OcrLine[] }
+export const getOcrRecovery = (owner: string) => readRecovery<OcrRecovery>(owner, "ocr-job");
+
+async function sourceFile(owner: string, file?: File, remove = false): Promise<File | undefined> {
+  // IndexedDB stores the uploaded bytes, including a corrected camera image.
+  // Closing during upload can then retry the same source, deduped by the server.
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("kiyometa-ocr-recovery", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("sources");
+    request.onerror = () => reject(new Error("Could not preserve the OCR source on this device."));
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction("sources", file || remove ? "readwrite" : "readonly");
+      const store = tx.objectStore("sources");
+      const action = remove ? store.delete(owner) : file ? store.put(file, owner) : store.get(owner);
+      let result: File | undefined;
+      action.onsuccess = () => { result = action.result as File | undefined; };
+      tx.oncomplete = () => { db.close(); resolve(result); };
+      tx.onabort = tx.onerror = () => { db.close(); reject(new Error("Could not preserve the OCR source on this device.")); };
+    };
+  });
+}
+export function clearOcrRecovery(owner: string): void {
+  removeRecovery(owner, "ocr-job");
+  removeRecovery(owner, "scan-lines");
+  removeRecovery(owner, "scan-fields");
+  void sourceFile(owner, undefined, true).catch(() => {});
+}
+
+export async function runOcr(file?: File, signal?: AbortSignal): Promise<OcrLine[]> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   signal?.addEventListener("abort", cancel, { once: true });
@@ -59,17 +89,36 @@ export async function runOcr(file: File, signal?: AbortSignal): Promise<OcrLine[
   const started = performance.now();
   let jobUrl = "";
   let headers: Record<string, string> = {};
-  let completed = false;
   try {
-    const body = new FormData();
-    body.append("file", file);
+    const { data } = await supabase.auth.getSession();
+    const owner = data.session?.user.id;
+    if (!owner) throw new OcrError("auth");
+    let recovery = file ? undefined : getOcrRecovery(owner);
+    if (recovery?.lines) return recovery.lines;
+    if (file) {
+      await sourceFile(owner, file);
+      recovery = { name: file.name };
+      writeRecovery(owner, "ocr-job", recovery);
+    }
+    if (!recovery) throw new OcrError("service");
     headers = await authHeaders().catch(() => { throw new OcrError("auth"); });
-    const res = await fetch(`${OCR_URL}/jobs`, { method: "POST", body, headers, signal: controller.signal });
-    if (!res.ok) throw responseError(res.status);
-    const accepted = await res.json();
-    if (typeof accepted?.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(accepted.id)) throw new OcrError("service");
-    jobUrl = `${OCR_URL}/jobs/${accepted.id}`;
+    const upload = async () => {
+      const source = file ?? await sourceFile(owner);
+      if (!source) throw new OcrError("service");
+      const body = new FormData();
+      body.append("file", source, recovery!.name);
+      const res = await fetch(`${OCR_URL}/jobs`, { method: "POST", body, headers, signal: controller.signal });
+      if (!res.ok) throw responseError(res.status);
+      const accepted = await res.json();
+      if (typeof accepted?.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(accepted.id)) throw new OcrError("service");
+      recovery = { name: recovery!.name, id: accepted.id };
+      writeRecovery(owner, "ocr-job", recovery);
+      jobUrl = `${OCR_URL}/jobs/${accepted.id}`;
+    };
+    if (recovery.id) jobUrl = `${OCR_URL}/jobs/${recovery.id}`;
+    else await upload();
     let failures = 0;
+    let recoveredMissingJob = false;
     while (!controller.signal.aborted) {
       let poll: Response;
       try {
@@ -79,16 +128,22 @@ export async function runOcr(file: File, signal?: AbortSignal): Promise<OcrLine[
         await pollDelay(controller.signal);
         continue;
       }
+      if (poll.status === 404 && !recoveredMissingJob) {
+        recoveredMissingJob = true;
+        await upload(); // Service restart/retention: recover from saved bytes.
+        continue;
+      }
       if (!poll.ok) throw responseError(poll.status);
       failures = 0;
       const job = await poll.json();
       if (job.status === "done") {
         if (!Array.isArray(job.result?.lines)) throw new OcrError("service");
-        completed = true;
+        writeRecovery(owner, "ocr-job", { ...recovery, lines: job.result.lines });
         return job.result.lines as OcrLine[];
       }
       if (job.status === "error" || job.status === "cancelled") {
-        completed = true;
+        // Retry starts a new job rather than polling a terminal error forever.
+        writeRecovery(owner, "ocr-job", { name: recovery!.name });
         throw new OcrError(job.error === "timeout" ? "timeout" : job.error === "unreadable" ? "unreadable"
           : job.error === "size" ? "size" : "service");
       }
@@ -103,10 +158,8 @@ export async function runOcr(file: File, signal?: AbortSignal): Promise<OcrLine[
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", cancel);
-    if (jobUrl && !completed) {
-      // Separate signal: the poll controller is already aborted on close.
-      void fetch(jobUrl, { method: "DELETE", headers, keepalive: true }).catch(() => {});
-    }
+    // Closing the modal/app or losing connectivity detaches this poller only.
+    // The server keeps processing; the durable job handle resumes on reopen.
     console.info("OCR request duration", Math.round(performance.now() - started), "ms");
   }
 }

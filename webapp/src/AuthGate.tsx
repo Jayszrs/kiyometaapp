@@ -50,7 +50,7 @@ export default function AuthGate() {
     <AuthContext.Provider value={{ email: session.user.email ?? "", profile, signOut, updateProfile }}>
       <div className={`h-full ${languageChanging ? "language-change" : ""}`}>
         <DialogProvider lang={lang}>
-          <App lang={lang} setLang={setLang} />
+          <App key={profile.id} lang={lang} setLang={setLang} />
         </DialogProvider>
       </div>
     </AuthContext.Provider>

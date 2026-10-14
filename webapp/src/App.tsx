@@ -1,11 +1,15 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
-import { fetchAll, fetchProduct, upsertOrder, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
+import { fetchAll, fetchProduct, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
+import RecoveryStatus from "./components/RecoveryStatus";
+import { useDurableState } from "./lib/useDurableState";
+import { readRecovery, writeRecovery } from "./lib/recoveryStorage";
+import { saveOrderDurably, QueuedOrderError } from "./lib/orderOutbox";
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
 import PhotoEditor from "./components/PhotoEditor";
-import { runOcr, OcrError, sendOcrLog, type OcrLine } from "./lib/ocrClient";
+import { runOcr, OcrError, sendOcrLog, getOcrRecovery, clearOcrRecovery, type OcrLine } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
@@ -613,6 +617,11 @@ const SCAN_FIELD_LABEL: Record<string, keyof typeof LABELS> = {
   clientPhone: "scanFldPhone",
 };
 
+function saveErrorMessage(error: unknown, lang: Lang): string {
+  if (error instanceof QueuedOrderError && lang === "ja") return "端末に送信を保存しました。再接続またはアプリ再起動後に同期します。";
+  return error instanceof Error ? error.message : (error as {message?: string})?.message ?? String(error);
+}
+
 function ScanModal({ clients, products, onClose, onApply, lang }: {
   clients: Client[];
   products: Product[];
@@ -620,16 +629,19 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   onApply: (data: ScanFillData, clientExists: boolean, productExists: boolean) => void;
   lang: Lang;
 }) {
-  const [ocrLines, setOcrLines] = useState<OcrLine[] | null>(null);
+  const { profile } = useAuth();
+  const [ocrLines, setOcrLines] = useDurableState<OcrLine[] | null>("scan-lines", null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editedData, setEditedData] = useState<ScanFillData | null>(null);
+  const [editedData, setEditedData] = useDurableState<ScanFillData | null>("scan-fields", null);
   const leftPanel = useResizablePanel<HTMLDivElement>({ initial: 288, min: 220, max: 460, storageKey: "kiyometa.scan.left" });
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [editingPhoto, setEditingPhoto] = useState(false);
   const [lastScan, setLastScan] = useState<File | null>(null);
+  const scanLinesRef = useRef(ocrLines);
+  scanLinesRef.current = ocrLines;
   const requestRef = useRef<AbortController | null>(null);
   useEffect(() => () => requestRef.current?.abort(), []);
   const custom = useMemo(
@@ -655,11 +667,11 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
       setPhoto(file); setEditingPhoto(true); setError(null);
     } else { setPhoto(null); setEditingPhoto(false); void scanFile(file); }
   };
-  const scanFile = async (file: File) => {
+  const scanFile = async (file?: File) => {
     if (requestRef.current) return;
     const controller = new AbortController();
     requestRef.current = controller;
-    setLastScan(file);
+    if (file) setLastScan(file);
     setBusy(true);
     setError(null);
     setOcrLines(null);
@@ -667,7 +679,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     try {
       const lines = await runOcr(file, controller.signal);
       const parsed = parseQuotation(lines, lang);
-      void sendOcrLog(`--- quotation: ${file.name} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
+      void sendOcrLog(`--- quotation: ${file?.name ?? "resumed document"} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
       if (!parsed.fields.some(f => f.status !== "missing" &&
         (!["productName", "processName"].includes(f.key) || f.confidence >= 0.75))) {
         setError(t("scanErrNoFields", lang));
@@ -696,7 +708,16 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     }
   };
 
+  useEffect(() => {
+    const resume = () => { if (getOcrRecovery(profile.id) && !scanLinesRef.current && !requestRef.current) void scanFile(); };
+    resume();
+    window.addEventListener("online", resume);
+    window.addEventListener("kiyometa-resume", resume);
+    return () => { window.removeEventListener("online", resume); window.removeEventListener("kiyometa-resume", resume); };
+  }, []);
+
   const clearCustom = () => {
+    clearOcrRecovery(profile.id);
     setOcrLines(null);
     setError(null);
     setEditedData(null);
@@ -765,7 +786,7 @@ return (
                   <Icon name="alert-triangle" size={14} className="mt-0.5 shrink-0" /> {error}
                 </p>
               )}
-              {!busy && !editingPhoto && error && lastScan && <Btn variant="outline" onClick={() => void scanFile(lastScan)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
+              {!busy && !editingPhoto && error && (lastScan || getOcrRecovery(profile.id)) && <Btn variant="outline" onClick={() => void scanFile(getOcrRecovery(profile.id) ? undefined : lastScan ?? undefined)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
               {!busy && !editingPhoto && photo && <Btn variant="outline" onClick={() => setEditingPhoto(true)}>{lang === "ja" ? "写真を再編集" : "Edit photo again"}</Btn>}
               {busy && (
                 <div className="pt-1 space-y-1.5">
@@ -890,7 +911,7 @@ return (
           <Btn variant="outline" onClick={onClose}>{t("scanCancel", lang)}</Btn>
           <div className="flex-1" />
           {custom && !editingPhoto && !busy && (
-            <Btn variant="primary" size="lg" onClick={() => editedData && onApply(editedData, clientExists, productExists)}>
+            <Btn variant="primary" size="lg" onClick={() => { if (editedData) { onApply(editedData, clientExists, productExists); clearOcrRecovery(profile.id); } }}>
               <Icon name="check" size={16} />
               {clientExists && productExists ? t("scanApply", lang) : t("scanGuidedImport", lang)}
             </Btn>
@@ -1344,6 +1365,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   lang: Lang; setLang: (l: Lang) => void;
 }) {
   const canDelete = useCanDelete();
+  const { profile } = useAuth();
   const dialog = useDialog();
   const newId = () => genUUID();
 
@@ -1359,11 +1381,11 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
   // The order entry page always opens on a blank new order; it is only filled
   // when a scanned quotation is applied (or after a guided master import).
-  const [selectedId, setSelectedId] = useState("");
-  const [form, setForm] = useState<OrderRecord>(() => (isFilling && scanRouting.data
+  const [selectedId, setSelectedId] = useDurableState("entry-selection", "");
+  const [form, setForm] = useDurableState<OrderRecord>("entry-form", () => (isFilling && scanRouting.data
     ? { ...blankForm(), orderDate: scanRouting.data.orderDate, deliveryDate: scanRouting.data.deliveryDate, client: scanRouting.data.client, orderNumber: scanRouting.data.orderNumber, productName: scanRouting.data.productName, quantity: scanRouting.data.quantity, orderAmount: scanRouting.data.orderAmount }
-    : blankForm()));
-  const [isNew, setIsNew] = useState(true);
+    : blankForm()), isFilling);
+  const [isNew, setIsNew] = useDurableState("entry-new", true);
   const [errors, setErrors] = useState<FormErrors>({});
   const [searchText, setSearchText] = useState("");
   const [sortBy, setSortBy] = useState<"delivery" | "order">("delivery");
@@ -1374,7 +1396,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const [deliveryFilterOn, setDeliveryFilterOn] = useState(false);
   const [deliveryFilterDate, setDeliveryFilterDate] = useState(today);
   const [calendarDisplay, setCalendarDisplay] = useState(false);
-  const [arrangement, setArrangement] = useState("");
+  const [arrangement, setArrangement] = useDurableState("entry-arrangement", "");
   const filterPanel = useResizablePanel({ initial: 208, min: 150, max: 420, storageKey: "kiyometa.order-entry.filter" });
   const listPanel = useResizablePanel({ initial: 224, min: 160, max: 460, storageKey: "kiyometa.order-entry.list" });
 
@@ -1436,17 +1458,20 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     setForm(cleaned);
     const errs = validateOrder(cleaned, clients, products, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const record = isNew ? { ...cleaned, id: newId() } : cleaned;
+    const record = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: newId() } : cleaned;
+    setForm(record);
     try {
-      const saved = await upsertOrder(record);
+      const saved = await saveOrderDurably(record, profile.id);
       setOrders(prev => prev.some(o => o.id === saved.id)
         ? prev.map(o => o.id === saved.id ? saved : o)
         : [saved, ...prev]);
-      setForm(saved);
-      setSelectedId(saved.id);
-      setIsNew(false);
+      setForm(current => current.id === record.id ? { ...current, version: saved.version } : current);
+      if (readRecovery<OrderRecord>(profile.id, "entry-form")?.id === saved.id) {
+        setSelectedId(saved.id);
+        setIsNew(false);
+      }
     } catch (err) {
-      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `受注の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save order: ${saveErrorMessage(err, lang)}`);
       return;
     }
     setErrors({});
@@ -1458,7 +1483,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     try {
       await deleteOrder(deletedId);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to delete order: ${saveErrorMessage(err, lang)}`);
       return;
     }
     const rest = orders.filter(o => o.id !== deletedId);
@@ -1907,10 +1932,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   billingOrderIds: string[]; setBillingOrderIds: React.Dispatch<React.SetStateAction<string[]>>;
   lang: Lang; setLang: (l: Lang) => void;
 }) {
+  const { profile } = useAuth();
   const dialog = useDialog();
   const billingAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "処理を開始できませんでした。再試行してください。" : "Could not start this action. Please retry."); });
-  const [fromDate, setFromDate] = useState(addDaysJST(today, -30));
-  const [toDate, setToDate] = useState(endOfMonthJST(today));
+  const [fromDate, setFromDate] = useDurableState("billing-from-date", addDaysJST(today, -30));
+  const [toDate, setToDate] = useDurableState("billing-to-date", endOfMonthJST(today));
   const [clientFilter, setClientFilter] = useState<Record<string, boolean>>({});
   const [statusFilter, setStatusFilter] = useState<Record<string, boolean>>(
     Object.fromEntries(PROGRESS_OPTIONS.map(p => [p, true]))
@@ -1932,8 +1958,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     productionEndDate: "", orderContact: "", contactContents: "", finishTask: false, hasContact: false,
     completedTasks: [],
   });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [panelForm, setPanelForm] = useState<OrderRecord>(blankSBForm());
+  const [selectedId, setSelectedId] = useDurableState<string | null>("search-selection", null);
+  const [panelForm, setPanelForm] = useDurableState<OrderRecord>("search-form", blankSBForm);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const filterPanel = useResizablePanel({ initial: 224, min: 150, max: 420, storageKey: "kiyometa.search.filter" });
   const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.search.detail" });
@@ -1954,11 +1980,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   const handleSave = async () => {
     if (!panelForm.client || !panelForm.productName || !panelForm.deliveryDate) return;
     try {
-      const saved = await upsertOrder(panelForm);
+      const saved = await saveOrderDurably(panelForm, profile.id);
       setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
-      setPanelForm(saved);
+      setPanelForm(current => current.id === saved.id ? { ...current, version: saved.version } : current);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `受注の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save order: ${saveErrorMessage(err, lang)}`);
     }
   };
 
@@ -1966,7 +1992,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     try {
       await deleteOrder(id);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `受注の削除に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to delete order: ${saveErrorMessage(err, lang)}`);
       return;
     }
     setOrders(prev => prev.filter(o => o.id !== id));
@@ -2405,7 +2431,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   const [billingDate, setBillingDate] = useState(todayJST());
   const [deadlineDate, setDeadlineDate] = useState(addDaysJST(todayJST(), 30));
   const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [invoiceNote, setInvoiceNote] = useState("");
+  const [invoiceNote, setInvoiceNote] = useDurableState("invoice-note", "");
   const [dateField, setDateField] = useState<"billing" | "deadline" | null>(null);
   const [calCursor, setCalCursor] = useState(() => {
     const d = dateFromISO(todayJST());
@@ -2627,10 +2653,10 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
 
   const blankForm = (): Client => ({ id: `c${Date.now()}`, name: sd && isScanRouted ? sd.client : "", phone: sd && isScanRouted ? sd.clientPhone : "", email: "", postalCode: sd && isScanRouted ? sd.clientPostalCode : "", address: sd && isScanRouted ? sd.clientAddress : "" });
 
-  const [selectedId, setSelectedId] = useState(isScanRouted ? "" : clients[0]?.id ?? "");
-  const [form, setForm] = useState<Client>(isScanRouted ? blankForm() : clients[0] ?? blankForm());
-  const [isNew, setIsNew] = useState(isScanRouted);
-  const [dirty, setDirty] = useState(isScanRouted);
+  const [selectedId, setSelectedId] = useDurableState("client-selection", isScanRouted ? "" : clients[0]?.id ?? "", isScanRouted);
+  const [form, setForm] = useDurableState<Client>("client-form", () => isScanRouted ? blankForm() : clients[0] ?? blankForm(), isScanRouted);
+  const [isNew, setIsNew] = useDurableState("client-new", isScanRouted, isScanRouted);
+  const [dirty, setDirty] = useDurableState("client-dirty", isScanRouted, isScanRouted);
   const [search, setSearch] = useState("");
   const [errors, setErrors] = useState<FormErrors>({});
   const listPanel = useResizablePanel({ initial: 240, min: 160, max: 460, storageKey: "kiyometa.clients.list" });
@@ -2653,7 +2679,8 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     setForm(cleaned);
     const errs = validateClient(cleaned, clients, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const candidate = isNew ? { ...cleaned, id: genUUID() } : cleaned;
+    const candidate = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: genUUID() } : cleaned;
+    setForm(candidate);
     let saved: Client;
 
     try {
@@ -2707,7 +2734,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     try {
       await deleteClient(deletedId);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `取引先の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete client: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `取引先の削除に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to delete client: ${saveErrorMessage(err, lang)}`);
       return;
     }
     const rest = clients.filter(client => client.id !== deletedId);
@@ -2821,6 +2848,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   lang: Lang; setLang: (l: Lang) => void;
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
 }) {
+  const { profile } = useAuth();
   const canDelete = useCanDelete();
   const dialog = useDialog();
   const isScanRouted = scanRouting.stage === "need-product" && scanRouting.data !== null;
@@ -2837,11 +2865,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     drawingPaths: makeDrawings(7),
   });
 
-  const [selectedId, setSelectedId] = useState(isScanRouted ? "" : products[0]?.id ?? "");
-  const [form, setForm] = useState<Product>(isScanRouted ? blankForm() : products[0] ?? blankForm());
-  const [isNew, setIsNew] = useState(isScanRouted);
+  const [selectedId, setSelectedId] = useDurableState("product-selection", isScanRouted ? "" : products[0]?.id ?? "", isScanRouted);
+  const [form, setForm] = useDurableState<Product>("product-form", () => isScanRouted ? blankForm() : products[0] ?? blankForm(), isScanRouted);
+  const [isNew, setIsNew] = useDurableState("product-new", isScanRouted, isScanRouted);
   const isWide = useIsTabletOrWider();
-  const [dirty, setDirty] = useState(isScanRouted);
+  const [dirty, setDirty] = useDurableState("product-dirty", isScanRouted, isScanRouted);
   const [errors, setErrors] = useState<FormErrors>({});
   const [search, setSearch] = useState("");
   const [drawingIndex, setDrawingIndex] = useState<number | null>(null);
@@ -2849,8 +2877,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [showCalcInfo, setShowCalcInfo] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [allBom, setAllBom] = useState<BomItem[]>([]);
-  const [materialItemId, setMaterialItemId] = useState("");
-  const [materialQty, setMaterialQty] = useState(1);
+  const [materialItemId, setMaterialItemId] = useDurableState("product-material-item", "");
+  const [materialQty, setMaterialQty] = useDurableState("product-material-qty", 1);
   const [materialBusy, setMaterialBusy] = useState(false);
   const [materialError, setMaterialError] = useState("");
   const listPanel = useResizablePanel({ initial: 240, min: 160, max: 460, storageKey: "kiyometa.products.list" });
@@ -2903,6 +2931,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   // here instead.
   useEffect(() => {
     if (isScanRouted || isNew) return;
+    if (readRecovery<Product>(profile.id, "product-form")) return;
     const initial = products[0];
     if (!initial) return;
     void openProduct(initial);
@@ -3053,7 +3082,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setForm(cleaned);
     const errs = validateProduct(cleaned, products, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const record = isNew ? { ...cleaned, id: genUUID() } : cleaned;
+    const record = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: genUUID() } : cleaned;
+    setForm(record);
 
     try {
       const saved = await upsertProduct(record);
@@ -3069,7 +3099,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setErrors({});
       setDirty(false);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `製品の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save product: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `製品の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save product: ${saveErrorMessage(err, lang)}`);
       return;
     }
 
@@ -3086,7 +3116,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     try {
       await deleteProduct(deletedId);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to delete product: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to delete product: ${saveErrorMessage(err, lang)}`);
       return;
     }
     const rest = products.filter(product => product.id !== deletedId);
@@ -3519,17 +3549,18 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
 }) {
+  const { profile } = useAuth();
   const dialog = useDialog();
   const [currentDate, setCurrentDate] = useState(new Date("2025-11-01"));
   const [headcount, setHeadcount] = useState(3);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useDurableState<string | null>("schedule-selection", null);
   const [viewMode, setViewMode] = useState<"1W" | "2W" | "3W" | "6W">("6W");
   const [statusFilter, setStatusFilter] = useState<Record<string, boolean>>(
     Object.fromEntries(Object.keys(SCHEDULE_STATUS_COLORS).map(k => [k, true]))
   );
-  const [panelForm, setPanelForm] = useState<OrderRecord | null>(null);
+  const [panelForm, setPanelForm] = useDurableState<OrderRecord | null>("schedule-form", null);
   const [saved, setSaved] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useDurableState("schedule-dirty", false);
   const filterPanel = useResizablePanel({ initial: 192, min: 150, max: 360, storageKey: "kiyometa.schedule.filter" });
   const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.schedule.detail" });
 
@@ -3612,14 +3643,14 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   const handleSave = async () => {
     if (!form || !dirty) return;
     try {
-      const persisted = await upsertOrder(form);
+      const persisted = await saveOrderDurably(form, profile.id);
       setOrders(prev => prev.map(o => o.id === persisted.id ? persisted : o));
-      setPanelForm(persisted);
+      setPanelForm(current => current?.id === persisted.id ? { ...current, version: persisted.version } : current);
       setDirty(false);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `受注の保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save order: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `受注の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save order: ${saveErrorMessage(err, lang)}`);
     }
   };
 
@@ -3806,9 +3837,12 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
   orderId: string | null; orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang;
 }) {
+  const { profile } = useAuth();
   const dialog = useDialog();
   const printAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
-  const order = orders.find(o => o.id === orderId);
+  const serverOrder = orders.find(o => o.id === orderId);
+  const [draft, setDraft] = useDurableState<OrderRecord | null>(`checklist-form-${orderId}`, () => serverOrder ?? null);
+  const order = draft ?? serverOrder;
   const product = products.find(p => p.clientName === order?.client && p.productName === order?.productName);
 
   if (!order) {
@@ -3827,16 +3861,24 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
     const newCompleted = [...completed];
     newCompleted[index] = !newCompleted[index];
     const updated = { ...order, completedTasks: newCompleted };
+    setDraft(updated);
     try {
-      const persisted = await upsertOrder(updated);
+      const persisted = await saveOrderDurably(updated, profile.id);
       setOrders(prev => prev.map(o => o.id === order.id ? persisted : o));
+      setDraft(current => current?.id === persisted.id ? { ...current, version: persisted.version } : current);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `作業の進捗保存に失敗しました: ${err instanceof Error ? err.message : err}` : `Failed to save task progress: ${err instanceof Error ? err.message : err}`);
+      dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `作業の進捗保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save task progress: ${saveErrorMessage(err, lang)}`);
     }
   };
 
-  const handleSaveAndReturn = () => {
-    onNavigate("order-entry");
+  const handleSaveAndReturn = async () => {
+    try {
+      if (JSON.stringify(order.completedTasks) !== JSON.stringify(serverOrder?.completedTasks)) {
+        const persisted = await saveOrderDurably(order, profile.id);
+        setOrders(previous => previous.map(row => row.id === persisted.id ? persisted : row));
+      }
+      onNavigate("order-entry");
+    } catch (error) { void dialog.alert(saveErrorMessage(error, lang)); }
   };
 
   const productNumber = product?.productNumber || "-";
@@ -3849,7 +3891,7 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
           <button onClick={handleSaveAndReturn} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer">{t("saveAndReturn", lang)}</button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">{lang === "ja" ? "自動保存済み" : "Auto-saved"}</span>
+          <span className="rounded bg-emerald-100 px-3 py-1.5 text-xs font-700 text-emerald-700">{JSON.stringify(order.completedTasks) === JSON.stringify(serverOrder?.completedTasks) ? (lang === "ja" ? "同期済み" : "Synced") : (lang === "ja" ? "端末に保存済み · 未同期" : "Saved on device · not synced")}</span>
           <button disabled={printAction.busy} onClick={() => void printAction.run(() => printBillingDocument(lang, message => dialog.alert(message)))} className="px-4 py-1.5 bg-[#e0f0ff] text-slate-800 text-sm font-600 border border-slate-300 rounded-sm hover:bg-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">{t("printButton", lang)}</button>
         </div>
       </header>
@@ -3923,20 +3965,21 @@ function sameRows<T extends object>(previous: T[], next: T[]): boolean {
 
 export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lang) => void }) {
   const { profile, signOut } = useAuth();
-  const [page, setPage] = useState<Page>("home");
-  const [deliveryMode, setDeliveryMode] = useState<DeliverySlipMode>("single");
-  const [clients, setClients] = useState<Client[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [dataState, setDataState] = useState<"loading" | "ready" | "error">("loading");
+  const [page, setPage] = useDurableState<Page>("page", "home");
+  const [deliveryMode, setDeliveryMode] = useDurableState<DeliverySlipMode>("delivery-mode", "single");
+  const cached = useMemo(() => readRecovery<{clients: Client[]; products: Product[]; orders: OrderRecord[]}>(profile.id, "data-cache"), [profile.id]);
+  const [clients, setClients] = useState<Client[]>(cached?.clients ?? []);
+  const [products, setProducts] = useState<Product[]>(cached?.products ?? []);
+  const [orders, setOrders] = useState<OrderRecord[]>(cached?.orders ?? []);
+  const [dataState, setDataState] = useState<"loading" | "ready" | "error">(cached ? "ready" : "loading");
   const [dataError, setDataError] = useState("");
-  const [scanRouting, setScanRouting] = useState<ScanRouting>({ stage: "idle", data: null });
-  const [scanOpen, setScanOpen] = useState(false);
-  const [checklistOrderId, setChecklistOrderId] = useState<string | null>(null);
+  const [scanRouting, setScanRouting] = useDurableState<ScanRouting>("scan-routing", { stage: "idle", data: null });
+  const [scanOpen, setScanOpen] = useState(() => !!getOcrRecovery(profile.id));
+  const [checklistOrderId, setChecklistOrderId] = useDurableState<string | null>("checklist-order", null);
   // Orders ticked for the invoice and delivery slip. Held at the top level
   // because the print pages are reached by navigation, not by props from the
   // search page, and they need to know exactly which rows were selected.
-  const [billingOrderIds, setBillingOrderIds] = useState<string[]>([]);
+  const [billingOrderIds, setBillingOrderIds] = useDurableState<string[]>("billing-selection", []);
   const [isPending, startTransition] = useTransition();
   // While a route transition is in flight (chunk still downloading), drive the
   // shared global popup so the user sees progress over the page they stay on.
@@ -3958,16 +4001,17 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   useEffect(() => {
     let cancelled = false;
     let requestInFlight = false;
-    let initialLoadComplete = false;
+    let initialLoadComplete = !!cached;
     let refreshPaused = false;
 
     const refreshData = async () => {
-      if (requestInFlight || refreshPaused) return;
+      if (requestInFlight || refreshPaused || (!navigator.onLine && cached)) return;
       requestInFlight = true;
 
       try {
         const data = await fetchAll();
         if (cancelled) return;
+        try { writeRecovery(profile.id, "data-cache", data); } catch { /* recovery status warns */ }
         setClients(previous => sameRows(previous, data.clients) ? previous : data.clients);
         setProducts(previous => sameRows(previous, data.products) ? previous : data.products);
         setOrders(previous => sameRows(previous, data.orders) ? previous : data.orders);
@@ -4015,6 +4059,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnVisibility);
     window.addEventListener("kiyometa-resume", refreshOnAppResume);
+    window.addEventListener("online", refreshOnAppResume);
 
     return () => {
       cancelled = true;
@@ -4024,8 +4069,19 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
       window.removeEventListener("kiyometa-resume", refreshOnAppResume);
+      window.removeEventListener("online", refreshOnAppResume);
     };
   }, []);
+
+  useEffect(() => {
+    const saved = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.owner !== profile.id) return;
+      setOrders(previous => previous.some(order => order.id === detail.saved.id) ? previous.map(order => order.id === detail.saved.id ? detail.saved : order) : [detail.saved, ...previous]);
+    };
+    window.addEventListener("kiyometa-order-saved", saved);
+    return () => window.removeEventListener("kiyometa-order-saved", saved);
+  }, [profile.id]);
 
   const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
     if (mode) setDeliveryMode(mode);
@@ -4084,13 +4140,14 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   }
 
   return (
-    <div className="h-full overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
+    <div className="flex h-full flex-col overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
+      <RecoveryStatus lang={lang} onOpenScan={openScan} />
       {/* One stable boundary around every page. Because it is always mounted,
           a transition into a still-downloading module keeps the previous page
           visible instead of revealing the fallback; the fallback only appears
           if there is genuinely no page to preserve. */}
       <Suspense fallback={<PageLoading />}>
-      <div className="h-full min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
         {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
         {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} billingOrderIds={billingOrderIds} setBillingOrderIds={setBillingOrderIds} lang={lang} setLang={setLang} />}
@@ -4099,7 +4156,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} clients={clients} products={products} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-        {page === "checklist"      && <ChecklistPage orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
+        {page === "checklist"      && <ChecklistPage key={checklistOrderId} orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
         {page === "inventory"       && <InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role === "administrator" && <ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role !== "administrator" && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}

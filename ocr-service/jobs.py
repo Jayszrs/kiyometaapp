@@ -30,7 +30,7 @@ class Job:
 
 
 class OcrJobs:
-    def __init__(self, work, timeout=300, retention=600):
+    def __init__(self, work, timeout=300, retention=86400):
         self.work = work
         self.timeout = timeout
         self.retention = retention

@@ -23,11 +23,21 @@ export function endLoading() {
 }
 
 export async function loadingFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  beginLoading();
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const background = url.includes("/rpc/submit_order_once");
+  const controller = new AbortController();
+  const callerSignal = init?.signal ?? (typeof Request !== "undefined" && input instanceof Request ? input.signal : null);
+  const cancel = () => controller.abort();
+  callerSignal?.addEventListener("abort", cancel, { once: true });
+  if (callerSignal?.aborted) cancel();
+  const timer = window.setTimeout(cancel, 20000);
+  if (!background) beginLoading();
   try {
-    return await fetch(input, init);
+    return await fetch(input, { ...init, signal: controller.signal });
   } finally {
-    endLoading();
+    window.clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", cancel);
+    if (!background) endLoading();
   }
 }
 

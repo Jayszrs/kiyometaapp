@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
+import { readRecovery, writeRecovery } from "./recoveryStorage";
 import {
   getOperationsBackendStatus,
   isMissingOperationsSchema,
@@ -84,6 +85,11 @@ export function useSession() {
         }
         return;
       }
+      const cachedProfile = readRecovery<UserProfile>(nextSession.user.id, "profile-cache");
+      if (!navigator.onLine && cachedProfile?.id === nextSession.user.id) {
+        if (!cancelled) { setProfile(cachedProfile); setLoading(false); }
+        return;
+      }
 
       const fallbackUsername =
         String(nextSession.user.user_metadata?.username ?? "").trim() ||
@@ -119,7 +125,7 @@ export function useSession() {
       }
 
       if (!cancelled) {
-        setProfile(data ? {
+        const nextProfile = data ? {
           id: data.id,
           username: data.username,
           displayName: data.display_name || data.username,
@@ -133,10 +139,12 @@ export function useSession() {
           birthDate: data.birth_date ?? "",
           address: data.address ?? "",
           bio: data.bio ?? "",
-        } : {
+        } : readRecovery<UserProfile>(nextSession.user.id, "profile-cache") ?? {
           ...emptyProfile, id: nextSession.user.id, username: fallbackUsername,
           displayName: fallbackUsername, role: fallbackRole,
-        });
+        };
+        setProfile(nextProfile as UserProfile);
+        if (data) { try { writeRecovery(nextSession.user.id, "profile-cache", nextProfile); } catch { /* recovery status */ } }
         setLoading(false);
       }
     };
@@ -144,7 +152,7 @@ export function useSession() {
     supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return;
       let nextSession = data.session;
-      if (nextSession) {
+      if (nextSession && navigator.onLine) {
         const { error } = await supabase.auth.getUser();
         const invalidSession = error && (
           error.status === 401 || error.status === 403 || /invalid|expired|jwt|refresh token/i.test(error.message)

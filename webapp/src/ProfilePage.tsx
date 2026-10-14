@@ -1,3 +1,4 @@
+import { useDurableState } from "./lib/useDurableState";
 import { useEffect, useRef, useState } from "react";
 import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
@@ -34,7 +35,7 @@ function messageOf(error: unknown) {
 
 export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
   const { profile, updateProfile } = useAuth();
-  const [form, setForm] = useState(() => formFromProfile(profile));
+  const [form, setForm] = useDurableState("profile-form", () => formFromProfile(profile));
   const [avatarUrl, setAvatarUrl] = useState("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [removeAvatar, setRemoveAvatar] = useState(false);

@@ -416,6 +416,19 @@ export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
   return orderFromRow(inserted as OrderRow);
 }
 
+export async function submitOrderOnce(requestId: string, order: OrderRecord, owner: string): Promise<OrderRecord> {
+  const { data, error, status } = await supabase.rpc("submit_order_once", {
+    p_request_id: requestId,
+    p_owner_id: owner,
+    p_order: { id: order.id, ...orderToRow(order) },
+    p_expected_version: order.version ?? null,
+  });
+  if (error) throw Object.assign(error, { status });
+  if (data?.conflict) throw new StaleOrderError(order.id, data.latest?.updated_by_username?.trim() || undefined);
+  if (!data?.id) throw new Error("No submission receipt returned.");
+  return orderFromRow(data as OrderRow);
+}
+
 // Print metadata is a narrow update: never re-submit the printed snapshot's
 // quantity/progress/financial fields while another operator is editing them.
 export async function markPreparationPrinted(order: OrderRecord, printedAt: string): Promise<OrderRecord> {

@@ -6,7 +6,7 @@ let source=readFileSync(new URL('../src/lib/db.ts',import.meta.url),'utf8').repl
 const {outputText}=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}});
 let updateResult,latest,patch;
 globalThis.orderDbMock={from:()=>({update:values=>{patch=values;return {eq(){return this;},select(){return this;},single:async()=>updateResult};},select:()=>({eq(){return this;},maybeSingle:async()=>({data:latest,error:null})})})};
-const {markPreparationPrinted,StaleOrderError,upsertOrder}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+const {markPreparationPrinted,StaleOrderError,upsertOrder,submitOrderOnce}=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 const order={id:'order-1',version:2,quantity:3,orderAmount:15000,progress:'In production'};
 
 test('print status updates only print metadata and optimistic version',async()=>{
@@ -27,4 +27,17 @@ test('permission/schema failure is not misreported as another person editing',as
 test('unavailable username is explicit, never fabricated',async()=>{
  updateResult={data:null,error:{code:'PGRST116'}};latest={id:'order-1',version:4};
  await assert.rejects(markPreparationPrinted(order,'now'),error=>error instanceof StaleOrderError && error.latestEditor===undefined && error.message.includes('username is unavailable'));
+});
+
+test('durable RPC binds the request to its originating account and reports genuine conflicts',async()=>{
+ let args;
+ orderDbMock.rpc=async(name,input)=>{assert.equal(name,'submit_order_once');args=input;return {data:{conflict:true,latest:{updated_by_username:'factory-operator-two'}},error:null,status:200};};
+ await assert.rejects(submitOrderOnce('request-id',order,'account-id'),error=>error instanceof StaleOrderError && error.latestEditor==='factory-operator-two');
+ assert.equal(args.p_owner_id,'account-id');
+ assert.equal(args.p_request_id,'request-id');
+ assert.equal(args.p_expected_version,2);
+});
+test('durable RPC keeps HTTP failure status so transient errors can retry safely',async()=>{
+ orderDbMock.rpc=async()=>({data:null,error:{message:'upstream unavailable'},status:503});
+ await assert.rejects(submitOrderOnce('request-id',order,'account-id'),error=>error.status===503 && error.message==='upstream unavailable');
 });

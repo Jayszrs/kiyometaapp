@@ -1,3 +1,5 @@
+import { useDurableState } from "./lib/useDurableState";
+import { readRecovery, writeRecovery, removeRecovery } from "./lib/recoveryStorage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell, type DeliverySlipMode, type Lang, type Page, type Product } from "./App";
 import { useAuth } from "./lib/auth";
@@ -272,14 +274,13 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const dialog = useDialog();
   const canDelete = profile.role === "administrator";
   const fileInput = useRef<HTMLInputElement>(null);
-  const movementRequestId = useRef("");
-  const [tab, setTab] = useState<Tab>("inventory");
+  const [tab, setTab] = useDurableState<Tab>("inventory-tab", "inventory");
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [bom, setBom] = useState<BomItem[]>([]);
-  const [itemForm, setItemForm] = useState<InventoryItem | null>(null);
-  const [purchaseForm, setPurchaseForm] = useState<Purchase | null>(null);
+  const [itemForm, setItemForm] = useDurableState<InventoryItem | null>("inventory-item", null);
+  const [purchaseForm, setPurchaseForm] = useDurableState<Purchase | null>("inventory-purchase", null);
   const [purchaseEditorLabel, setPurchaseEditorLabel] = useState<string | null>(null);
   useEffect(() => {
     if (!purchaseForm?.updatedBy) { setPurchaseEditorLabel(null); return; }
@@ -293,14 +294,14 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     })().catch(() => {});
     return () => { cancelled = true; };
   }, [purchaseForm?.id, purchaseForm?.updatedBy]);
-  const [movementOpen, setMovementOpen] = useState(false);
-  const [movementItem, setMovementItem] = useState("");
-  const [movementType, setMovementType] = useState("material_issue");
-  const [movementQty, setMovementQty] = useState(1);
-  const [movementNotes, setMovementNotes] = useState("");
-  const [bomProduct, setBomProduct] = useState("");
-  const [bomInventoryItem, setBomInventoryItem] = useState("");
-  const [bomQty, setBomQty] = useState(1);
+  const [movementOpen, setMovementOpen] = useDurableState("movement-open", false);
+  const [movementItem, setMovementItem] = useDurableState("movement-item", "");
+  const [movementType, setMovementType] = useDurableState("movement-type", "material_issue");
+  const [movementQty, setMovementQty] = useDurableState("movement-quantity", 1);
+  const [movementNotes, setMovementNotes] = useDurableState("movement-notes", "");
+  const [bomProduct, setBomProduct] = useDurableState("bom-product", "");
+  const [bomInventoryItem, setBomInventoryItem] = useDurableState("bom-inventory-item", "");
+  const [bomQty, setBomQty] = useDurableState("bom-quantity", 1);
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -439,22 +440,28 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const submitMovement = () => {
     if (!movementItem || movementQty <= 0) return;
     const positive = ["production_output", "subcontract_in", "adjustment_in"].includes(movementType);
+    const pending = readRecovery<MovementPayload>(profile.id, "movement-submit");
+    if (pending && (pending.itemId !== movementItem || pending.quantity !== movementQty || pending.notes !== movementNotes || pending.movementType !== movementType)) {
+      setError(text("A previous stock submission is unconfirmed. Retry its original fields before recording a different movement.", "前回の在庫移動が未確認です。別の移動を記録する前に、元の入力内容で再試行してください。"));
+      return;
+    }
     const selectedItem = itemById(movementItem);
-    if (!positive && selectedItem && movementQty > selectedItem.availableQty) {
+    if (!pending && !positive && selectedItem && movementQty > selectedItem.availableQty) {
       setError(lang === "ja"
         ? `在庫が不足しています（${selectedItem.itemCode}）。利用可能数：${selectedItem.availableQty.toLocaleString()} ${unitLabel(selectedItem.unit)}`
         : `Insufficient stock for ${selectedItem.itemCode}. Available: ${selectedItem.availableQty.toLocaleString()} ${selectedItem.unit}.`);
       return;
     }
-    if (!movementRequestId.current) movementRequestId.current = genUUID();
+    const submission: MovementPayload = pending ?? {
+      movementDate: today(), movementType, referenceType: "manual", referenceId: null,
+      itemId: movementItem, quantity: movementQty, delta: positive ? movementQty : -movementQty,
+      pic: profile.displayName || profile.username, notes: movementNotes, idempotencyKey: genUUID(),
+    };
+    try { writeRecovery(profile.id, "movement-submit", submission); }
+    catch (error) { setError(errorMessage(error)); return; }
     void run(async () => {
-      await addStockMovement({
-        movementDate: today(), movementType, referenceType: "manual", referenceId: null,
-        itemId: movementItem, quantity: movementQty, delta: positive ? movementQty : -movementQty,
-        pic: profile.displayName || profile.username, notes: movementNotes,
-        idempotencyKey: movementRequestId.current,
-      });
-      movementRequestId.current = "";
+      await addStockMovement(submission);
+      removeRecovery(profile.id, "movement-submit");
       setMovementOpen(false);
       setMovementQty(1);
       setMovementNotes("");
