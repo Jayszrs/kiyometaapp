@@ -314,10 +314,13 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   if (productCodes.size > 1) warnings.push(lang === "ja"
     ? "複数の品目が検出されました。最初の品目のみを読み込みます。各項目が同じ行に属するか確認してください。"
     : "Multiple items detected. This form imports the first item; confirm that all item fields belong to the same row.");
-  if (hits.quantity && hits.unitPrice && hits.orderAmount && Math.abs(data.quantity*data.unitPrice-data.orderAmount)>0.01)
+  if (hits.quantity && hits.unitPrice && hits.orderAmount && Math.abs(data.quantity*data.unitPrice-data.orderAmount)>0.01) {
+    const money = (n: number) => (Math.round(n * 10000) / 10000).toLocaleString("en-US");
+    const calculated = money(data.quantity * data.unitPrice);
     warnings.push(lang === "ja"
-      ? "数量 × 単価が金額と一致しません。複数品目、値引き、または異なる合計がないか確認してください。"
-      : "Quantity × unit price differs from the amount. Check for multiple items, discounts or a different total.");
+      ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があるため、単価の欄をご確認ください。値引きや複数明細で合計が変わる場合は、そのまま取り込んで問題ありません。`
+      : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread, so check the unit price field. If a discount or several items make the total differ, you can import anyway.`);
+  }
   const missing = keys.filter(k => !hits[k]);
   if (missing.length) warnings.push(lang === "ja"
     ? `検出できませんでした: ${missing.map(k => fieldName(k, lang)).join("、")}。値を入力するか、未入力のままにしてください。`
