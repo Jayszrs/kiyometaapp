@@ -9,7 +9,7 @@ import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
 import PhotoEditor from "./components/PhotoEditor";
-import { runOcr, OcrError, sendOcrLog, getOcrRecovery, clearOcrRecovery, type OcrLine } from "./lib/ocrClient";
+import { runOcr, OcrError, sendOcrLog, getOcrRecovery, clearOcrRecovery, type OcrLine, type OcrProgress } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
@@ -604,7 +604,8 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
 
 // ---- Scan modal ----
 
-const LOADING_STEP_KEYS = ["scanStepScanning", "scanStepRetrieving", "scanStepCleaning", "scanStepMaster"] as const;
+const OCR_STAGES: OcrProgress[] = ["uploading", "queued", "preparing", "recognizing", "cleaning", "master"];
+const LOADING_STEP_KEYS = ["scanStepUploading", "scanStepQueued", "scanStepScanning", "scanStepRetrieving", "scanStepCleaning", "scanStepMaster"] as const;
 
 const SCAN_FIELD_LABEL: Record<string, keyof typeof LABELS> = {
   orderDate: "scanFldOrderDate",
@@ -639,6 +640,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editedData, setEditedData] = useDurableState<ScanFillData | null>("scan-fields", null);
+  const [resolvedAlerts, setResolvedAlerts] = useState<Set<string>>(() => new Set());
   const leftPanel = useResizablePanel<HTMLDivElement>({ initial: 288, min: 220, max: 460, storageKey: "kiyometa.scan.left" });
   const uploadRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -659,20 +661,12 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
   );
 
   const [loadingStep, setLoadingStep] = useState(0);
-  useEffect(() => {
-    if (!busy) return;
-    setLoadingStep(0);
-    const interval = setInterval(() => {
-      setLoadingStep(s => Math.min(s + 1, LOADING_STEP_KEYS.length - 1));
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [busy]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (e.target === cameraRef.current || file.type.startsWith("image/")) {
+    if (e.target === cameraRef.current || file.type.startsWith("image/") || /\.(heic|heif|hif)$/i.test(file.name)) {
       setPhoto(file); setEditingPhoto(true); setError(null);
     } else { setPhoto(null); setEditingPhoto(false); void scanFile(file); }
   };
@@ -681,12 +675,17 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     const controller = new AbortController();
     requestRef.current = controller;
     if (file) setLastScan(file);
+    setLoadingStep(file ? 0 : 1);
     setBusy(true);
     setError(null);
     setOcrLines(null);
     setEditedData(null);
     try {
-      const lines = await runOcr(file, controller.signal);
+      const lines = await runOcr(file, controller.signal, stage => {
+        if (requestRef.current === controller && !controller.signal.aborted) setLoadingStep(OCR_STAGES.indexOf(stage));
+      });
+      if (controller.signal.aborted) return;
+      setLoadingStep(4);
       const parsed = parseQuotation(lines, lang);
       void sendOcrLog(`--- quotation: ${file?.name ?? "resumed document"} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
       if (!parsed.fields.some(f => f.status !== "missing" &&
@@ -695,6 +694,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         return;
       }
       setOcrLines(lines);
+      setLoadingStep(5);
       const matchedClient = findClientMatch(clients, parsed.data.client);
       const client = matchedClient?.name ?? parsed.data.client;
       const matchedProduct = findProductMatch(products, client, parsed.data.productName, parsed.data.productNumber);
@@ -704,6 +704,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         // Prefer the master-stored name when OCR leaves the part-name blank.
         productName: parsed.data.productName || matchedProduct?.productName || "",
       });
+      setResolvedAlerts(new Set());
     } catch (err) {
       if (requestRef.current === controller && !controller.signal.aborted) {
         const kind = err instanceof OcrError ? err.kind : "service";
@@ -734,6 +735,7 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
     setOcrLines(null);
     setError(null);
     setEditedData(null);
+    setResolvedAlerts(new Set());
   };
 
   const setField = (key: keyof ScanFillData, val: string) => {
@@ -744,6 +746,9 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
         [key]: (key === "quantity" || key === "orderAmount" || key === "unitPrice") ? (Number(val.normalize("NFKC").replace(/[,¥￥\s]/g, "")) || 0) : val,
       };
     });
+    // Choosing a reading or retyping the field answers its ambiguity alert, so
+    // the bubble clears itself without a separate dismiss control.
+    setResolvedAlerts(prev => prev.has(`ambiguous:${key}`) ? prev : new Set(prev).add(`ambiguous:${key}`));
   };
 
   // Both matchers normalise every candidate string, so recomputing them on each
@@ -760,6 +765,19 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
       : false,
     [products, matchedClient?.name, editedData?.client, editedData?.productName, editedData?.productNumber, editedData],
   );
+
+  // Each warning is its own bubble and clears as soon as the form resolves it:
+  // an ambiguity alert clears when its field is edited, a mismatch when the
+  // numbers add up again, a missing alert when the field is filled in.
+  const isEmptyValue = (v: unknown) => v === undefined || v === null || v === "" || v === 0;
+  const mismatchActive = !!editedData && editedData.quantity > 0 && editedData.unitPrice > 0 && editedData.orderAmount > 0
+    && Math.abs(editedData.quantity * editedData.unitPrice - editedData.orderAmount) > 0.01;
+  const visibleAlerts = (custom?.alerts ?? []).filter(a => {
+    if (a.kind === "ambiguous") return !resolvedAlerts.has(a.id);
+    if (a.kind === "multiItem") return true;
+    if (a.kind === "mismatch") return mismatchActive;
+    return a.key ? isEmptyValue(editedData?.[a.key]) : true;
+  });
 
 return (
     <div className="popup-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -784,7 +802,7 @@ return (
                   {busy ? t("workingOnDoc", lang) : t("captureHeading", lang)}
                 </p>
               </div>
-              <input hidden type="file" ref={uploadRef} accept="image/*,.pdf" onChange={handleFile} />
+              <input hidden type="file" ref={uploadRef} accept="image/*,.heic,.heif,.pdf" onChange={handleFile} />
               <input hidden type="file" ref={cameraRef} accept="image/*" capture="environment" onChange={handleFile} />
               <div className="grid grid-cols-1 gap-2">
                 <Btn variant="outline" onClick={() => uploadRef.current?.click()} disabled={busy || editingPhoto}>
@@ -842,9 +860,29 @@ return (
                   </span>
                 </div>
 
-                {custom.warnings.length > 0 && (
-                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-sm px-3 py-2 space-y-1">
-                    {custom.warnings.map(warning => <p key={warning}>{warning}</p>)}
+                {visibleAlerts.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {visibleAlerts.map(a => {
+                      const key = a.key;
+                      const chosen = key ? String(editedData?.[key] ?? "") : "";
+                      return (
+                        <div key={a.id}
+                          className={`text-sm rounded-sm px-3 py-2 space-y-2 ${a.kind === "missingOptional" ? "text-slate-600 bg-slate-100 border border-slate-200" : "text-amber-800 bg-amber-50 border border-amber-100"}`}>
+                          <p>{a.message}</p>
+                          {a.candidates && key && (
+                            <div className="flex flex-wrap gap-2">
+                              {a.candidates.map(candidate => (
+                                <button key={candidate} type="button" aria-pressed={chosen === candidate}
+                                  onClick={() => setField(key, candidate)}
+                                  className={`max-w-full break-words text-left border rounded-sm px-2 py-2 cursor-pointer text-xs ${chosen === candidate ? "border-[#1a3458] bg-[#1a3458] text-white" : "border-amber-300 bg-white text-slate-700"}`}>
+                                  {chosen === candidate && <span aria-hidden="true">✓ </span>}{candidate}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -861,10 +899,6 @@ return (
               busy ? (
                 <div className="h-full flex flex-col items-center justify-center gap-6 px-8">
                   <div className="w-full max-w-sm">
-                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-[#1a3458] rounded-full transition-all duration-1000 ease-linear"
-                        style={{ width: `${((loadingStep + 1) / LOADING_STEP_KEYS.length) * 100}%` }} />
-                    </div>
                     <div className="mt-4 flex flex-col gap-2">
                       {LOADING_STEP_KEYS.map((key, i) => (
                         <div key={key} className={`flex items-center gap-2.5 text-sm ${i < loadingStep ? "text-slate-500" : i === loadingStep ? "font-600 text-[#1a3458]" : "text-slate-400"}`}>
@@ -898,11 +932,12 @@ return (
                   const val = f.status === "missing" && value === 0 ? "" : String(value ?? f.source);
                   return (
                     <div key={i} className="flex flex-col gap-1">
-                      <label className="text-sm font-600 text-slate-700">
+                      <label htmlFor={`scan-field-${dataKey}`} className="text-sm font-600 text-slate-700">
                         {SCAN_FIELD_LABEL[f.key] ? t(SCAN_FIELD_LABEL[f.key], lang) : f.label}
                       </label>
                       {dataKey ? (
                         <input
+                          id={`scan-field-${dataKey}`}
                           type={dataKey === "orderDate" || dataKey === "deliveryDate" ? "date" : ["quantity", "unitPrice", "orderAmount"].includes(dataKey) ? "number" : "text"}
                           step="any"
                           value={val}
@@ -1294,7 +1329,9 @@ const LABELS = {
   scanNotFound:       { ja: "検出なし",          en: "Not found" },
   scanApply:          { ja: "フォームに反映",       en: "Apply to form" },
   scanGuidedImport:   { ja: "登録して続行",       en: "Begin guided import" },
-  scanStepScanning:   { ja: "書類をスキャン中...",   en: "Scanning document..." },
+  scanStepUploading:  { ja: "書類を送信中...",       en: "Uploading document..." },
+  scanStepQueued:     { ja: "OCRの順番待ち...",       en: "Waiting for OCR..." },
+  scanStepScanning:   { ja: "画像を準備中...",         en: "Preparing document..." },
   scanStepRetrieving: { ja: "文字を抽出中...",     en: "Retrieving text..." },
   scanStepCleaning:   { ja: "整理・マッチ中...",    en: "Cleaning and matching..." },
   scanStepMaster:     { ja: "マスタと照合中...",   en: "Checking against master data..." },

@@ -17,14 +17,24 @@ export interface ScanFillData {
   processName: string;
 }
 type Key = keyof ScanFillData;
+export type ScanFieldKey = Key;
+export type ScanAlertKind = "ambiguous" | "multiItem" | "mismatch" | "missing" | "missingOptional";
+export interface ScanAlert {
+  id: string;
+  kind: ScanAlertKind;
+  key?: Key;
+  message: string;
+  candidates?: string[];
+}
 export interface ParsedQuotation {
   template: ScanTemplate;
   title: string;
   debug: string;
   data: ScanFillData;
   warnings: string[];
+  alerts: ScanAlert[];
   fields: { key: Key; label: string; source: string; target: string; page: string;
-    sourceLabel: string; confidence: number; status: "found" | "missing" | "review" }[];
+    sourceLabel: string; confidence: number; alternatives: string[]; status: "found" | "missing" | "review" }[];
 }
 type Box = OcrLine & { page: number };
 type FieldKey = Key | "ignore";
@@ -48,6 +58,7 @@ const DEFINITIONS: Definition[] = [
   { key: "clientAddress", aliases: ["発注元住所", "会社住所", "所在地", "住所"] },
   { key: "clientPhone", aliases: ["電話番号", "電話", "TEL"] },
 ];
+const headerVocabulary = DEFINITIONS.flatMap(def => def.aliases.map(alias => ({key:def.key,alias})));
 const LABELS: Record<Key, [string, string]> = {
   orderDate: ["Order date", "Order entry: order date"],
   deliveryDate: ["Delivery date", "Order entry: delivery date"],
@@ -92,6 +103,27 @@ function clean(s: string): string {
   return s.normalize("NFKC").replace(/[‐‑‒–—−－]/g, "-").replace(/\s+/g, " ").trim();
 }
 function labelText(s: string): string { return [...s].map(c => canon[c] ?? c).join(""); }
+function repairHeader(raw: string): string {
+  const text = labelText(raw).replace(/^[\s(（\[【]+|[\s)）\]】]+$/g, "");
+  const vocabulary = headerVocabulary;
+  if (vocabulary.some(entry => entry.alias === text)) return raw;
+  // Only an unambiguous single-character error in a complete short header.
+  // Values, dates, codes and company names are never spelling-corrected here.
+  if (text.length < 3 || text.length > 8 || /[\dA-Za-z]/.test(text)) return raw;
+  const oneEdit = (a: string, b: string) => {
+    if (Math.abs(a.length-b.length)>1) return false;
+    let i=0,j=0,edits=0;
+    while(i<a.length && j<b.length) {
+      if(a[i]===b[j]) { i++;j++;continue; }
+      if(++edits>1) return false;
+      if(a.length>=b.length)i++;
+      if(b.length>=a.length)j++;
+    }
+    return edits+(a.length-i)+(b.length-j)===1;
+  };
+  const candidates=vocabulary.filter(entry=>entry.alias.length>=3 && oneEdit(text,entry.alias));
+  return candidates.length && new Set(candidates.map(entry=>entry.key)).size===1 ? candidates[0].alias : raw;
+}
 function compact(s: string): string { return clean(s).replace(/\s/g, "").toLowerCase(); }
 function height(b: Box): number { return Math.max(1, b.y1 - b.y0); }
 function cy(b: Box): number { return (b.y0 + b.y1) / 2; }
@@ -160,12 +192,12 @@ function date(raw: string, reference?: string): string {
   return check.getUTCFullYear() === y && check.getUTCMonth() === mo - 1 && check.getUTCDate() === d
     ? `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}` : "";
 }
-const companyRe = /株式会社|\(株\)|有限会社|合同会社|\(有\)/;
+const companyRe = /株式会社|\(株\)|有限会社|合同会社|\(有\)|^株[\u3040-\u9fff]{2}/;
 const recipientRe = /御中|様|発注先|宛先|納入先/;
 const addressRe = /[都道府県郡市町村区].*\d/;
 const processRe = /酸洗|洗浄|メッキ|めっき|熱処理|塗装|外注加工/;
 export function normalizeClientName(raw: string): string {
-  return clean(raw).replace(/\(株\)/g, "株式会社").replace(/\(有\)/g, "有限会社");
+  return clean(raw).replace(/\(株\)/g, "株式会社").replace(/\(有\)/g, "有限会社").replace(/^株(?!式会社)(?=[\u3040-\u9fff]{2})/, "株式会社");
 }
 function valueFor(key: Key, raw: string, reference?: string): string {
   const t = clean(raw).replace(/^[\s:：]+/, "");
@@ -175,13 +207,14 @@ function valueFor(key: Key, raw: string, reference?: string): string {
   if (key === "deliveryDate") return date(t, reference);
   if (key === "clientPostalCode") return postal(t);
   if (key === "clientPhone") return phone(t);
-  if (key === "clientAddress") return addressRe.test(t) ? t.replace(/^〒?\s*\d{3}\s*-?\s*\d{4}\s*/, "") : "";
+  if (key === "clientAddress") return addressRe.test(t) ? t.replace(/^[〒干T]?\s*\d{3}\s*-?\s*\d{4}\s*/, "") : "";
   if (key === "client") return !recipientRe.test(t) && !addressRe.test(t) && /[A-Za-z\u3040-\u9fff]/.test(t) ? t : "";
   if (key === "orderNumber" || key === "productNumber") {
     const code = t.replace(/\s/g, "").replace(/^\*|\*$/g, "");
     return /^(?=.*\d)[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(code) && !date(code) && !/^\d{3}-\d{4}$/.test(code) ? code : "";
   }
   if (key === "productName" || key === "processName") {
+    if (/[)）]$/.test(t) && !/[(（]/.test(t) || /^(?:(?:合格|不合格|分納|完納)\s*)+$/.test(t)) return "";
     if (companyRe.test(t) || recipientRe.test(t) || addressRe.test(t) || /^(?:\([^()]+\)|[\d .\/-]+|合格|不合格|分納|完納)$/.test(t)) return "";
     if (/^(?=.*\d)[A-Za-z0-9./-]+$/.test(t)) return "";
     if (key === "productName" && processRe.test(t)) return "";
@@ -193,7 +226,7 @@ interface Hit { value: string; box: Box; label: string; cost: number; confidence
 
 export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): ParsedQuotation {
   const lines: Box[] = ocrLines.filter(l => l.text?.trim() && l.score >= 0.3 && [l.x0,l.x1,l.y0,l.y1].every(Number.isFinite))
-    .map(l => ({ ...l, text: clean(l.text), page: l.page ?? 0 })).sort((a,b) => a.page-b.page || a.y0-b.y0 || a.x0-b.x0);
+    .map(l => ({ ...l, text: repairHeader(clean(l.text)), page: l.page ?? 0 })).sort((a,b) => a.page-b.page || a.y0-b.y0 || a.x0-b.x0);
   // Rejoin OCR fragments only when they form a complete known label. Values and
   // neighbouring table columns retain their own boxes.
   for (let i = 0; i < lines.length; i++) {
@@ -208,6 +241,15 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
     }
   }
   const anchors = lines.flatMap(anchorsIn);
+  // Recover a damaged unit-price header from its remaining printed 単 and
+  // neighboring columns. The amount still comes from that cell's OCR pixels;
+  // never calculate or invent a missing price from quantity/total.
+  for (const box of lines) {
+    if (anchorsIn(box).length || !/単/.test(labelText(box.text)) || !/[()]/.test(box.text)) continue;
+    const left = anchors.some(a => a.key === "quantity" && sameRow(a,box) && a.x1 <= box.x0);
+    const right = anchors.some(a => (a.key === "deliveryDate" || a.key === "orderAmount") && sameRow(a,box) && a.x0 >= box.x1);
+    if (left && right) anchors.push({ ...box, key:"unitPrice", label:"Unit price column (damaged label)", score:Math.min(box.score,0.6) });
+  }
   const values = lines.filter(l => !anchorsIn(l).length);
   for (const a of anchors) if (a.inline) values.push(a.inline);
   // Preserve multi-token names (タンク (TOP)), separated postcode halves and
@@ -225,7 +267,8 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   }
   values.push(...joined);
   const hits: Partial<Record<Key, Hit>> = {};
-  const warnings: string[] = [];
+  const alerts: ScanAlert[] = [];
+  const alternatives: Partial<Record<Key, string[]>> = {};
   const trace: string[] = [];
   const pick = (key: Key, reference?: string): Hit | undefined => {
     const candidates: Hit[] = [];
@@ -264,9 +307,11 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
     candidates.sort((a,b) => a.box.page-b.box.page || (a.anchor === b.anchor && !sameRow(a.box,b.box) ? a.box.y0-b.box.y0 : a.cost-b.cost) || a.box.y0-b.box.y0);
     const best = candidates[0];
     if (best && candidates.some(c => c.box.page === best.box.page && c.value !== best.value && Math.abs(c.cost-best.cost) < 0.25)) {
-      warnings.push(lang === "ja"
-        ? `${fieldName(key, lang)}に複数の候補があります。選択された値を確認してください。`
-        : `${fieldName(key, lang)} has multiple nearby values; confirm the selected value.`);
+      alternatives[key] = [...new Set([best.value, ...candidates.filter(c => c.box.page === best.box.page && Math.abs(c.cost-best.cost) < 0.25).map(c => c.value)])];
+      alerts.push({ id:`ambiguous:${key}`, kind:"ambiguous", key, candidates: alternatives[key],
+        message: lang === "ja"
+          ? `${fieldName(key, lang)}: 書類の「${best.label}」付近に複数の読み取り候補があります（${best.box.page+1}ページ）。マスタの類似度ではありません。書類と比較し、この欄で正しい候補を選ぶか、値を修正してください。`
+          : `${fieldName(key, lang)}: OCR found several possible values near “${best.label}” on page ${best.box.page+1}. This refers to their position in the document, not a master-data match. Compare with your document, then choose the correct reading or edit this field.` });
       best.confidence = Math.min(best.confidence,0.6);
     }
     return best;
@@ -278,7 +323,11 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   // Some forms print the issue date without a label at the top. Do not use
   // dates attached to other labels or infer an order date from a deadline.
   if (!hits.orderDate && lines.length) {
-    const top = Math.min(...lines.filter(l => l.page === lines[0].page).map(l => l.y0));
+    const pageLines = lines.filter(l => l.page === lines[0].page);
+    const heading = pageLines.find(l => /^(?:注文書|発注書|見積書)$/.test(labelText(compact(l.text))));
+    // Camera photos can retain toolbars above the paper. A standalone printed
+    // heading establishes the document top; filenames/browser tabs do not.
+    const top = heading ? heading.y0-height(heading)*3 : Math.min(...pageLines.map(l => l.y0));
     const dates = lines.filter(l => l.page === lines[0].page && l.y0 <= top+height(l)*4 && !!date(l.text)
       && !anchors.some(a => a.page === l.page && distance(a,l)<height(l)*5));
     if (dates.length === 1) {
@@ -311,20 +360,26 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
   }
   const data = Object.fromEntries(keys.map(k => [k,numeric.has(k) ? Number(hits[k]?.value ?? 0) : hits[k]?.value ?? ""])) as unknown as ScanFillData;
   const productCodes = new Set(anchors.filter(a => a.key === "productNumber" && a.label === hits.productNumber?.label).flatMap(a => values.filter(b => b.page === a.page && b.y0 >= a.y1 && b.y0-a.y1 < height(a)*7 && b.x0 >= a.x0-height(a)*8 && b.x0 <= a.x1).map(b => valueFor("productNumber",b.text))).filter(Boolean));
-  if (productCodes.size > 1) warnings.push(lang === "ja"
+  if (productCodes.size > 1) alerts.push({ id:"multiItem", kind:"multiItem", message: lang === "ja"
     ? "複数の品目が検出されました。最初の品目のみを読み込みます。各項目が同じ行に属するか確認してください。"
-    : "Multiple items detected. This form imports the first item; confirm that all item fields belong to the same row.");
+    : "Multiple items detected. This form imports the first item; confirm that all item fields belong to the same row." });
   if (hits.quantity && hits.unitPrice && hits.orderAmount && Math.abs(data.quantity*data.unitPrice-data.orderAmount)>0.01) {
     const money = (n: number) => (Math.round(n * 10000) / 10000).toLocaleString("en-US");
     const calculated = money(data.quantity * data.unitPrice);
-    warnings.push(lang === "ja"
-      ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があります。値が違う場合は単価の欄を先に修正してください。値引きや複数明細で差が出る場合は、この内容のままフォームに反映できます。`
-      : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread. If the field is wrong, correct it first. If a discount or several items explain the difference, you can still apply these values to the order form.`);
+    alerts.push({ id:"mismatch", kind:"mismatch",
+      message: lang === "ja"
+        ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があります。値が違う場合は単価の欄を先に修正してください。値引きや複数明細で差が出る場合は、この内容のままフォームに反映できます。`
+        : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread. If the field is wrong, correct it first. If a discount or several items explain the difference, you can still apply these values to the order form.` });
   }
   const missing = keys.filter(k => !hits[k]);
-  if (missing.length) warnings.push(lang === "ja"
-    ? `検出できませんでした: ${missing.map(k => fieldName(k, lang)).join("、")}。値を入力するか、未入力のままにしてください。`
-    : `Not found: ${missing.map(k => fieldName(k, lang)).join(", ")}. Enter these values or leave optional fields blank.`);
+  for (const k of missing) {
+    const optional = k === "clientPhone";
+    const label = fieldName(k, lang);
+    alerts.push({ id:`missing:${k}`, kind: optional ? "missingOptional" : "missing", key:k,
+      message: lang === "ja"
+        ? `${label}: 検出できませんでした。書類を確認してこの欄を入力してください。${optional ? "任意項目のため、書類に記載がなければ空欄のままで構いません。" : ""}`
+        : `Not found: ${label}. Check your document and fill in this field.${optional ? " Phone is optional; leave it blank if it is not printed." : ""}` });
+  }
   const text = compact(lines.map(l => l.text).join(" "));
   const template: ScanTemplate = text.includes("注文書") ? "order-sheet" : text.includes("発注書") ? "purchase-order" : "unnamed";
   const title = template === "order-sheet"
@@ -336,7 +391,8 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
     const hit = hits[key];
     trace.push(`${key}: ${hit ? `${hit.value} [${hit.label}, page ${hit.box.page+1}, confidence ${hit.confidence.toFixed(2)}]` : "not found"}`);
     return { key,label:fieldName(key, lang),target:lang === "ja" ? TARGETS_JA[key] : LABELS[key][1],source:hit ? String(data[key]) : "",page:hit ? `P${hit.box.page+1}` : "",
-      sourceLabel:hit?.label ?? "",confidence:hit?.confidence ?? 0,status:!hit ? "missing" as const : hit.confidence<0.75 ? "review" as const : "found" as const };
+      sourceLabel:hit?.label ?? "",confidence:hit?.confidence ?? 0,alternatives:alternatives[key] ?? [],status:!hit ? "missing" as const : hit.confidence<0.75 ? "review" as const : "found" as const };
   });
-  return { template,title,data,fields,warnings,debug:trace.concat(warnings).join("\n") };
+  const warnings = alerts.map(a => a.message);
+  return { template,title,data,fields,warnings,alerts,debug:trace.concat(warnings).join("\n") };
 }
