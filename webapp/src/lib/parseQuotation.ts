@@ -318,8 +318,8 @@ export function parseQuotation(ocrLines: OcrLine[], lang: "ja" | "en" = "en"): P
     const money = (n: number) => (Math.round(n * 10000) / 10000).toLocaleString("en-US");
     const calculated = money(data.quantity * data.unitPrice);
     warnings.push(lang === "ja"
-      ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があるため、単価の欄をご確認ください。値引きや複数明細で合計が変わる場合は、そのまま取り込んで問題ありません。`
-      : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread, so check the unit price field. If a discount or several items make the total differ, you can import anyway.`);
+      ? `数量${money(data.quantity)} × 単価${money(data.unitPrice)} = ${calculated} ですが、合計金額は ${money(data.orderAmount)} と読み取れました。単価の読み取り誤りの可能性があります。値が違う場合は単価の欄を先に修正してください。値引きや複数明細で差が出る場合は、この内容のままフォームに反映できます。`
+      : `Quantity ${money(data.quantity)} × unit price ${money(data.unitPrice)} = ${calculated}, but the amount reads ${money(data.orderAmount)}. The unit price may have been misread. If the field is wrong, correct it first. If a discount or several items explain the difference, you can still apply these values to the order form.`);
   }
   const missing = keys.filter(k => !hits[k]);
   if (missing.length) warnings.push(lang === "ja"
