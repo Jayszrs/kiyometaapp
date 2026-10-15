@@ -1,0 +1,12 @@
+[Unit]
+Description=Kiyometa auto-deploy from GitHub (webapp + ocr)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=smkt
+WorkingDirectory=/srv/kiyometa/deploy
+ExecStart=/bin/sh /srv/kiyometa/deploy/auto-deploy.sh
+TimeoutStartSec=900
