@@ -422,7 +422,7 @@ function SelectInput({ value, onChange, options, hasError = false, placeholder =
   );
 }
 
-type BtnVariant = "primary" | "action" | "danger" | "ghost" | "outline";
+type BtnVariant = "primary" | "action" | "danger" | "ghost" | "outline" | "info";
 
 export function Btn({ children, onClick, variant = "outline", size = "md", disabled = false, className = "", ariaLabel, title }: {
   children: React.ReactNode; onClick?: () => void;
@@ -434,6 +434,7 @@ export function Btn({ children, onClick, variant = "outline", size = "md", disab
     danger: "bg-red-600 hover:bg-red-700 text-white border-red-600",
     ghost: "bg-white/10 hover:bg-white/20 text-white border-white/30",
     outline: "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-400",
+    info: "bg-[#dbeafe] hover:bg-[#bfdbfe] text-[#1e3a8a] border-[#93c5fd]",
   };
   const sizes = { sm: "px-3 py-1.5 text-sm gap-1.5", md: "px-4 py-2 text-base gap-2", lg: "px-6 py-2.5 text-base gap-2" };
   return (
@@ -817,9 +818,13 @@ return (
                   <Icon name="alert-triangle" size={14} className="mt-0.5 shrink-0" /> {error}
                 </p>
               )}
-              {!busy && !editingPhoto && error && (lastScan || getOcrRecovery(profile.id)) && <Btn variant="outline" onClick={() => void scanFile(getOcrRecovery(profile.id) ? undefined : lastScan ?? undefined)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
-              {!busy && !editingPhoto && !custom && getOcrRecovery(profile.id) && <Btn variant="outline" onClick={clearCustom}>{t("scanDiscard", lang)}</Btn>}
-              {!busy && !editingPhoto && photo && <Btn variant="outline" onClick={() => setEditingPhoto(true)}>{lang === "ja" ? "写真を再編集" : "Edit photo again"}</Btn>}
+              {!busy && !editingPhoto && ((error && (lastScan || getOcrRecovery(profile.id))) || (!custom && getOcrRecovery(profile.id)) || photo) && (
+                <div className="grid grid-cols-1 gap-2">
+                  {error && (lastScan || getOcrRecovery(profile.id)) && <Btn variant="info" onClick={() => void scanFile(getOcrRecovery(profile.id) ? undefined : lastScan ?? undefined)}>{lang === "ja" ? "再試行" : "Retry scan"}</Btn>}
+                  {!custom && getOcrRecovery(profile.id) && <Btn variant="info" onClick={clearCustom}>{t("scanDiscard", lang)}</Btn>}
+                  {photo && <Btn variant="info" onClick={() => setEditingPhoto(true)}>{lang === "ja" ? "写真を再編集" : "Edit photo again"}</Btn>}
+                </div>
+              )}
               {busy && (
                 <div className="pt-1 space-y-1.5">
                   {LOADING_STEP_KEYS.map((key, i) => (
