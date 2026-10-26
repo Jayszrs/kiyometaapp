@@ -122,7 +122,7 @@ function orderFromRow(r: OrderRow): OrderRecord {
     productName: r.product_name,
     quantity: r.quantity,
     orderAmount: r.order_amount,
-    progress: r.progress,
+    progress: r.progress === "Receipt" ? "Order request" : r.progress,
     requiredManhours: r.required_manhours,
     workedManhours: r.worked_manhours,
     productionEndDate: r.production_end_date ?? "",

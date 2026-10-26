@@ -91,6 +91,7 @@ export interface BomItem {
   bomNo: string;
   productId: string;
   inventoryItemId: string;
+  parentBomNo: string;
   quantityPerUnit: number;
   notes: string;
 }
@@ -304,6 +305,7 @@ export async function fetchInventoryData() {
       bomNo: row.bom_no ?? "",
       productId: row.product_id,
       inventoryItemId: row.inventory_item_id,
+      parentBomNo: row.parent_bom_no ?? "",
       quantityPerUnit: Number(row.quantity_per_unit),
       notes: row.notes,
     })) as BomItem[],
@@ -324,6 +326,7 @@ export async function fetchProductMaterialData(): Promise<{ items: InventoryItem
       bomNo: row.bom_no ?? "",
       productId: row.product_id,
       inventoryItemId: row.inventory_item_id,
+      parentBomNo: row.parent_bom_no ?? "",
       quantityPerUnit: Number(row.quantity_per_unit),
       notes: row.notes,
     })) as BomItem[],
@@ -451,6 +454,7 @@ export async function saveBomItem(item: BomItem) {
     id: item.id,
     product_id: item.productId,
     inventory_item_id: item.inventoryItemId,
+    parent_bom_no: item.parentBomNo || null,
     quantity_per_unit: item.quantityPerUnit,
     notes: item.notes.trim(),
   };

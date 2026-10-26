@@ -6,7 +6,7 @@
 // explain a rejection, so a refused save reads as a business rule rather than
 // as a database error.
 //
-//   Order request -> Receipt -> In preparation -> Preparation complete
+//   Order request -> In preparation -> Preparation complete
 //                -> In production -> Complete -> Shipped
 //
 // Cancelled is reachable from any state before Shipped, is terminal, and
@@ -17,7 +17,6 @@
 
 export const PROGRESS_ORDER = [
   "Order request",
-  "Receipt",
   "In preparation",
   "Preparation complete",
   "In production",
@@ -31,7 +30,6 @@ export type Progress = (typeof PROGRESS_ORDER)[number] | typeof PROGRESS_CANCELL
 
 const RANK: Record<string, number> = {
   "Order request": 1,
-  Receipt: 2,
   "In preparation": 3,
   "Preparation complete": 4,
   "In production": 5,
@@ -80,8 +78,7 @@ export function allowedTransitions(current: string, materialsIssued: boolean): s
 }
 
 const JA: Record<string, string> = {
-  "Order request": "発注依頼",
-  Receipt: "受領",
+  "Order request": "受注",
   "In preparation": "準備中",
   "Preparation complete": "準備完了",
   "In production": "製作中",

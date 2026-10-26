@@ -151,7 +151,6 @@ function makeDrawings(count = 4): string[] {
 
 const PROGRESS_OPTIONS = [
   "Order request",
-  "Receipt",
   "In preparation",
   "Preparation complete",
   "In production",
@@ -160,8 +159,7 @@ const PROGRESS_OPTIONS = [
 ];
 
 const PROGRESS_JA: Record<string, string> = {
-  "Order request": "発注依頼",
-  Receipt: "受領",
+  "Order request": "受注",
   "In preparation": "準備中",
   "Preparation complete": "準備完了",
   "In production": "製作中",
@@ -173,7 +171,6 @@ const PROGRESS_JA: Record<string, string> = {
 
 const SCHEDULE_STATUS_COLORS: Record<string, string> = {
   "Order request": "bg-pink-500 text-white border-pink-600",
-  Receipt: "bg-pink-200 text-slate-800 border-pink-300",
   "In preparation": "bg-purple-500 text-white border-purple-600",
   "Preparation complete": "bg-green-400 text-slate-800 border-green-500",
   "In production": "bg-cyan-400 text-slate-800 border-cyan-500",
@@ -1139,7 +1136,6 @@ const LABELS = {
   filter:             { ja: "絞り込み",          en: "Filter" },
   progress:           { ja: "進捗状況",          en: "Progress" },
   "Order request":    { ja: "発注依頼",          en: "Order request" },
-  "Receipt":          { ja: "受領",             en: "Receipt" },
   "In preparation":   { ja: "準備中",            en: "In preparation" },
   "Preparation complete": { ja: "準備完了",      en: "Preparation complete" },
   "In production":    { ja: "製作中",            en: "In production" },
@@ -1169,8 +1165,8 @@ const LABELS = {
   contactOn:          { ja: "要手配",           en: "Required Arrangements" },
   orderContact:       { ja: "注文連絡",          en: "Order Contact" },
   contactContents:    { ja: "連絡内容",          en: "Contact Contents" },
-  scanHint:           { ja: "見積書からフォームを自動入力", en: "Auto-fill from quotation" },
-  scanButton:         { ja: "見積書スキャン",     en: "Scan quotation" },
+  scanHint:           { ja: "注文書からフォームを自動入力", en: "Auto-fill from order document" },
+  scanButton:         { ja: "注文書スキャン",     en: "Scan order document" },
   calc:               { ja: "計算",             en: "Calc" },
   searchBilling:      { ja: "検索・請求",        en: "Search & billing" },
   newButton:          { ja: "新規",             en: "New" },
@@ -1199,7 +1195,7 @@ const LABELS = {
   qtyLabel:           { ja: "数量",             en: "Quantity" },
   taxExclAmount:      { ja: "税抜金額",          en: "Tax-excl. Amount" },
   qtyUnit:            { ja: "個",              en: "units" },
-  prePrepPrint:       { ja: "事前準備印刷",      en: "Pre-preparation Print" },
+  prePrepPrint:       { ja: "準備印刷",      en: "Preparation Print" },
   singleSlipPrint:    { ja: "単一納品書印刷",     en: "Single Delivery Slip Print" },
   multipleSlipPrint:  { ja: "複数納品書印刷",     en: "Multiple Delivery Slip Print" },
   invoicePrint:       { ja: "請求書印刷",        en: "Invoice Print" },
@@ -1311,8 +1307,8 @@ const LABELS = {
   dayHeader:          { ja: "日",              en: "days" },
   hrHeader:           { ja: "時間",             en: "hr" },
   minHeader:          { ja: "分",              en: "min" },
-  scanModalTitle:     { ja: "見積書をスキャン",     en: "Scan quotation" },
-  captureHeading:     { ja: "見積書撮影",         en: "Capture a quotation" },
+  scanModalTitle:     { ja: "注文書をスキャン",     en: "Scan order document" },
+  captureHeading:     { ja: "注文書を撮影",         en: "Capture an order document" },
   workingOnDoc:       { ja: "処理中",            en: "Working on your document" },
   resizeFilter:       { ja: "フィルター幅を調整（ドラッグ）", en: "Drag to resize filter" },
   resizeList:         { ja: "一覧幅を調整（ドラッグ）", en: "Drag to resize list" },
@@ -1321,7 +1317,7 @@ const LABELS = {
   scanUploadDoc:      { ja: "書類をアップロード",  en: "Upload document" },
   scanTakePhoto:      { ja: "写真を撮る",         en: "Take photo" },
   scanNoDocTitle:     { ja: "まだ書類がありません",  en: "No document captured yet." },
-  scanNoDocBody:      { ja: "スキャンしたPDFまたは画像、見積書の写真をアップロードしてください。", en: "Upload a scanned PDF or image, or take a photo of the quotation." },
+  scanNoDocBody:      { ja: "スキャンしたPDFまたは画像、注文書の写真をアップロードしてください。", en: "Upload a scanned PDF or image, or take a photo of the order document." },
   scanParsedAs:       { ja: "解析結果",          en: "Parsed as" },
   scanDiscard:        { ja: "破棄",            en: "Discard" },
   scanCancel:         { ja: "キャンセル",         en: "Cancel" },
@@ -1340,7 +1336,7 @@ const LABELS = {
   scanStepRetrieving: { ja: "文字を抽出中...",     en: "Retrieving text..." },
   scanStepCleaning:   { ja: "整理・マッチ中...",    en: "Cleaning and matching..." },
   scanStepMaster:     { ja: "マスタと照合中...",   en: "Checking against master data..." },
-  scanErrNoFields:    { ja: "項目を抽出できませんでした。明るい場所で、書類の文字が鮮明に写るよう撮り直してください。", en: "No fields could be identified. Retake the photo with better lighting and clearly visible quotation details." },
+  scanErrNoFields:    { ja: "項目を抽出できませんでした。明るい場所で、書類の文字が鮮明に写るよう撮り直してください。", en: "No fields could be identified. Retake the photo with better lighting and clearly visible order document details." },
   scanErrTimeout: { ja: "読み取りが時間内に完了しませんでした。再試行するか、写真を切り抜いてください。", en: "The scan took too long. Retry or crop the photo before scanning again." },
   scanErrAuth: { ja: "ログインし直してから再試行してください。", en: "Please sign in again, then retry the scan." },
   scanErrBusy: { ja: "認識サービスが混雑しています。少し待って再試行してください。", en: "The recognition service is busy. Wait a moment, then retry." },
@@ -2487,6 +2483,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   const [billingDate, setBillingDate] = useState(todayJST());
   const [deadlineDate, setDeadlineDate] = useState(addDaysJST(todayJST(), 30));
   const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceTaxPercent, setInvoiceTaxPercent] = useState(10);
   const [invoiceNote, setInvoiceNote] = useDurableState("invoice-note", "");
   const [dateField, setDateField] = useState<"billing" | "deadline" | null>(null);
   const [calCursor, setCalCursor] = useState(() => {
@@ -2509,7 +2506,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
   const client = clients.find(c => c.name === clientName);
   const mixedClients = new Set(items.map(o => o.client)).size > 1;
   const subtotal = items.reduce((s, o) => s + o.orderAmount, 0);
-  const tax = Math.round(subtotal * TAX_RATE);
+  const tax = Math.round(subtotal * invoiceTaxPercent / 100);
   const billed = subtotal + tax;
 
   const fmtDate = (iso: string) => {
@@ -2651,7 +2648,7 @@ function InvoicePage({ orders, clients, orderIds, lang, setLang, onNavigate }: {
             <tbody>
               <tr>
                 <td className="px-3 py-2.5 font-mono font-600 text-slate-800 border border-slate-200">¥{subtotal.toLocaleString()}</td>
-                <td className="px-3 py-2.5 font-mono text-slate-700 border border-slate-200">{Math.round(TAX_RATE * 100)}%</td>
+                <td className="px-2 py-1 border border-slate-200"><label className="inline-flex items-center gap-1"><input aria-label={t("taxRate", lang)} type="number" min="0" max="100" step="0.1" value={invoiceTaxPercent} onChange={event => setInvoiceTaxPercent(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} className="w-16 rounded-sm border border-slate-300 px-1.5 py-1 text-right font-mono text-sm print:border-0 print:p-0" /><span>%</span></label></td>
                 <td className="px-3 py-2.5 font-mono text-slate-700 border border-slate-200">¥{tax.toLocaleString()}</td>
                 <td className="px-3 py-2.5 font-mono font-700 text-[#0d7377] border border-slate-200">¥{billed.toLocaleString()}</td>
               </tr>
@@ -3037,7 +3034,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     try {
       await saveBomItem({
         id: genUUID(), bomNo: "", productId: form.id,
-        inventoryItemId: materialItemId, quantityPerUnit: materialQty, notes: "",
+        inventoryItemId: materialItemId, parentBomNo: "", quantityPerUnit: materialQty, notes: "",
       });
       await reloadMaterials();
       setMaterialItemId("");

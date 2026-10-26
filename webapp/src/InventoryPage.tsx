@@ -169,6 +169,7 @@ const MOVEMENT_COLUMNS: ExcelColumn[] = [
 
 const BOM_COLUMNS: ExcelColumn[] = [
   { key: "bomNo", header: "BOM No", width: 18, auto: true },
+  { key: "parentBomNo", header: "Parent BOM No", width: 20 },
   { key: "productNo", header: "Product No", width: 20, required: true },
   { key: "itemNo", header: "Item No", width: 18, required: true },
   { key: "quantity", header: "Qty per Product", width: 18, required: true, numberFormat: "#,##0.000" },
@@ -300,6 +301,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [movementQty, setMovementQty] = useDurableState("movement-quantity", 1);
   const [movementNotes, setMovementNotes] = useDurableState("movement-notes", "");
   const [bomProduct, setBomProduct] = useDurableState("bom-product", "");
+  const [bomParent, setBomParent] = useDurableState("bom-parent", "");
   const [bomInventoryItem, setBomInventoryItem] = useDurableState("bom-inventory-item", "");
   const [bomQty, setBomQty] = useDurableState("bom-quantity", 1);
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
@@ -413,6 +415,22 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   }, [items]);
   const itemName = (id: string) => itemNameById.get(id) ?? "Unknown item";
   const productName = (id: string) => productNameById.get(id) ?? "Unknown product";
+  const orderedBom = useMemo(() => {
+    const result: Array<{ row: BomItem; depth: number }> = [];
+    const productsInTree = [...new Set(bom.map(row => row.productId))];
+    for (const productId of productsInTree) {
+      const productRows = bom.filter(row => row.productId === productId);
+      const walk = (parentBomNo: string, depth: number, visited: Set<string>) => {
+        for (const row of productRows.filter(candidate => candidate.parentBomNo === parentBomNo)) {
+          if (visited.has(row.bomNo)) continue;
+          result.push({ row, depth });
+          walk(row.bomNo, depth + 1, new Set(visited).add(row.bomNo));
+        }
+      };
+      walk("", 0, new Set());
+    }
+    return result;
+  }, [bom]);
 
   const submitItem = () => {
     if (!itemForm?.itemName.trim()) return;
@@ -492,7 +510,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       pic: movement.pic, notes: movement.notes,
     }));
     return bom.map(row => ({
-      bomNo: row.bomNo, productNo: products.find(product => product.id === row.productId)?.productNumber ?? "",
+      bomNo: row.bomNo, parentBomNo: row.parentBomNo, productNo: products.find(product => product.id === row.productId)?.productNumber ?? "",
       itemNo: itemById(row.inventoryItemId)?.itemCode ?? "", quantity: row.quantityPerUnit, notes: row.notes,
     }));
   };
@@ -633,6 +651,10 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     const current = bom.find(candidate => candidate.bomNo.toLowerCase() === bomNo.toLowerCase());
     const product = products.find(candidate => candidate.productNumber.toLowerCase() === text(row.values.productNo).toLowerCase());
     if (!product) throw new Error(`Product No "${text(row.values.productNo)}" was not found.`);
+    const parentBomNo = text(row.values.parentBomNo);
+    if (parentBomNo && !bom.some(candidate => candidate.bomNo.toLowerCase() === parentBomNo.toLowerCase() && candidate.productId === product.id)) {
+      throw new Error(`Parent BOM No "${parentBomNo}" must identify an existing BOM row for this product.`);
+    }
     const item = items.find(candidate => candidate.itemCode.toLowerCase() === text(row.values.itemNo).toLowerCase());
     if (!item) throw new Error(`Item No "${text(row.values.itemNo)}" was not found.`);
     const quantity = requiredNumber(row.values.quantity);
@@ -643,7 +665,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       existingId: current?.id ?? "",
       payload: {
         id: current?.id ?? genUUID(), bomNo: current?.bomNo ?? "", productId: product.id,
-        inventoryItemId: item.id, quantityPerUnit: quantity, notes: text(row.values.notes),
+        inventoryItemId: item.id, parentBomNo, quantityPerUnit: quantity, notes: text(row.values.notes),
       },
     };
   };
@@ -796,10 +818,16 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
 
           {tab === "bom" && (
             <section className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <div className="mb-5"><h2 className="text-lg font-700 text-[#1a3458]">{text("Product material requirements (BOM)", "製品ごとの材料所要量（BOM）")}</h2><p className="text-sm text-slate-500">{text("BOM numbers are automatic. Stock is deducted when an order enters In production and restored if it moves back.", "BOM番号は自動採番です。受注が製作中になると在庫を引き当て、前の状態に戻ると在庫を戻します。")}</p></div>
-              <div className="grid gap-3 rounded bg-slate-50 p-4 md:grid-cols-[1fr_1fr_140px_auto]"><Field label={text("Product", "製品")}><select value={bomProduct} onChange={e => setBomProduct(e.target.value)} className={inputClass}><option value="">{text("Select product", "製品を選択")}</option>{products.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field><Field label={text("Material / part", "材料 / 部品")}><select value={bomInventoryItem} onChange={e => setBomInventoryItem(e.target.value)} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.filter(item => item.category !== "finished_good").map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field><Field label={text("Qty per product", "製品あたりの数量")}><input type="number" min="0.001" step="0.001" value={bomQty} onChange={e => setBomQty(number(e.target.value))} className={inputClass} /></Field><button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomQty(1); }, text("Product material added with an automatic BOM number.", "製品材料を追加し、BOM番号を自動採番しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button></div>
-              {!isWide && <div className="mt-5 divide-y divide-slate-100">{bom.map(row => <article key={row.id} className="space-y-2 py-4"><div className="flex items-start justify-between gap-3"><div><p className="font-700">{productName(row.productId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo}</p></div><p className="font-mono font-700">× {row.quantityPerUnit.toLocaleString()}</p></div><p className="text-sm text-slate-600">{itemName(row.inventoryItemId)}</p><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("Product material removed.", "製品材料を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
-              {isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="border-b border-slate-200 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product", "製品")}</th><th className="px-3 py-3">{text("Required item", "必要品目")}</th><th className="px-3 py-3 text-right">{text("Qty / unit", "単位あたり数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{bom.map(row => <tr key={row.id}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3">{itemName(row.inventoryItemId)}</td><td className="px-3 py-3 text-right font-mono">{row.quantityPerUnit.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("Product material removed.", "製品材料を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
+              <div className="mb-5"><h2 className="text-lg font-700 text-[#1a3458]">{text("Product material requirements (BOM)", "製品ごとの材料所要量（BOM）")}</h2><p className="text-sm text-slate-500">{text("Build a parent–child product structure. Stock is deducted from leaf components when production starts.", "親子構造でBOMを登録します。製作開始時に末端部品の在庫を引き当てます。")}</p></div>
+              <div className="grid gap-3 rounded bg-slate-50 p-4 md:grid-cols-[1fr_1fr_1fr_140px_auto]">
+                <Field label={text("Product", "製品")}><select value={bomProduct} onChange={e => { setBomProduct(e.target.value); setBomParent(""); }} className={inputClass}><option value="">{text("Select product", "製品を選択")}</option>{products.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
+                <Field label={text("Parent assembly", "親部品（任意）")}><select value={bomParent} onChange={e => setBomParent(e.target.value)} className={inputClass} disabled={!bomProduct}><option value="">{text("Root component", "製品直下")}</option>{bom.filter(row => row.productId === bomProduct).map(row => <option key={row.bomNo} value={row.bomNo}>{row.bomNo} · {itemName(row.inventoryItemId)}</option>)}</select></Field>
+                <Field label={text("Material / part", "材料 / 部品")}><select value={bomInventoryItem} onChange={e => setBomInventoryItem(e.target.value)} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.filter(item => item.category !== "finished_good").map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field>
+                <Field label={text("Qty per parent", "親あたり数量")}><input type="number" min="0.001" step="0.001" value={bomQty} onChange={e => setBomQty(number(e.target.value))} className={inputClass} /></Field>
+                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
+              </div>
+              {!isWide && <div className="mt-5 divide-y divide-slate-100">{orderedBom.map(({ row, depth }) => <article key={row.id} className="space-y-2 py-4" style={{ paddingInlineStart: `${depth * 20}px` }}><div className="flex items-start justify-between gap-3"><div><p className="font-700">{itemName(row.inventoryItemId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo}{row.parentBomNo ? ` · ${text("Child of", "親")}: ${row.parentBomNo}` : ` · ${productName(row.productId)}`}</p></div><p className="font-mono font-700">× {row.quantityPerUnit.toLocaleString()}</p></div><button onClick={() => askDelete(bom.some(child => child.parentBomNo === row.bomNo) ? text(`Remove ${row.bomNo} and all its subcomponents?`, `${row.bomNo} とその子部品をすべて削除しますか？`) : text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
+              {isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[860px] text-sm"><thead className="border-b border-slate-200 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product", "製品")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Qty / parent", "親あたり数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{orderedBom.map(({ row, depth }) => <tr key={row.id}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.parentBomNo && <span className="ml-2 font-mono text-xs text-slate-400">({row.parentBomNo})</span>}</div></td><td className="px-3 py-3 text-right font-mono">{row.quantityPerUnit.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
             </section>
           )}
         </div>
