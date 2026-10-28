@@ -450,18 +450,20 @@ export async function importInventoryRows(rows: readonly unknown[]): Promise<num
 }
 
 export async function saveBomItem(item: BomItem) {
-  const row = {
-    id: item.id,
-    product_id: item.productId,
-    inventory_item_id: item.inventoryItemId,
-    parent_bom_no: item.parentBomNo || null,
-    quantity_per_unit: item.quantityPerUnit,
-    notes: item.notes.trim(),
-  };
-  const result = item.bomNo
-    ? await supabase.from("product_materials").update(row).eq("id", item.id)
-    : await supabase.from("product_materials").insert(row);
-  const { error } = result;
+  const { error } = await supabase.rpc("import_inventory_rows", {
+    p_rows: [{
+      kind: "bom",
+      existingId: item.bomNo ? item.id : "",
+      payload: {
+        id: item.id,
+        productId: item.productId,
+        inventoryItemId: item.inventoryItemId,
+        parentBomNo: item.parentBomNo || "",
+        quantityPerUnit: item.quantityPerUnit,
+        notes: item.notes.trim(),
+      },
+    }],
+  });
   if (error) throw error;
 }
 
