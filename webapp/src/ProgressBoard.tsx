@@ -7,6 +7,7 @@ import {
   createManufacturingOperation,
   fetchManufacturingProgress,
   saveProductionTask,
+  updateManufacturingOperationCharge,
   type ManufacturingOperation,
   type ProductionTaskProgress,
   type ProductionTaskStatus,
@@ -128,6 +129,18 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
     }
   };
 
+  const saveOperationCharge = async (operation: ManufacturingOperation, value: string) => {
+    const charge = Number(value);
+    if (!Number.isFinite(charge) || charge < 0 || charge === operation.baseTimeChargeJpy) return;
+    setError("");
+    try {
+      await updateManufacturingOperationCharge(operation.id, charge);
+      setOperations(previous => previous.map(row => row.id === operation.id ? { ...row, baseTimeChargeJpy: charge } : row));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    }
+  };
+
   return (
     <AppShell onNavigate={onNavigate} title={text("Production Stage Progress", "製作工程進捗")} activePage="production-progress" showBack backTarget="home" backLabel={text("Home", "ホーム")} lang={lang} setLang={setLang}>
       <main className="page-enter flex-1 overflow-y-auto bg-[#f5f6f8] p-3 sm:p-5">
@@ -158,7 +171,14 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
 
           {profile.role === "administrator" && (
             <details className="rounded-sm border border-slate-200 bg-white p-4">
-              <summary className="cursor-pointer font-700 text-[#1a3458]">{text("Add manufacturing process", "製造工程を追加")}</summary>
+              <summary className="cursor-pointer font-700 text-[#1a3458]">{text("Process catalog & time charges", "工程カタログ・時間単価")}</summary>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[620px] text-sm">
+                  <thead className="border-b border-slate-200 text-left text-xs text-slate-500"><tr><th className="px-3 py-2">{text("Process", "工程")}</th><th className="px-3 py-2">{text("Standard min/unit", "標準分/個")}</th><th className="px-3 py-2">{text("Time charge (JPY/hour)", "時間単価（円/時）")}</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">{operations.map(operation => <tr key={operation.id}><td className="px-3 py-2 font-600">{lang === "ja" && operation.operationNameJa ? operation.operationNameJa : operation.operationName}</td><td className="px-3 py-2">{operation.defaultMinutes ?? "-"}</td><td className="px-3 py-2"><label className="flex items-center gap-2"><span className="sr-only">{text("JPY per hour", "円/時")}</span><input type="number" min="0" step="1" defaultValue={operation.baseTimeChargeJpy} onBlur={event => void saveOperationCharge(operation, event.target.value)} className="w-36 rounded border border-slate-300 px-3 py-2 text-right font-mono" /><span className="text-xs text-slate-500">JPY/h</span></label></td></tr>)}</tbody>
+                </table>
+                <p className="mt-2 text-xs text-slate-500">{text("Enter the client-approved labor/machine rate per hour. Changes are saved on blur; zero means not configured.", "顧客承認済みの人件費・機械費の時間単価を入力してください。入力欄を離れると保存されます。0は未設定です。")}</p>
+              </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_10rem_12rem_auto]">
                 <label className="text-sm font-600 text-slate-600">{text("Process name", "工程名（英語）")}<input value={newName} onChange={event => setNewName(event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 font-normal" /></label>
                 <label className="text-sm font-600 text-slate-600">{text("Japanese name", "工程名（日本語）")}<input value={newNameJa} onChange={event => setNewNameJa(event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 font-normal" /></label>

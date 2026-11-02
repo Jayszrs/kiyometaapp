@@ -573,6 +573,13 @@ export async function createManufacturingOperation(input: {
   return operationFromRow(data);
 }
 
+export async function updateManufacturingOperationCharge(operationId: string, baseTimeChargeJpy: number): Promise<void> {
+  const { error } = await supabase.from("manufacturing_operations")
+    .update({ base_time_charge_jpy: baseTimeChargeJpy })
+    .eq("id", operationId);
+  if (error) throw error;
+}
+
 export async function saveProductionTask(input: {
   existingId?: string;
   orderId: string;
