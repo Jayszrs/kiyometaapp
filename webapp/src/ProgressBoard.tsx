@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { AppShell, type DeliverySlipMode, type Lang, type OrderRecord, type Page, type Product } from "./App";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AppShell, StatusBadge, type DeliverySlipMode, type Lang, type OrderRecord, type Page, type Product } from "./App";
 import { useAuth } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
 import { useReadRefresh } from "./lib/useReadRefresh";
@@ -7,6 +7,7 @@ import {
   createManufacturingOperation,
   fetchManufacturingProgress,
   saveProductionTask,
+  StaleProductionTaskError,
   updateManufacturingOperationCharge,
   type ManufacturingOperation,
   type ProductionTaskProgress,
@@ -44,6 +45,8 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
   const [newNameJa, setNewNameJa] = useState("");
   const [newMinutes, setNewMinutes] = useState("");
   const [newCharge, setNewCharge] = useState("");
+  const [page, setPage] = useState(0);
+  const pendingWrites = useRef(new Set<string>());
 
   const load = useReadRefresh(
     signal => fetchManufacturingProgress(signal),
@@ -78,24 +81,36 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
   );
   const orderStatuses = useMemo(() => Array.from(new Set(orders.map(order => order.progress))).sort(), [orders]);
   const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const normalize = (value: unknown) => String(value ?? "").normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+    const terms = normalize(search).split(" ").filter(Boolean);
     return orders.filter(order => {
       if (orderStatus !== "all" && order.progress !== orderStatus) return false;
-      if (!query) return true;
+      if (terms.length === 0) return true;
       const product = productByKey.get(`${order.client}\u0000${order.productName}`);
-      return [order.orderNumber, order.productName, order.client, product?.productNumber, product?.internalCompanyName]
-        .some(value => String(value ?? "").toLowerCase().includes(query));
+      const searchable = normalize([
+        order.orderNumber, order.productName, order.client, order.progress,
+        order.deliveryDate, product?.productNumber, product?.internalCompanyName,
+      ].join(" "));
+      return terms.every(term => searchable.includes(term));
     }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate) || a.orderNumber.localeCompare(b.orderNumber));
   }, [orderStatus, orders, productByKey, search]);
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const visibleOrders = filteredOrders.slice(page * pageSize, (page + 1) * pageSize);
+  useEffect(() => setPage(0), [search, orderStatus]);
+  useEffect(() => setPage(current => Math.min(current, pageCount - 1)), [pageCount]);
 
   const persistTask = async (orderId: string, operationId: string, status: ProductionTaskStatus, actualMinutes: number | null) => {
     const key = `${orderId}\u0000${operationId}`;
+    if (pendingWrites.current.has(key)) return;
+    pendingWrites.current.add(key);
     const existing = taskByKey.get(key);
     setSaving(previous => new Set(previous).add(key));
     setError("");
     try {
       const saved = await saveProductionTask({
         existingId: existing?.id,
+        expectedVersion: existing?.version,
         orderId,
         operationId,
         status,
@@ -105,8 +120,12 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
       setTasks(previous => [...previous.filter(task => !(task.orderId === orderId && task.operationId === operationId)), saved]);
       setMinuteDrafts(previous => { const next = { ...previous }; delete next[key]; return next; });
     } catch (failure) {
+      if (failure instanceof StaleProductionTaskError && failure.latest) {
+        setTasks(previous => [...previous.filter(task => !(task.orderId === orderId && task.operationId === operationId)), failure.latest!]);
+      }
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
+      pendingWrites.current.delete(key);
       setSaving(previous => { const next = new Set(previous); next.delete(key); return next; });
     }
   };
@@ -134,8 +153,8 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
     if (!Number.isFinite(charge) || charge < 0 || charge === operation.baseTimeChargeJpy) return;
     setError("");
     try {
-      await updateManufacturingOperationCharge(operation.id, charge);
-      setOperations(previous => previous.map(row => row.id === operation.id ? { ...row, baseTimeChargeJpy: charge } : row));
+      await updateManufacturingOperationCharge(operation.id, operation.version, charge);
+      setOperations(previous => previous.map(row => row.id === operation.id ? { ...row, baseTimeChargeJpy: charge, version: row.version + 1 } : row));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
@@ -153,7 +172,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(15rem,1fr)_12rem]">
                 <label className="text-sm font-600 text-slate-600">{text("Search", "検索")}
-                  <input value={search} onChange={event => setSearch(event.target.value)} placeholder={text("Order, product, drawing no., internal name", "注文番号・製品名・図番・社内名称")} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 font-normal" />
+                  <input value={search} onChange={event => setSearch(event.target.value)} placeholder={text("Search order, product, drawing no. or customer", "注文番号・製品名・図番・取引先を検索")} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 font-normal" />
                 </label>
                 <label className="text-sm font-600 text-slate-600">{text("Order status", "受注状態")}
                   <select value={orderStatus} onChange={event => setOrderStatus(event.target.value)} className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2.5 font-normal">
@@ -164,7 +183,6 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-2 text-xs font-700">
-              {STATUS_ORDER.map(status => <span key={status} className={`rounded border px-2.5 py-1 ${STATUS_CLASS[status]}`}>{text(({ pending: "Not started", in_progress: "In progress", completed: "Completed", issue: "Issue" } as const)[status], ({ pending: "未着手", in_progress: "作業中", completed: "完了", issue: "問題" } as const)[status])}</span>)}
               <span className="ml-auto self-center text-slate-500">{loading ? text("Refreshing…", "更新中…") : `${filteredOrders.length} ${text("orders", "件")} · ${operations.length} ${text("processes", "工程")}`}</span>
             </div>
           </section>
@@ -175,9 +193,8 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full min-w-[620px] text-sm">
                   <thead className="border-b border-slate-200 text-left text-xs text-slate-500"><tr><th className="px-3 py-2">{text("Process", "工程")}</th><th className="px-3 py-2">{text("Standard min/unit", "標準分/個")}</th><th className="px-3 py-2">{text("Time charge (JPY/hour)", "時間単価（円/時）")}</th></tr></thead>
-                  <tbody className="divide-y divide-slate-100">{operations.map(operation => <tr key={operation.id}><td className="px-3 py-2 font-600">{lang === "ja" && operation.operationNameJa ? operation.operationNameJa : operation.operationName}</td><td className="px-3 py-2">{operation.defaultMinutes ?? "-"}</td><td className="px-3 py-2"><label className="flex items-center gap-2"><span className="sr-only">{text("JPY per hour", "円/時")}</span><input type="number" min="0" step="1" defaultValue={operation.baseTimeChargeJpy} onBlur={event => void saveOperationCharge(operation, event.target.value)} className="w-36 rounded border border-slate-300 px-3 py-2 text-right font-mono" /><span className="text-xs text-slate-500">JPY/h</span></label></td></tr>)}</tbody>
+                  <tbody className="divide-y divide-slate-100">{operations.map(operation => <tr key={operation.id}><td className="px-3 py-2 font-600">{lang === "ja" && operation.operationNameJa ? operation.operationNameJa : operation.operationName}</td><td className="px-3 py-2">{operation.defaultMinutes ?? "-"}</td><td className="px-3 py-2"><label className="flex items-center gap-2"><span className="sr-only">{text("JPY per hour", "円/時")}</span><input key={`${operation.id}:${operation.baseTimeChargeJpy}:${operation.version}`} type="number" min="0" step="1" defaultValue={operation.baseTimeChargeJpy} onBlur={event => void saveOperationCharge(operation, event.target.value)} className="w-36 rounded border border-slate-300 px-3 py-2 text-right font-mono" /><span className="text-xs text-slate-500">JPY/h</span></label></td></tr>)}</tbody>
                 </table>
-                <p className="mt-2 text-xs text-slate-500">{text("Enter the client-approved labor/machine rate per hour. Changes are saved on blur; zero means not configured.", "顧客承認済みの人件費・機械費の時間単価を入力してください。入力欄を離れると保存されます。0は未設定です。")}</p>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_10rem_12rem_auto]">
                 <label className="text-sm font-600 text-slate-600">{text("Process name", "工程名（英語）")}<input value={newName} onChange={event => setNewName(event.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2.5 font-normal" /></label>
@@ -193,7 +210,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
 
           <section className="overflow-hidden rounded-sm border border-slate-200 bg-white">
             <div className="overflow-x-auto overscroll-x-contain">
-              <table className="min-w-max border-collapse text-sm">
+              <table className="w-full min-w-max border-collapse text-sm">
                 <thead className="sticky top-0 z-20 bg-[#1a3458] text-white">
                   <tr>
                     <th className="sticky left-0 z-30 min-w-[17rem] border-r border-white/20 bg-[#1a3458] px-4 py-3 text-left">{text("Order / product", "受注・製品")}</th>
@@ -201,14 +218,14 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {filteredOrders.map(order => {
+                  {visibleOrders.map(order => {
                     const product = productByKey.get(`${order.client}\u0000${order.productName}`);
                     return <tr key={order.id}>
                       <th className="sticky left-0 z-10 border-r border-slate-200 bg-white px-4 py-3 text-left align-top shadow-[3px_0_4px_-4px_rgba(15,23,42,.45)]">
                         <span className="block font-mono text-xs text-slate-500">{order.orderNumber} · {order.deliveryDate}</span>
                         <span className="mt-1 block font-700 text-slate-800">{order.productName}</span>
                         <span className="block font-mono text-xs text-slate-500">{product?.productNumber || "-"}{product?.internalCompanyName ? ` · ${product.internalCompanyName}` : ""}</span>
-                        <span className="mt-1 inline-block rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{order.progress}</span>
+                        <span className="mt-1 inline-block"><StatusBadge status={order.progress} small lang={lang} /></span>
                       </th>
                       {operations.map(operation => {
                         const key = `${order.id}\u0000${operation.id}`;
@@ -230,6 +247,11 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
               </table>
             </div>
           </section>
+          {filteredOrders.length > pageSize && <nav aria-label={text("Production orders pages", "受注ページ")} className="flex items-center justify-end gap-3 text-sm">
+            <button type="button" disabled={page === 0} onClick={() => setPage(current => Math.max(0, current - 1))} className="rounded border border-slate-300 bg-white px-3 py-2 disabled:opacity-40">{text("Previous", "前へ")}</button>
+            <span className="tabular-nums text-slate-600">{page + 1} / {pageCount}</span>
+            <button type="button" disabled={page >= pageCount - 1} onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))} className="rounded border border-slate-300 bg-white px-3 py-2 disabled:opacity-40">{text("Next", "次へ")}</button>
+          </nav>}
         </div>
       </main>
     </AppShell>

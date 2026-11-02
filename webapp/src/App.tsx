@@ -1,6 +1,6 @@
 import { createContext, lazy, Suspense, useContext, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
-import { fetchAll, fetchProduct, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
+import { fetchAll, fetchProduct, fetchProductTasksByIds, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import RecoveryStatus from "./components/RecoveryStatus";
 import { useDurableState } from "./lib/useDurableState";
 import { readRecovery, writeRecovery } from "./lib/recoveryStorage";
@@ -8,7 +8,6 @@ import { saveOrderDurably, QueuedOrderError } from "./lib/orderOutbox";
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
-import PhotoEditor from "./components/PhotoEditor";
 import { runOcr, OcrError, sendOcrLog, getOcrRecovery, clearOcrRecovery, type OcrLine, type OcrProgress } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
@@ -32,6 +31,10 @@ import {
   type InventoryItem,
   type ManufacturingOperation,
 } from "./lib/operations";
+
+// Photo editing is only needed inside the quotation scanner. Keep its image
+// and canvas code out of the main app bundle and load it on demand.
+const PhotoEditor = lazy(() => import("./components/PhotoEditor"));
 
 // One loader map so the same dynamic imports can be prefetched on idle. Once a
 // chunk is cached, navigating to that module resolves without suspending, so
@@ -126,6 +129,7 @@ export interface Product {
   // what stops a save from writing an expired URL to the database.
   drawings: string[];
   drawingPaths: string[];
+  version?: number;
 }
 
 type FormErrors = Record<string, string>;
@@ -444,7 +448,7 @@ export function Btn({ children, onClick, variant = "outline", size = "md", disab
   );
 }
 
-function StatusBadge({ status, small = false, lang }: { status: string; small?: boolean; lang?: Lang }) {
+export function StatusBadge({ status, small = false, lang }: { status: string; small?: boolean; lang?: Lang }) {
   return (
     <span className={`inline-block px-1.5 py-0.5 font-500 border rounded-sm ${small ? "text-xs" : "text-sm"} ${SCHEDULE_STATUS_COLORS[status] ?? "bg-slate-50 text-slate-600 border-slate-200"}`}>
       {lang === "ja" ? PROGRESS_JA[status] ?? status : status}
@@ -897,10 +901,10 @@ return (
           <ResizeHandle label={t("resizePanel", lang)} {...leftPanel.handleProps} />
 
           <main className="flex-1 overflow-y-auto min-w-0">
-            {editingPhoto && photo ? <PhotoEditor key={photo.lastModified + photo.name} file={photo} lang={lang}
+            {editingPhoto && photo ? <Suspense fallback={<div role="status" className="flex h-full items-center justify-center text-sm text-slate-600">{lang === "ja" ? "写真編集を準備しています…" : "Preparing photo editor…"}</div>}><PhotoEditor key={photo.lastModified + photo.name} file={photo} lang={lang}
               onCancel={() => setEditingPhoto(false)}
               onRetake={() => cameraRef.current?.click()}
-              onConfirm={file => { setEditingPhoto(false); void scanFile(file); }} /> : !custom ? (
+              onConfirm={file => { setEditingPhoto(false); void scanFile(file); }} /></Suspense> : !custom ? (
               busy ? (
                 <div className="h-full flex flex-col items-center justify-center gap-6 px-8">
                   <div className="w-full max-w-sm">
@@ -1998,6 +2002,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   const [statusFilter, setStatusFilter] = useState<Record<string, boolean>>(
     Object.fromEntries(PROGRESS_OPTIONS.map(p => [p, true]))
   );
+  const [listPage, setListPage] = useState(0);
 
   const productByKey = useMemo(() => {
     const m = new Map<string, Product>();
@@ -2076,6 +2081,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     const dateOk = (!fromDate || !toDate) || (o.deliveryDate >= fromDate && o.deliveryDate <= toDate);
     return clientOk && (statusFilter[o.progress] ?? o.progress === PROGRESS_CANCELLED) && dateOk;
   }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)), [orders, anyClientSelected, clientFilter, fromDate, toDate, statusFilter]);
+  const listPageSize = 50;
+  const listPageCount = Math.max(1, Math.ceil(filtered.length / listPageSize));
+  const visibleFiltered = filtered.slice(listPage * listPageSize, (listPage + 1) * listPageSize);
+  useEffect(() => setListPage(0), [fromDate, toDate, clientFilter, statusFilter]);
+  useEffect(() => setListPage(current => Math.min(current, listPageCount - 1)), [listPageCount]);
 
   const billableInView = useMemo(() => filtered.filter(isBillable), [filtered]);
   const allBillableSelected = useMemo(
@@ -2148,11 +2158,12 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     await billingAction.run(async () => {
     if (popup) popup.opener = null;
     const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
-    const details = await Promise.all(selectedOrders.map(async order => {
-      const base = productInfo(order);
-      if (!base || base.tasks.length > 0) return base;
-      try { return await fetchProduct(base.id); } catch { return base; }
-    }));
+    const baseProducts = selectedOrders.map(productInfo);
+    const missingTasks = [...new Set(baseProducts.filter((product): product is Product => Boolean(product && product.tasks.length === 0)).map(product => product.id))];
+    const fetchedTasks = missingTasks.length ? await fetchProductTasksByIds(missingTasks) : new Map<string, ProductTask[]>();
+    const details = baseProducts.map(product => product && product.tasks.length === 0
+      ? { ...product, tasks: fetchedTasks.get(product.id) ?? [] }
+      : product);
     const productByOrderId = new Map(selectedOrders.map((order, index) => [order.id, details[index]]));
     const labels = lang === "ja"
       ? { title: "事前準備リスト", id: "受注ID", client: "取引先名", product: "製品名", number: "製品番号", qty: "数量", tasks: "作業工程", status: "準備状況" }
@@ -2293,7 +2304,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
 
         <main className="page-enter responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
-            {filtered.map(o => {
+            {visibleFiltered.map(o => {
               const prod = productInfo(o);
               const partNo = prod ? prod.productNumber : "-";
               const unitPrice = prod ? prod.unitPrice : (o.quantity > 0 ? Math.round(o.orderAmount / o.quantity) : 0);
@@ -2337,6 +2348,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
               );
             })}
           </div>
+          {filtered.length > listPageSize && <nav aria-label={lang === "ja" ? "受注一覧のページ" : "Order list pages"} className="flex items-center justify-center gap-3 border-t border-slate-200 bg-white p-3 text-sm">
+            <button type="button" disabled={listPage === 0} onClick={() => setListPage(current => Math.max(0, current - 1))} className="rounded border border-slate-300 px-3 py-2 disabled:opacity-40">{lang === "ja" ? "前へ" : "Previous"}</button>
+            <span className="tabular-nums text-slate-600">{listPage + 1} / {listPageCount} · {filtered.length} {lang === "ja" ? "件" : "orders"}</span>
+            <button type="button" disabled={listPage >= listPageCount - 1} onClick={() => setListPage(current => Math.min(listPageCount - 1, current + 1))} className="rounded border border-slate-300 px-3 py-2 disabled:opacity-40">{lang === "ja" ? "次へ" : "Next"}</button>
+          </nav>}
         </main>
 
         {/* Column 3: Right Edit Panel -- always visible, never overlays */}
@@ -3196,7 +3212,13 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     try {
       await deleteProduct(deletedId);
     } catch (err) {
-      dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to delete product: ${saveErrorMessage(err, lang)}`);
+      const code = (err as { code?: string } | null)?.code;
+      const message = code === "23503"
+        ? lang === "ja"
+          ? "この製品は受注またはBOMで使用中のため削除できません。先に参照先を変更または削除してください。"
+          : "This product is still used by an order or BOM. Reassign or remove those references before deleting it."
+        : saveErrorMessage(err, lang);
+      dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${message}` : `Failed to delete product: ${message}`);
       return;
     }
     const rest = products.filter(product => product.id !== deletedId);

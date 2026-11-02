@@ -44,6 +44,7 @@ const ENTITY_LABELS_JA: Record<string, string> = {
   clients: "取引先", products: "製品", orders: "受注",
   inventory_items: "在庫品目", purchases: "仕入", stock_movements: "在庫移動",
   product_materials: "製品材料", profiles: "プロフィール", session: "ログインセッション",
+  production_tasks: "製造工程", manufacturing_operations: "工程マスター", production_costs: "製造原価",
 };
 
 function messageOf(error: unknown) {

@@ -178,21 +178,37 @@ const PRODUCT_LIST_COLUMNS =
 type ProductListRow = Omit<ProductRow, "tasks" | "drawings">;
 
 export async function fetchAll(signal?: AbortSignal) {
-  const queries = [
-    supabase.from("clients").select("*").order("name"),
-    supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name"),
-    supabase.from("orders").select("*").order("delivery_date"),
-  ];
-  if (signal) queries.forEach(query => query.abortSignal(signal));
-  const [clientsRes, productsRes, ordersRes] = await Promise.all(queries);
-  if (clientsRes.error) throw clientsRes.error;
-  if (productsRes.error) throw productsRes.error;
-  if (ordersRes.error) throw ordersRes.error;
+  const [clients, products, orders] = await Promise.all([
+    fetchAllPages((from, to) => {
+      const query = supabase.from("clients").select("*").order("name").order("id").range(from, to);
+      return signal ? query.abortSignal(signal) : query;
+    }),
+    fetchAllPages((from, to) => {
+      const query = supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name").order("id").range(from, to);
+      return signal ? query.abortSignal(signal) : query;
+    }),
+    fetchAllPages((from, to) => {
+      const query = supabase.from("orders").select("*").order("delivery_date").order("id").range(from, to);
+      return signal ? query.abortSignal(signal) : query;
+    }),
+  ]);
   return {
-    clients: (clientsRes.data as ClientRow[]).map(clientFromRow),
-    products: (productsRes.data as ProductListRow[]).map(productListFromRow),
-    orders: (ordersRes.data as OrderRow[]).map(orderFromRow),
+    clients: (clients as ClientRow[]).map(clientFromRow),
+    products: (products as ProductListRow[]).map(productListFromRow),
+    orders: (orders as OrderRow[]).map(orderFromRow),
   };
+}
+
+const DATA_PAGE_SIZE = 500;
+async function fetchAllPages<T>(makeQuery: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += DATA_PAGE_SIZE) {
+    const { data, error } = await makeQuery(from, from + DATA_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < DATA_PAGE_SIZE) return rows;
+  }
 }
 
 // Full product row including tasks and drawing keys, for the product form only.
@@ -200,6 +216,21 @@ export async function fetchProduct(id: string): Promise<Product | null> {
   const { data, error } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   if (error) throw error;
   return data ? productFromRow(data as ProductRow) : null;
+}
+
+// Batch the preparation-print lookups: identical products can occur on many
+// selected orders, so fetching each product inside Promise.all created an N+1
+// burst on tablets. Fetch only the task schedule columns the print uses.
+export async function fetchProductTasksByIds(ids: readonly string[]): Promise<Map<string, ProductTask[]>> {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  const out = new Map<string, ProductTask[]>();
+  for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+    const batch = uniqueIds.slice(offset, offset + 100);
+    const { data, error } = await supabase.from("products").select("id,tasks").in("id", batch);
+    if (error) throw error;
+    for (const row of data ?? []) out.set(row.id, row.tasks ?? []);
+  }
+  return out;
 }
 
 // ---- Clients ----

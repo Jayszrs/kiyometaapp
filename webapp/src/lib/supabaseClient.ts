@@ -8,4 +8,7 @@ if (!url || !key) {
   throw new Error("Missing VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY (see .env.local.example)");
 }
 
-export const supabase = createClient(url, key, { global: { fetch: loadingFetch } });
+// Do not let the SDK silently replay writes. Order submissions and manual
+// movements already have server idempotency keys; other edits surface errors
+// so the user can retry against the latest version.
+export const supabase = createClient(url, key, { db: { retry: false }, global: { fetch: loadingFetch } });

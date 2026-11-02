@@ -11,9 +11,17 @@ export default function UndoButton({ className = "" }: { className?: string }) {
     setBusy(true);
     try {
       const logs = await fetchAuditLogs(100);
-      const latest = logs.find(isUndoableAuditLog);
+      const latest = logs.find(log =>
+        !log.undoneAt
+        && !String(log.metadata.source ?? "").startsWith("undo:")
+        && ["insert", "update", "delete"].includes(log.action),
+      );
       if (!latest) {
         await dialog.alert("No activity is currently available to undo.");
+        return;
+      }
+      if (!isUndoableAuditLog(latest)) {
+        await dialog.alert("The latest activity cannot be safely undone from this screen. Older changes were left untouched to avoid undoing the wrong action.");
         return;
       }
 

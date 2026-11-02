@@ -41,5 +41,11 @@ export function GlobalLoadingDialog() {
 // covers every network operation.
 export function PageLoading() {
   useLoadingScope(true);
-  return <div className="h-full w-full bg-[#f5f6f8]" />;
+  const lang = localStorage.getItem("kiyometa-language") === "en" ? "en" : "ja";
+  return <main role="status" aria-live="polite" className="flex h-full min-h-48 w-full items-center justify-center bg-[#f5f6f8] p-6">
+    <div className="flex items-center gap-3 rounded border border-slate-200 bg-white px-5 py-4 text-sm font-600 text-slate-700 shadow-sm">
+      <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-[#0d7377]" />
+      <span>{lang === "ja" ? "画面を読み込んでいます…" : "Loading this section…"}</span>
+    </div>
+  </main>;
 }
