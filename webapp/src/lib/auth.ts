@@ -76,10 +76,13 @@ export function useSession() {
 
   useEffect(() => {
     let cancelled = false;
+    let sessionRevision = 0;
+    let profileController: AbortController | null = null;
 
-    const loadProfile = async (nextSession: Session | null) => {
+    const loadProfile = async (nextSession: Session | null, revision: number, signal: AbortSignal) => {
+      const current = () => !cancelled && !signal.aborted && revision === sessionRevision;
       if (!nextSession) {
-        if (!cancelled) {
+        if (current()) {
           setProfile(emptyProfile);
           setLoading(false);
         }
@@ -87,7 +90,7 @@ export function useSession() {
       }
       const cachedProfile = readRecovery<UserProfile>(nextSession.user.id, "profile-cache");
       if (!navigator.onLine && cachedProfile?.id === nextSession.user.id) {
-        if (!cancelled) { setProfile(cachedProfile); setLoading(false); }
+        if (current()) { setProfile(cachedProfile); setLoading(false); }
         return;
       }
 
@@ -110,13 +113,16 @@ export function useSession() {
         .from("profiles")
         .select("id, username, display_name, role, active, avatar_path, employee_number, phone, department, position, birth_date, address, bio")
         .eq("id", nextSession.user.id)
+        .abortSignal(signal)
         .maybeSingle();
+      if (!current()) return;
       // Keep old deployments usable while migration 006 is being rolled out.
       if (result.error?.code === "42703" || result.error?.code === "PGRST204") {
         result = await supabase
           .from("profiles")
           .select("id, username, display_name, role, active")
           .eq("id", nextSession.user.id)
+          .abortSignal(signal)
           .maybeSingle();
       }
       data = result.data;
@@ -124,7 +130,7 @@ export function useSession() {
         markOperationsMigrationRequired();
       }
 
-      if (!cancelled) {
+      if (current()) {
         const nextProfile = data ? {
           id: data.id,
           username: data.username,
@@ -149,11 +155,20 @@ export function useSession() {
       }
     };
 
+    const applySession = (nextSession: Session | null) => {
+      profileController?.abort();
+      profileController = new AbortController();
+      const revision = ++sessionRevision;
+      setSession(nextSession);
+      void loadProfile(nextSession, revision, profileController.signal);
+    };
+    const bootstrapRevision = sessionRevision;
     supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return;
       let nextSession = data.session;
       if (nextSession && navigator.onLine) {
         const { error } = await supabase.auth.getUser();
+        if (cancelled || bootstrapRevision !== sessionRevision) return;
         const invalidSession = error && (
           error.status === 401 || error.status === 403 || /invalid|expired|jwt|refresh token/i.test(error.message)
         );
@@ -162,17 +177,19 @@ export function useSession() {
           nextSession = null;
         }
       }
-      if (cancelled) return;
-      setSession(nextSession);
-      void loadProfile(nextSession);
+      if (cancelled || bootstrapRevision !== sessionRevision) return;
+      applySession(nextSession);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      void loadProfile(s);
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      // getSession/getUser owns bootstrap. INITIAL_SESSION otherwise performs
+      // the same profile read twice, and its late result can undo newer auth.
+      if (cancelled || event === "INITIAL_SESSION") return;
+      applySession(s);
     });
 
     return () => {
       cancelled = true;
+      profileController?.abort();
       sub.subscription.unsubscribe();
     };
   }, []);

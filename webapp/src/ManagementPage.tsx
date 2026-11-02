@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useReadRefresh } from "./lib/useReadRefresh";
 import { useAuth, type UserRole } from "./lib/auth";
 import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
@@ -70,25 +71,28 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   const langRef = useRef(lang);
   langRef.current = lang;
 
-  const load = useCallback(async (forceProbe = false) => {
-    setError("");
-    setBusy(true);
-    try {
-      if (!await probeOperationsBackend(forceProbe)) {
+  const forceProbeRef = useRef(false);
+  const refresh = useReadRefresh(async signal => {
+      const force = forceProbeRef.current;
+      forceProbeRef.current = false;
+      const available = await probeOperationsBackend(force);
+      if (!available || signal.aborted) return null;
+      return Promise.all([listManagedUsers(signal), fetchAuditLogs(200, signal)]);
+    }, data => {
+      if (!data) {
         setError(langRef.current === "ja" ? "必要なデータベース更新が適用されていません。管理者にお問い合わせください。" : MIGRATION_REQUIRED_MESSAGE);
         return;
       }
-      const [nextUsers, nextLogs] = await Promise.all([listManagedUsers(), fetchAuditLogs()]);
+      const [nextUsers, nextLogs] = data;
       setUsers(nextUsers);
       setLogs(nextLogs);
-    } catch (err) {
+    }, err => {
       setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : messageOf(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [profile.role]);
-
-  useEffect(() => { void load(); }, [load]);
+    }, active => { setBusy(active); if (active) setError(""); });
+  const load = useCallback((forceProbe = false) => {
+    forceProbeRef.current ||= forceProbe;
+    return refresh();
+  }, [refresh]);
 
   const filteredLogs = useMemo(() => {
     const keyword = search.trim().toLowerCase();
