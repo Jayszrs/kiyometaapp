@@ -91,9 +91,33 @@ export interface BomItem {
   bomNo: string;
   productId: string;
   inventoryItemId: string;
+  componentProductId: string;
   parentBomNo: string;
   quantityPerUnit: number;
   notes: string;
+}
+
+export interface ManufacturingOperation {
+  id: string;
+  operationCode: string;
+  operationName: string;
+  operationNameJa: string;
+  baseTimeChargeJpy: number;
+  defaultMinutes: number | null;
+  sequence: number;
+  isActive: boolean;
+}
+
+export type ProductionTaskStatus = "pending" | "in_progress" | "completed" | "issue";
+
+export interface ProductionTaskProgress {
+  id: string;
+  orderId: string;
+  operationId: string;
+  status: ProductionTaskStatus;
+  actualMinutes: number | null;
+  operatorId: string | null;
+  completedAt: string | null;
 }
 
 function functionError(data: unknown, fallback: string): Error {
@@ -103,8 +127,8 @@ function functionError(data: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
-async function invokeUsers(body: Record<string, unknown>) {
-  let result = await supabase.functions.invoke("manage-users", { body });
+async function invokeUsers(body: Record<string, unknown>, signal?: AbortSignal) {
+  let result = await supabase.functions.invoke("manage-users", { body, signal });
   let { data, error } = result;
   let candidate = error as (Error & { context?: Response }) | null;
   let status = candidate?.context instanceof Response ? candidate.context.status : 0;
@@ -112,9 +136,10 @@ async function invokeUsers(body: Record<string, unknown>) {
   // A browser can retain an expired access token while the refresh token is
   // still valid. Refresh once and retry instead of leaving the page in a 401 loop.
   if (status === 401) {
+    if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const refreshed = await supabase.auth.refreshSession();
     if (!refreshed.error && refreshed.data.session) {
-      result = await supabase.functions.invoke("manage-users", { body });
+      result = await supabase.functions.invoke("manage-users", { body, signal });
       data = result.data;
       error = result.error;
       candidate = error as (Error & { context?: Response }) | null;
@@ -146,8 +171,8 @@ async function invokeUsers(body: Record<string, unknown>) {
   return data;
 }
 
-export async function listManagedUsers(): Promise<ManagedUser[]> {
-  const data = await invokeUsers({ action: "list" });
+export async function listManagedUsers(signal?: AbortSignal): Promise<ManagedUser[]> {
+  const data = await invokeUsers({ action: "list" }, signal);
   return (data.users ?? []).map((row: Record<string, unknown>) => ({
     id: String(row.id),
     username: String(row.username),
@@ -180,12 +205,14 @@ export async function resetManagedUserPassword(userId: string, password: string)
   await invokeUsers({ action: "reset-password", userId, password });
 }
 
-export async function fetchAuditLogs(limit = 200): Promise<AuditLog[]> {
-  const { data, error } = await supabase
+export async function fetchAuditLogs(limit = 200, signal?: AbortSignal): Promise<AuditLog[]> {
+  const query = supabase
     .from("audit_logs")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (signal) query.abortSignal(signal);
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map(row => ({
     id: row.id,
@@ -271,13 +298,15 @@ function purchaseFromRow(row: Record<string, unknown>): Purchase {
   };
 }
 
-export async function fetchInventoryData() {
-  const [itemsResult, purchasesResult, movementsResult, bomResult] = await Promise.all([
+export async function fetchInventoryData(signal?: AbortSignal) {
+  const queries = [
     supabase.from("inventory_balances").select("*").order("item_code"),
     supabase.from("purchases").select("*").order("purchase_date", { ascending: false }),
     supabase.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(500),
     supabase.from("product_materials").select("*").order("product_id"),
-  ]);
+  ];
+  if (signal) queries.forEach(query => query.abortSignal(signal));
+  const [itemsResult, purchasesResult, movementsResult, bomResult] = await Promise.all(queries);
   if (itemsResult.error) throw itemsResult.error;
   if (purchasesResult.error) throw purchasesResult.error;
   if (movementsResult.error) throw movementsResult.error;
@@ -305,6 +334,7 @@ export async function fetchInventoryData() {
       bomNo: row.bom_no ?? "",
       productId: row.product_id,
       inventoryItemId: row.inventory_item_id,
+      componentProductId: row.component_product_id ?? "",
       parentBomNo: row.parent_bom_no ?? "",
       quantityPerUnit: Number(row.quantity_per_unit),
       notes: row.notes,
@@ -326,6 +356,7 @@ export async function fetchProductMaterialData(): Promise<{ items: InventoryItem
       bomNo: row.bom_no ?? "",
       productId: row.product_id,
       inventoryItemId: row.inventory_item_id,
+      componentProductId: row.component_product_id ?? "",
       parentBomNo: row.parent_bom_no ?? "",
       quantityPerUnit: Number(row.quantity_per_unit),
       notes: row.notes,
@@ -444,30 +475,124 @@ export async function deleteStockMovement(movement: StockMovement): Promise<void
 }
 
 export async function importInventoryRows(rows: readonly unknown[]): Promise<number> {
-  const { data, error } = await supabase.rpc("import_inventory_rows", { p_rows: rows });
+  const { data, error } = await supabase.rpc("import_manufacturing_rows", { p_rows: rows });
   if (error) throw error;
   return Number(data ?? 0);
 }
 
 export async function saveBomItem(item: BomItem) {
-  const { error } = await supabase.rpc("import_inventory_rows", {
-    p_rows: [{
-      kind: "bom",
-      existingId: item.bomNo ? item.id : "",
-      payload: {
-        id: item.id,
-        productId: item.productId,
-        inventoryItemId: item.inventoryItemId,
-        parentBomNo: item.parentBomNo || "",
-        quantityPerUnit: item.quantityPerUnit,
-        notes: item.notes.trim(),
-      },
-    }],
-  });
+  const row = {
+    id: item.id,
+    product_id: item.productId,
+    inventory_item_id: item.inventoryItemId,
+    component_product_id: item.componentProductId || null,
+    parent_bom_no: item.parentBomNo || null,
+    quantity_per_unit: item.quantityPerUnit,
+    notes: item.notes.trim(),
+  };
+  const { error } = item.bomNo
+    ? await supabase.from("product_materials").update(row).eq("id", item.id)
+    : await supabase.from("product_materials").insert(row);
   if (error) throw error;
 }
 
 export async function deleteBomItem(id: string) {
   const { error } = await supabase.from("product_materials").delete().eq("id", id);
   if (error) throw error;
+}
+
+function operationFromRow(row: Record<string, unknown>): ManufacturingOperation {
+  return {
+    id: String(row.id),
+    operationCode: String(row.operation_code),
+    operationName: String(row.operation_name),
+    operationNameJa: String(row.operation_name_ja ?? ""),
+    baseTimeChargeJpy: Number(row.base_time_charge_jpy ?? 0),
+    defaultMinutes: row.default_minutes == null ? null : Number(row.default_minutes),
+    sequence: Number(row.sequence ?? 0),
+    isActive: Boolean(row.is_active),
+  };
+}
+
+function productionTaskFromRow(row: Record<string, unknown>): ProductionTaskProgress {
+  return {
+    id: String(row.id),
+    orderId: String(row.order_id),
+    operationId: String(row.operation_id),
+    status: row.status as ProductionTaskStatus,
+    actualMinutes: row.actual_minutes == null ? null : Number(row.actual_minutes),
+    operatorId: row.operator_id ? String(row.operator_id) : null,
+    completedAt: row.completed_at ? String(row.completed_at) : null,
+  };
+}
+
+export async function fetchManufacturingProgress(signal?: AbortSignal): Promise<{
+  operations: ManufacturingOperation[];
+  tasks: ProductionTaskProgress[];
+}> {
+  const operationQuery = supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name");
+  const taskQuery = supabase.from("production_tasks").select("*").order("updated_at");
+  if (signal) {
+    operationQuery.abortSignal(signal);
+    taskQuery.abortSignal(signal);
+  }
+  const [operationResult, taskResult] = await Promise.all([operationQuery, taskQuery]);
+  if (operationResult.error) throw operationResult.error;
+  if (taskResult.error) throw taskResult.error;
+  return {
+    operations: (operationResult.data ?? []).map(row => operationFromRow(row)),
+    tasks: (taskResult.data ?? []).map(row => productionTaskFromRow(row)),
+  };
+}
+
+export async function fetchManufacturingOperations(signal?: AbortSignal): Promise<ManufacturingOperation[]> {
+  const query = supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name");
+  if (signal) query.abortSignal(signal);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map(row => operationFromRow(row));
+}
+
+export async function createManufacturingOperation(input: {
+  operationName: string;
+  operationNameJa: string;
+  defaultMinutes: number | null;
+  baseTimeChargeJpy: number;
+  sequence: number;
+}): Promise<ManufacturingOperation> {
+  const operationCode = `${input.operationName.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "") || "PROCESS"}_${Date.now().toString(36).toUpperCase()}`;
+  const { data, error } = await supabase.from("manufacturing_operations").insert({
+    operation_code: operationCode,
+    operation_name: input.operationName.trim(),
+    operation_name_ja: input.operationNameJa.trim(),
+    default_minutes: input.defaultMinutes,
+    base_time_charge_jpy: input.baseTimeChargeJpy,
+    sequence: input.sequence,
+  }).select().single();
+  if (error) throw error;
+  return operationFromRow(data);
+}
+
+export async function saveProductionTask(input: {
+  existingId?: string;
+  orderId: string;
+  operationId: string;
+  status: ProductionTaskStatus;
+  actualMinutes: number | null;
+  operatorId: string;
+}): Promise<ProductionTaskProgress> {
+  const row = {
+    order_id: input.orderId,
+    operation_id: input.operationId,
+    status: input.status,
+    actual_minutes: input.actualMinutes,
+    operator_id: input.operatorId,
+    completed_at: input.status === "completed" ? new Date().toISOString() : null,
+  };
+  const query = input.existingId
+    ? supabase.from("production_tasks").update(row).eq("id", input.existingId)
+    : supabase.from("production_tasks").insert(row);
+  const { data, error } = await query.select().single();
+  if (error) throw error;
+  return productionTaskFromRow(data);
 }

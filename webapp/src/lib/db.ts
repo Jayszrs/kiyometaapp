@@ -27,6 +27,7 @@ interface ProductRow {
   client_name: string;
   product_name: string;
   product_number: string;
+  internal_company_name: string;
   unit_price: number;
   tasks: ProductTask[];
   drawings: DrawingRef[];
@@ -76,6 +77,7 @@ function productFromRow(r: ProductRow): Product {
     clientName: r.client_name,
     productName: r.product_name,
     productNumber: r.product_number,
+    internalCompanyName: r.internal_company_name ?? "",
     unitPrice: r.unit_price,
     tasks: r.tasks ?? [],
     // Deliberately blank: the row holds keys, not displayable URLs. The caller
@@ -94,6 +96,7 @@ function productListFromRow(r: ProductListRow): Product {
     clientName: r.client_name,
     productName: r.product_name,
     productNumber: r.product_number,
+    internalCompanyName: r.internal_company_name ?? "",
     unitPrice: r.unit_price,
     tasks: [],
     drawings: [],
@@ -106,6 +109,7 @@ function productToRow(p: Product, drawingRefs: DrawingRef[]) {
     client_name: p.clientName,
     product_name: p.productName,
     product_number: p.productNumber,
+    internal_company_name: (p.internalCompanyName ?? "").trim(),
     unit_price: p.unitPrice === "" ? 0 : p.unitPrice,
     tasks: p.tasks,
     drawings: drawingRefs,
@@ -167,18 +171,20 @@ function orderToRow(o: OrderRecord) {
 // every product on every load. The product form asks for them itself when a
 // product is opened, which is the only place they are displayed.
 const PRODUCT_LIST_COLUMNS =
-  "id, client_name, product_name, product_number, unit_price, updated_at";
+  "id, client_name, product_name, product_number, internal_company_name, unit_price, updated_at";
 
 // The list projection omits tasks and drawings, so it needs its own row type
 // instead of being forced through ProductRow.
 type ProductListRow = Omit<ProductRow, "tasks" | "drawings">;
 
-export async function fetchAll() {
-  const [clientsRes, productsRes, ordersRes] = await Promise.all([
+export async function fetchAll(signal?: AbortSignal) {
+  const queries = [
     supabase.from("clients").select("*").order("name"),
     supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name"),
     supabase.from("orders").select("*").order("delivery_date"),
-  ]);
+  ];
+  if (signal) queries.forEach(query => query.abortSignal(signal));
+  const [clientsRes, productsRes, ordersRes] = await Promise.all(queries);
   if (clientsRes.error) throw clientsRes.error;
   if (productsRes.error) throw productsRes.error;
   if (ordersRes.error) throw ordersRes.error;

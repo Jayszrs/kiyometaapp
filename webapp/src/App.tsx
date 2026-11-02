@@ -17,6 +17,7 @@ import UndoButton from "./components/UndoButton";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 import { PageLoading } from "./components/LoadingDialog";
+import ModuleErrorBoundary from "./components/ModuleErrorBoundary";
 import { ResizeHandle, useResizablePanel } from "./components/ResizablePanel";
 import { supabase } from "./lib/supabaseClient";
 import { useLoadingScope } from "./lib/loading";
@@ -24,10 +25,12 @@ import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/
 import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
   deleteBomItem,
+  fetchManufacturingOperations,
   fetchProductMaterialData,
   saveBomItem,
   type BomItem,
   type InventoryItem,
+  type ManufacturingOperation,
 } from "./lib/operations";
 
 // One loader map so the same dynamic imports can be prefetched on idle. Once a
@@ -37,11 +40,8 @@ const pageLoaders = {
   inventory: () => import("./InventoryPage"),
   management: () => import("./ManagementPage"),
   profile: () => import("./ProfilePage"),
+  productionProgress: () => import("./ProgressBoard"),
 } as const;
-
-const InventoryPage = lazy(pageLoaders.inventory);
-const ManagementPage = lazy(pageLoaders.management);
-const ProfilePage = lazy(pageLoaders.profile);
 
 // ---- Types ----
 
@@ -56,6 +56,7 @@ type Page =
   | "schedule"
   | "checklist"
   | "inventory"
+  | "production-progress"
   | "management"
   | "profile";
 
@@ -115,6 +116,7 @@ export interface Product {
   clientName: string;
   productName: string;
   productNumber: string;
+  internalCompanyName: string;
   unitPrice: number | "";
   tasks: ProductTask[];
   // drawings holds what the <img> renders: a data URI while a file is being
@@ -554,6 +556,7 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
     { key: "navClientMaster" as const, page: "client-master" as Page, icon: "users" },
     { key: "navProductMaster" as const, page: "product-master" as Page, icon: "package" },
     { key: "navSchedule" as const, page: "schedule" as Page, icon: "calendar" },
+    { key: "navProductionProgress" as const, page: "production-progress" as Page, icon: "check-square" },
     { key: "navInventory" as const, page: "inventory" as Page, icon: "database" },
     { key: "navProfile" as const, page: "profile" as Page, icon: "user" },
     ...(profile.role === "administrator"
@@ -993,6 +996,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
     { label: t("clientMaster", lang), desc: "View and edit client information", page: "client-master" as Page, icon: "users" },
     { label: t("productMaster", lang), desc: "View and edit product specifications", page: "product-master" as Page, icon: "package" },
     { label: t("navSchedule", lang), desc: "Production plan and due dates", page: "schedule" as Page, icon: "calendar" },
+    { label: t("navProductionProgress", lang), desc: "Track each manufacturing process by order", page: "production-progress" as Page, icon: "check-square" },
     { label: t("navInventory", lang), desc: "Materials, purchasing, and stock mutations", page: "inventory" as Page, icon: "database" },
     { label: t("navProfile", lang), desc: "Photo and employee details", page: "profile" as Page, icon: "user" },
     ...(profile.role === "administrator" ? [
@@ -1216,7 +1220,7 @@ const LABELS = {
   saveAndContinue:    { ja: "保存して続行",       en: "Save & continue" },
   addressAutoFill:    { ja: "[自動] 郵便番号 {postal} の住所", en: "[Auto-filled] Address for postal code {postal}" },
   productMaster:      { ja: "製品マスタ",        en: "Product Master" },
-  searchItemPlaceholder: { ja: "製品名・品番を検索...", en: "Search items by name or number..." },
+  searchItemPlaceholder: { ja: "製品名・品番・社内名称を検索...", en: "Search name, drawing no., or internal name..." },
   appTitle:         { ja: "キヨメタ受注管理",   en: "Kiyometa Order Management" },
   greeting:         { ja: "おはようございます",   en: "Good morning" },
   greetingMorning:  { ja: "おはようございます",   en: "Good morning" },
@@ -1229,6 +1233,7 @@ const LABELS = {
   navClientMaster:  { ja: "取引先マスタ",        en: "Client master" },
   navProductMaster: { ja: "製品マスタ",          en: "Product master" },
   navSchedule:      { ja: "生産計画",           en: "Schedule" },
+  navProductionProgress: { ja: "製作工程進捗", en: "Production stage progress" },
   navInventory:     { ja: "在庫管理",           en: "Inventory" },
   navProfile:       { ja: "マイプロフィール",   en: "My profile" },
   navManagement:    { ja: "権限管理",           en: "Role management" },
@@ -2912,6 +2917,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     clientName: sd && isScanRouted ? sd.client : "",
     productName: sd && isScanRouted ? sd.productName : "",
     productNumber: sd && isScanRouted ? sd.productNumber : "",
+    internalCompanyName: "",
     unitPrice: sd && isScanRouted ? sd.unitPrice : "",
     tasks: makeTasks(54).map((task, i) => i === 0 && sd && isScanRouted && sd.processName ? { ...task, content: sd.processName } : task),
     drawings: makeDrawings(7),
@@ -2930,6 +2936,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [showCalcInfo, setShowCalcInfo] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [allBom, setAllBom] = useState<BomItem[]>([]);
+  const [operationCatalog, setOperationCatalog] = useState<ManufacturingOperation[]>([]);
   const [materialItemId, setMaterialItemId] = useDurableState("product-material-item", "");
   const [materialQty, setMaterialQty] = useDurableState("product-material-qty", 1);
   const [materialBusy, setMaterialBusy] = useState(false);
@@ -2996,7 +3003,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const filtered = products.filter(p => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
-    return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q);
+    return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q) || (p.internalCompanyName ?? "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
   });
   const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
   // These three were rebuilt from scratch on every render: productMaterials
@@ -3023,6 +3030,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     void reloadMaterials().catch(error => setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."));
   }, []); // Product/inventory data is refreshed again after every BOM write.
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchManufacturingOperations(controller.signal).then(setOperationCatalog).catch(error => {
+      if (!controller.signal.aborted) setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
+    });
+    return () => controller.abort();
+  }, []);
+
   const addMaterial = async () => {
     if (isNew) {
       setMaterialError("Save the product before adding materials.");
@@ -3034,7 +3049,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     try {
       await saveBomItem({
         id: genUUID(), bomNo: "", productId: form.id,
-        inventoryItemId: materialItemId, parentBomNo: "", quantityPerUnit: materialQty, notes: "",
+        inventoryItemId: materialItemId, componentProductId: "", parentBomNo: "", quantityPerUnit: materialQty, notes: "",
       });
       await reloadMaterials();
       setMaterialItemId("");
@@ -3066,8 +3081,20 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     setDirty(true);
   };
 
+  const setTaskContent = (index: number, content: string) => {
+    const operation = operationCatalog.find(candidate => candidate.operationName === content || candidate.operationNameJa === content);
+    const tasks = form.tasks.map((task, taskIndex) => taskIndex === index ? {
+      ...task,
+      content,
+      time: task.time === "" && operation?.defaultMinutes != null ? operation.defaultMinutes : task.time,
+    } : task);
+    setForm(previous => ({ ...previous, tasks }));
+    setErrors(previous => ({ ...previous, [`task_content_${index}`]: "" }));
+    setDirty(true);
+  };
+
   const handleNew = () => {
-    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(7), drawingPaths: makeDrawings(7) });
+    setForm({ id: `p${Date.now()}`, clientName: "", productName: "", productNumber: "", internalCompanyName: "", unitPrice: "", tasks: makeTasks(54), drawings: makeDrawings(7), drawingPaths: makeDrawings(7) });
     setIsNew(true); setSelectedId(""); setErrors({}); setDirty(true);
   };
 
@@ -3206,6 +3233,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                 className={`w-full text-left px-4 py-3.5 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors ${selectedId === p.id ? "bg-blue-50 border-l-4 border-l-[#1a3458]" : "border-l-4 border-l-transparent"}`}>
                 <div className="font-600 text-base text-slate-800 truncate">{p.productName}</div>
                 <div className="text-sm text-slate-400 font-mono truncate">{p.productNumber}</div>
+                {p.internalCompanyName && <div className="truncate text-xs font-600 text-[#0d7377]">{p.internalCompanyName}</div>}
                 <div className="text-sm text-[#0d7377] mt-0.5">{p.unitPrice === "" ? "-" : `¥${Number(p.unitPrice).toLocaleString()}`}</div>
               </button>
             ))}
@@ -3245,6 +3273,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
               <FieldBox label={t("productNumberLabel", lang)} error={errors.productNumber}>
                 <TextInput value={form.productNumber} onChange={sf("productNumber")} hasError={!!errors.productNumber} maxLength={50} placeholder={lang === "ja" ? "例: NHD-F1772-11" : "e.g. NHD-F1772-11"} />
                 <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "英数字・取引先ごとに一意・最大50文字" : "Alphanumeric, unique per client, max 50 characters"}</p>
+              </FieldBox>
+              <FieldBox label={lang === "ja" ? "社内名称" : "Internal company name"}>
+                <TextInput value={form.internalCompanyName ?? ""} onChange={sf("internalCompanyName")} maxLength={100} placeholder={lang === "ja" ? "社内で使う通称" : "Name commonly used inside the company"} />
+                <p className="text-xs text-slate-400 mt-0.5">{lang === "ja" ? "製品名・図番と一緒に検索できます" : "Searchable together with the official name and drawing number"}</p>
               </FieldBox>
               <FieldBox label={t("unitPriceYen", lang)} error={errors.unitPrice}>
                 <TextInput type="number" value={form.unitPrice === 0 ? "" : form.unitPrice} onChange={e => { const cleanVal = e.replace(/^0+(?=\d)/, ""); setForm(prev => ({ ...prev, unitPrice: cleanVal === "" ? 0 : parseInt(cleanVal, 10) })); setErrors(prev => ({ ...prev, unitPrice: "" })); setDirty(true); }} hasError={!!errors.unitPrice} />
@@ -3398,13 +3430,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
 
             <div>
               <p className="text-sm font-600 text-slate-500 mb-2">{t("manufacturingTasks", lang)}</p>
+              <datalist id="manufacturing-operation-catalog">{operationCatalog.map(operation => <option key={operation.id} value={lang === "ja" && operation.operationNameJa ? operation.operationNameJa : operation.operationName}>{operation.defaultMinutes == null ? "" : `${operation.defaultMinutes} min/unit`}</option>)}</datalist>
               <div className="task-scroll border border-slate-200 rounded-sm max-h-[420px] overflow-y-scroll overscroll-contain">
                 {!isWide && (
                 <div className="divide-y divide-slate-100">
                   {form.tasks.map((task, i) => (
                     <div key={i} className={`row-culled ${focusedRow === i ? "space-y-3 bg-slate-50 p-3" : "space-y-3 p-3"}`}>
                       <p className="text-xs font-700 text-slate-400">{t("taskNoHeader", lang)} {i + 1}</p>
-                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => { const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
+                      <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskContent", lang)}</span><input list="manufacturing-operation-catalog" value={task.content} maxLength={100} onFocus={() => setFocusedRow(i)} onChange={e => setTaskContent(i, e.target.value)} className={`w-full rounded-sm border px-3 py-2 text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_content_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_content_${i}`]}</p>}</label>
                       <label className="block"><span className="mb-1 block text-xs font-600 text-slate-500">{t("taskTime", lang)}</span><input type="number" step="0.1" min="0" max="999.9" value={task.time} onFocus={() => setFocusedRow(i)} onChange={e => { const raw = e.target.value.replace(/^0+(?=[1-9])/, ""); const parsed = raw === "" ? ("" as const) : parseFloat(raw); const tasks: ProductTask[] = form.tasks.map((x, j) => j === i ? { ...x, time: isNaN(parsed as number) ? 0 : parsed } : x); setForm(prev => ({ ...prev, tasks })); setErrors(prev => ({ ...prev, [`task_time_${i}`]: "" })); setDirty(true); }} className={`w-full rounded-sm border px-3 py-2 text-right font-mono text-base focus:border-[#1a3458] focus:outline-none ${errors[`task_time_${i}`] ? "border-red-400" : "border-slate-200"}`} />{errors[`task_time_${i}`] && <p className="mt-1 text-xs text-red-600">{errors[`task_time_${i}`]}</p>}</label>
                     </div>
                   ))}
@@ -3424,13 +3457,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                       <tr key={i} className={`border-b border-slate-100 last:border-0 transition-colors ${focusedRow === i ? "bg-slate-50" : ""}`}>
                         <td className="px-3 py-1.5 text-center text-sm text-slate-300 font-mono">{i + 1}</td>
                         <td className="px-3 py-1.5">
-                          <input value={t.content} maxLength={100}
+                          <input list="manufacturing-operation-catalog" value={t.content} maxLength={100}
                             onFocus={() => setFocusedRow(i)}
                             onChange={e => {
-                              const tasks = form.tasks.map((x, j) => j === i ? { ...x, content: e.target.value } : x);
-                              setForm(prev => ({ ...prev, tasks }));
-                              setErrors(prev => ({ ...prev, [`task_content_${i}`]: "" }));
-                              setDirty(true);
+                              setTaskContent(i, e.target.value);
                             }}
                             className={`w-full px-2 py-1 text-base border rounded-sm focus:outline-none focus:border-[#1a3458] transition-colors ${errors[`task_content_${i}`] ? "border-red-400" : "border-slate-200"}`} />
                           {errors[`task_content_${i}`] && <p className="text-xs text-red-600 mt-1">{errors[`task_content_${i}`]}</p>}
@@ -4039,6 +4069,15 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   // search page, and they need to know exactly which rows were selected.
   const [billingOrderIds, setBillingOrderIds] = useDurableState<string[]>("billing-selection", []);
   const [isPending, startTransition] = useTransition();
+  const [moduleAttempt, setModuleAttempt] = useState(0);
+  // React.lazy retains a rejected import. An explicit retry needs a fresh lazy
+  // instance; successful module imports still use the browser's module cache.
+  const { InventoryPage, ManagementPage, ProfilePage, ProgressBoard } = useMemo(() => ({
+    InventoryPage: lazy(pageLoaders.inventory),
+    ManagementPage: lazy(pageLoaders.management),
+    ProfilePage: lazy(pageLoaders.profile),
+    ProgressBoard: lazy(pageLoaders.productionProgress),
+  }), [moduleAttempt]);
   // While a route transition is in flight (chunk still downloading), drive the
   // shared global popup so the user sees progress over the page they stay on.
   useLoadingScope(isPending);
@@ -4047,7 +4086,11 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   // chunks are cached, so navigation no longer suspends and feels instant.
   useEffect(() => {
     if (dataState !== "ready") return;
-    const prefetch = () => { for (const load of Object.values(pageLoaders)) void load(); };
+    const prefetch = () => {
+      for (const load of Object.values(pageLoaders)) {
+        void load().catch(error => console.warn("Kiyometa module prefetch failed", error));
+      }
+    };
     if (typeof window.requestIdleCallback === "function") {
       const handle = window.requestIdleCallback(prefetch);
       return () => window.cancelIdleCallback(handle);
@@ -4058,6 +4101,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     let requestInFlight = false;
     let initialLoadComplete = !!cached;
     let refreshPaused = false;
@@ -4067,7 +4111,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       requestInFlight = true;
 
       try {
-        const data = await fetchAll();
+        const data = await fetchAll(controller.signal);
         if (cancelled) return;
         try { writeRecovery(profile.id, "data-cache", data); } catch { /* recovery status warns */ }
         setClients(previous => sameRows(previous, data.clients) ? previous : data.clients);
@@ -4121,6 +4165,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
 
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearInterval(refreshTimer);
       window.clearTimeout(realtimeTimer);
       void supabase.removeChannel(realtime);
@@ -4214,8 +4259,24 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
           a transition into a still-downloading module keeps the previous page
           visible instead of revealing the fallback; the fallback only appears
           if there is genuinely no page to preserve. */}
-      <Suspense fallback={<PageLoading />}>
       <BackNavContext.Provider value={goBack}>
+      <ModuleErrorBoundary resetKey={page} onRetry={() => setModuleAttempt(attempt => attempt + 1)}
+        fallback={(error, retry) => (
+          <AppShell onNavigate={navigate} title={t("appTitle", lang)} activePage={page} lang={lang} setLang={setLang}>
+            <div className="flex flex-1 items-center justify-center overflow-y-auto p-5">
+              <section role="alert" className="w-full max-w-lg rounded-sm border border-red-200 bg-white p-6">
+                <h1 className="text-lg font-700 text-slate-800">{lang === "ja" ? "画面を表示できませんでした" : "This module could not be displayed"}</h1>
+                <p className="mt-2 text-sm text-slate-600">{lang === "ja" ? "通信状態を確認して再試行するか、メニューから別の画面を開いてください。" : "Check your connection and retry, or open another module from the menu."}</p>
+                <details className="mt-3 text-xs text-slate-600"><summary>{lang === "ja" ? "エラー詳細" : "Error details"}</summary><pre className="mt-2 whitespace-pre-wrap break-words">{error.message}</pre></details>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Btn variant="primary" onClick={retry}>{lang === "ja" ? "再試行" : "Retry module"}</Btn>
+                  <Btn variant="outline" onClick={() => navigate("home")}>{lang === "ja" ? "ホーム" : "Home"}</Btn>
+                </div>
+              </section>
+            </div>
+          </AppShell>
+        )}>
+      <Suspense fallback={<PageLoading />}>
       <div className="flex-1 min-h-0 overflow-hidden">
         {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
         {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
@@ -4225,14 +4286,16 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} clients={clients} products={products} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "production-progress" && <ProgressBoard orders={dedupedOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "checklist"      && <ChecklistPage key={checklistOrderId} orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
         {page === "inventory"       && <InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role === "administrator" && <ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role !== "administrator" && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "profile"        && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
       </div>
-      </BackNavContext.Provider>
       </Suspense>
+      </ModuleErrorBoundary>
+      </BackNavContext.Provider>
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>

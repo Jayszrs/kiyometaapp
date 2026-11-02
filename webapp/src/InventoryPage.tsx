@@ -1,6 +1,7 @@
 import { useDurableState } from "./lib/useDurableState";
 import { readRecovery, writeRecovery, removeRecovery } from "./lib/recoveryStorage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useReadRefresh } from "./lib/useReadRefresh";
 import { AppShell, type DeliverySlipMode, type Lang, type Page, type Product } from "./App";
 import { useAuth } from "./lib/auth";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
@@ -32,6 +33,7 @@ import { hasNativeBridge } from "./lib/nativeBridge";
 import { supabase } from "./lib/supabaseClient";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
+import { buildBomTree, summarizeBom } from "./lib/bom";
 
 interface Props {
   products: Product[];
@@ -172,6 +174,7 @@ const BOM_COLUMNS: ExcelColumn[] = [
   { key: "parentBomNo", header: "Parent BOM No", width: 20 },
   { key: "productNo", header: "Product No", width: 20, required: true },
   { key: "itemNo", header: "Item No", width: 18, required: true },
+  { key: "componentProductNo", header: "Linked Subassembly Product No", width: 28 },
   { key: "quantity", header: "Qty per Product", width: 18, required: true, numberFormat: "#,##0.000" },
   { key: "notes", header: "Notes", width: 36 },
 ];
@@ -303,7 +306,9 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [bomProduct, setBomProduct] = useDurableState("bom-product", "");
   const [bomParent, setBomParent] = useDurableState("bom-parent", "");
   const [bomInventoryItem, setBomInventoryItem] = useDurableState("bom-inventory-item", "");
+  const [bomComponentProduct, setBomComponentProduct] = useDurableState("bom-component-product", "");
   const [bomQty, setBomQty] = useDurableState("bom-quantity", 1);
+  const [bomView, setBomView] = useDurableState<"structure" | "summary">("bom-view", "structure");
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -332,27 +337,29 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     ? ({ ordered: "発注済み", partial: "一部入荷", received: "入荷済み", cancelled: "キャンセル" } as const)[status]
     : status;
 
-  const load = useCallback(async (forceProbe = false) => {
-    setError("");
-    setBusy(true);
-    try {
-      if (!await probeOperationsBackend(forceProbe)) {
+  const forceProbeRef = useRef(false);
+  const refresh = useReadRefresh(async signal => {
+      const force = forceProbeRef.current;
+      forceProbeRef.current = false;
+      const available = await probeOperationsBackend(force);
+      if (!available || signal.aborted) return null;
+      return fetchInventoryData(signal);
+    }, data => {
+      if (!data) {
         setError(langRef.current === "ja" ? "在庫機能に必要なデータベース更新が適用されていません。管理者にお問い合わせください。" : MIGRATION_REQUIRED_MESSAGE);
         return;
       }
-      const data = await fetchInventoryData();
       setItems(data.items);
       setPurchases(data.purchases);
       setMovements(data.movements);
       setBom(data.bom);
-    } catch (err) {
+    }, err => {
       setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
+    }, active => { setBusy(active); if (active) setError(""); });
+  const load = useCallback((forceProbe = false) => {
+    forceProbeRef.current ||= forceProbe;
+    return refresh();
+  }, [refresh]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -415,22 +422,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   }, [items]);
   const itemName = (id: string) => itemNameById.get(id) ?? "Unknown item";
   const productName = (id: string) => productNameById.get(id) ?? "Unknown product";
-  const orderedBom = useMemo(() => {
-    const result: Array<{ row: BomItem; depth: number }> = [];
-    const productsInTree = [...new Set(bom.map(row => row.productId))];
-    for (const productId of productsInTree) {
-      const productRows = bom.filter(row => row.productId === productId);
-      const walk = (parentBomNo: string, depth: number, visited: Set<string>) => {
-        for (const row of productRows.filter(candidate => candidate.parentBomNo === parentBomNo)) {
-          if (visited.has(row.bomNo)) continue;
-          result.push({ row, depth });
-          walk(row.bomNo, depth + 1, new Set(visited).add(row.bomNo));
-        }
-      };
-      walk("", 0, new Set());
-    }
-    return result;
-  }, [bom]);
+  const orderedBom = useMemo(() => bomProduct ? buildBomTree(bom, bomProduct) : [], [bom, bomProduct]);
+  const summarizedBom = useMemo(() => bomProduct ? summarizeBom(bom, bomProduct) : [], [bom, bomProduct]);
 
   const submitItem = () => {
     if (!itemForm?.itemName.trim()) return;
@@ -511,7 +504,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     }));
     return bom.map(row => ({
       bomNo: row.bomNo, parentBomNo: row.parentBomNo, productNo: products.find(product => product.id === row.productId)?.productNumber ?? "",
-      itemNo: itemById(row.inventoryItemId)?.itemCode ?? "", quantity: row.quantityPerUnit, notes: row.notes,
+      itemNo: itemById(row.inventoryItemId)?.itemCode ?? "", componentProductNo: products.find(product => product.id === row.componentProductId)?.productNumber ?? "", quantity: row.quantityPerUnit, notes: row.notes,
     }));
   };
 
@@ -660,12 +653,18 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     const quantity = requiredNumber(row.values.quantity);
     if (quantity === null) throw new Error("Qty per Product must be a number.");
     if (quantity <= 0) throw new Error("Qty per Product must be greater than zero.");
+    const componentProductNo = text(row.values.componentProductNo);
+    const componentProduct = componentProductNo
+      ? products.find(candidate => candidate.productNumber.toLowerCase() === componentProductNo.toLowerCase())
+      : undefined;
+    if (componentProductNo && !componentProduct) throw new Error(`Linked subassembly product "${componentProductNo}" was not found.`);
+    if (componentProduct?.id === product.id) throw new Error("A product cannot be linked to itself as a subassembly.");
     return {
       kind: "bom",
       existingId: current?.id ?? "",
       payload: {
         id: current?.id ?? genUUID(), bomNo: current?.bomNo ?? "", productId: product.id,
-        inventoryItemId: item.id, parentBomNo, quantityPerUnit: quantity, notes: text(row.values.notes),
+        inventoryItemId: item.id, componentProductId: componentProduct?.id ?? "", parentBomNo, quantityPerUnit: quantity, notes: text(row.values.notes),
       },
     };
   };
@@ -819,15 +818,22 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
           {tab === "bom" && (
             <section className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-slate-200">
               <div className="mb-5"><h2 className="text-lg font-700 text-[#1a3458]">{text("Product material requirements (BOM)", "製品ごとの材料所要量（BOM）")}</h2><p className="text-sm text-slate-500">{text("Build a parent–child product structure. Production uses the product’s direct components. Produce subassemblies separately using their own BOM.", "親子構造でBOMを登録します。製作開始時は製品直下の部品を使用します。中間部品は、その部品のBOMで別途製作してください。")}</p></div>
-              <div className="grid gap-3 rounded bg-slate-50 p-4 md:grid-cols-[1fr_1fr_1fr_140px_auto]">
+              <div className="mb-4 flex w-fit rounded border border-slate-300 bg-white p-1">
+                <button onClick={() => setBomView("structure")} className={`rounded px-4 py-2 text-sm font-700 ${bomView === "structure" ? "bg-[#1a3458] text-white" : "text-slate-600"}`}>{text("Component structure", "構成部品（構造）")}</button>
+                <button onClick={() => setBomView("summary")} className={`rounded px-4 py-2 text-sm font-700 ${bomView === "summary" ? "bg-[#0d7377] text-white" : "text-slate-600"}`}>{text("Material summary", "材料（集計）")}</button>
+              </div>
+              <div className="grid gap-3 rounded bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_140px_auto]">
                 <Field label={text("Product", "製品")}><select value={bomProduct} onChange={e => { setBomProduct(e.target.value); setBomParent(""); }} className={inputClass}><option value="">{text("Select product", "製品を選択")}</option>{products.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
                 <Field label={text("Parent assembly", "親部品（任意）")}><select value={bomParent} onChange={e => setBomParent(e.target.value)} className={inputClass} disabled={!bomProduct}><option value="">{text("Root component", "製品直下")}</option>{bom.filter(row => row.productId === bomProduct).map(row => <option key={row.bomNo} value={row.bomNo}>{row.bomNo} · {itemName(row.inventoryItemId)}</option>)}</select></Field>
                 <Field label={text("Material / part", "材料 / 部品")}><select value={bomInventoryItem} onChange={e => setBomInventoryItem(e.target.value)} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.filter(item => item.category !== "finished_good").map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field>
+                <Field label={text("Linked subassembly (optional)", "中間製品リンク（任意）")}><select value={bomComponentProduct} onChange={e => setBomComponentProduct(e.target.value)} className={inputClass} disabled={!bomProduct}><option value="">{text("Use as purchased/raw part", "材料・購入部品として使用")}</option>{products.filter(product => product.id !== bomProduct).map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
                 <Field label={text("Qty per parent", "親あたり数量")}><input type="number" min="0.001" step="0.001" value={bomQty} onChange={e => setBomQty(number(e.target.value))} className={inputClass} /></Field>
-                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
+                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
               </div>
-              {!isWide && <div className="mt-5 divide-y divide-slate-100">{orderedBom.map(({ row, depth }) => <article key={row.id} className="space-y-2 py-4" style={{ paddingInlineStart: `${depth * 20}px` }}><div className="flex items-start justify-between gap-3"><div><p className="font-700">{itemName(row.inventoryItemId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo}{row.parentBomNo ? ` · ${text("Child of", "親")}: ${row.parentBomNo}` : ` · ${productName(row.productId)}`}</p></div><p className="font-mono font-700">× {row.quantityPerUnit.toLocaleString()}</p></div><button onClick={() => askDelete(bom.some(child => child.parentBomNo === row.bomNo) ? text(`Remove ${row.bomNo} and all its subcomponents?`, `${row.bomNo} とその子部品をすべて削除しますか？`) : text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
-              {isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[860px] text-sm"><thead className="border-b border-slate-200 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product", "製品")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Qty / parent", "親あたり数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{orderedBom.map(({ row, depth }) => <tr key={row.id}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.parentBomNo && <span className="ml-2 font-mono text-xs text-slate-400">({row.parentBomNo})</span>}</div></td><td className="px-3 py-3 text-right font-mono">{row.quantityPerUnit.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
+              {!bomProduct && <p className="mt-5 rounded border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text("Select a product to review its BOM.", "BOMを確認する製品を選択してください。")}</p>}
+              {bomProduct && bomView === "summary" && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Material / consumable", "材料・消耗品")}</th><th className="px-4 py-3">{text("Item no", "品目番号")}</th><th className="px-4 py-3 text-right">{text("Total per finished product", "完成品1個あたり合計")}</th></tr></thead><tbody className="divide-y divide-slate-100">{summarizedBom.map(row => { const item = itemById(row.inventoryItemId); return <tr key={row.inventoryItemId}><td className="px-4 py-3 font-700">{item?.itemName ?? text("Unknown item", "不明な品目")}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item?.itemCode ?? "-"}</td><td className="px-4 py-3 text-right font-mono font-700">{row.requiredQuantity.toLocaleString()} {item?.unit ?? ""}</td></tr>; })}{summarizedBom.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">{text("No material requirements registered.", "材料所要量が登録されていません。")}</td></tr>}</tbody></table></div>}
+              {bomProduct && bomView === "structure" && !isWide && <div className="mt-5 divide-y divide-slate-100">{orderedBom.map(({ row, depth, requiredQuantity }) => <article key={`${row.id}-${depth}`} className="space-y-2 py-4" style={{ paddingInlineStart: `${depth * 20}px` }}><div className="flex items-start justify-between gap-3"><div><p className="font-700">{itemName(row.inventoryItemId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo} · {productName(row.productId)}{row.componentProductId ? ` → ${productName(row.componentProductId)}` : ""}</p></div><p className="font-mono font-700">× {requiredQuantity.toLocaleString()}</p></div><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
+              {bomProduct && bomView === "structure" && isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product level", "製品階層")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Required qty", "必要数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{orderedBom.map(({ row, depth, requiredQuantity }) => <tr key={`${row.id}-${depth}`}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.componentProductId && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">→ {productName(row.componentProductId)}</span>}</div></td><td className="px-3 py-3 text-right font-mono">{requiredQuantity.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
             </section>
           )}
         </div>
