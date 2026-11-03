@@ -335,7 +335,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [bomParent, setBomParent] = useDurableState("bom-parent", "");
   const [bomInventoryItem, setBomInventoryItem] = useDurableState("bom-inventory-item", "");
   const [bomComponentProduct, setBomComponentProduct] = useDurableState("bom-component-product", "");
-  const [bomQty, setBomQty] = useDurableState("bom-quantity", 1);
+  const [bomQty, setBomQty] = useDurableState("bom-quantity-v2", "");
   const [bomView, setBomView] = useDurableState<"structure" | "summary">("bom-view", "structure");
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
   const [busy, setBusy] = useState(false);
@@ -455,6 +455,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     [bom, products, items, bomProduct, bomInventoryItem],
   );
   const selectedBomInventoryItem = items.find(item => item.id === bomInventoryItem);
+  const bomQuantityValue = number(bomQty);
   const canLinkSelectedItem = !!selectedBomInventoryItem
     && ["component", "finished_good"].includes(selectedBomInventoryItem.category)
     && selectedBomInventoryItem.procurementType === "make";
@@ -871,8 +872,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                 {bomInventoryItem && linkedSubassemblyOptions.length === 0 && <p className="text-xs text-amber-800 md:col-span-2 xl:col-span-4">{!canLinkSelectedItem
                   ? text("This inventory item is not a manufactured component, so it cannot link to a product. Leave this field blank or choose a make-type component.", "この在庫品目は社内製造部品ではないため、製品にリンクできません。未選択のままにするか、製造区分の部品を選んでください。")
                   : text("No unique matching subassembly is available for this item, or it would create a circular BOM. Align the product and inventory item code/name, or select another item.", "この品目に一致する中間製品がないか、循環するBOMになります。製品と在庫品目の番号・名称を合わせるか、別の品目を選んでください。")}</p>}
-                <Field label={text("Qty per parent", "親あたり数量")}><input type="number" min="0.001" step="0.001" value={bomQty} onChange={e => setBomQty(number(e.target.value))} className={inputClass} /></Field>
-                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0 || (!!bomComponentProduct && !linkedSubassemblyOptions.some(product => product.id === bomComponentProduct))} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
+                <Field label={text("Qty per parent", "親あたり数量")}><input type="number" inputMode="decimal" min="0.001" step="0.001" placeholder={text("Enter quantity", "数量を入力")} value={bomQty} onChange={e => setBomQty(e.target.value)} className={inputClass} /></Field>
+                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQuantityValue <= 0 || (!!bomComponentProduct && !linkedSubassemblyOptions.some(product => product.id === bomComponentProduct))} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQuantityValue, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(""); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
               </div>
               {!bomProduct && <p className="mt-5 rounded border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text("Select a product to review its BOM.", "BOMを確認する製品を選択してください。")}</p>}
               {bomProduct && bomView === "summary" && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Material / consumable", "材料・消耗品")}</th><th className="px-4 py-3">{text("Item no", "品目番号")}</th><th className="px-4 py-3 text-right">{text("Total per finished product", "完成品1個あたり合計")}</th></tr></thead><tbody className="divide-y divide-slate-100">{summarizedBom.map(row => { const item = itemById(row.inventoryItemId); return <tr key={row.inventoryItemId}><td className="px-4 py-3 font-700">{item?.itemName ?? text("Unknown item", "不明な品目")}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item?.itemCode ?? "-"}</td><td className="px-4 py-3 text-right font-mono font-700">{row.requiredQuantity.toLocaleString()} {item?.unit ?? ""}</td></tr>; })}{summarizedBom.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">{text("No material requirements registered.", "材料所要量が登録されていません。")}</td></tr>}</tbody></table></div>}
