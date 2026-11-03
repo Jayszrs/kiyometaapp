@@ -33,7 +33,7 @@ import { hasNativeBridge } from "./lib/nativeBridge";
 import { supabase } from "./lib/supabaseClient";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
-import { buildBomTree, summarizeBom } from "./lib/bom";
+import { buildBomTree, compatibleSubassemblyProducts, summarizeBom } from "./lib/bom";
 
 interface Props {
   products: Product[];
@@ -199,8 +199,36 @@ const blankPurchase = (): Purchase => ({
   dueDate: "", status: "ordered", pic: "", notes: "",
 });
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected error";
+function errorMessage(error: unknown, lang: Lang = "en") {
+  const details = error as { code?: string; message?: string } | null;
+  const message = error instanceof Error ? error.message : details?.message ?? "";
+  const code = details?.code ?? "";
+  if (code === "42501" && /next_bom_no/i.test(message)) {
+    return lang === "ja"
+      ? "BOM番号の採番権限がデータベースで不足しています。変更は保存されていません。管理者に最新のデータベース更新を適用してもらい、再度お試しください。"
+      : "Database permission for generating BOM numbers is missing. No BOM row was saved. Ask an administrator to apply the latest database migration, then retry.";
+  }
+  if (code === "42501") {
+    return lang === "ja"
+      ? "このアカウントにはデータベース操作権限がありません。変更は保存されていません。管理者にアカウント状態とBOM編集権限を確認してもらってください。"
+      : "Supabase denied this database action. No change was saved. Ask an administrator to verify that your account is active and has BOM editing access.";
+  }
+  if (code === "23503") {
+    return lang === "ja"
+      ? "選択した製品・材料・親BOMの組み合わせが現在のマスタと一致しません。画面を更新し、最新の選択肢から選び直してください。"
+      : "The selected product, material, or parent BOM no longer matches the master data. Refresh this page and reselect the current entries.";
+  }
+  if (code === "23505") {
+    return lang === "ja"
+      ? "この親BOMには同じ材料がすでに登録されています。既存行を確認し、数量を編集するか別の材料を選んでください。"
+      : "This material is already listed under the selected parent BOM. Review the existing row and edit its quantity or choose another material.";
+  }
+  if (code === "23514" && /subassembly|BOM component product|BOM component/i.test(message)) {
+    return lang === "ja"
+      ? "中間製品と在庫品目の対応が無効か、製品構成が循環します。製造区分の部品を選び、品目と一意に一致する製品をリンクしてください。問題が続く場合は既存BOMの循環を管理者に確認してもらってください。"
+      : "The subassembly does not match this inventory item, or the link would create a circular BOM. Choose a make-type component whose item code or name uniquely matches one product. If it still fails, ask an administrator to review existing BOM links.";
+  }
+  return message || (lang === "ja" ? "予期しないエラーです。通信状態を確認して再試行してください。" : "An unexpected error occurred. Check your connection and retry.");
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -354,7 +382,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       setMovements(data.movements);
       setBom(data.bom);
     }, err => {
-      setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : errorMessage(err));
+      setError(errorMessage(err, langRef.current));
     }, active => { setBusy(active); if (active) setError(""); });
   const load = useCallback((forceProbe = false) => {
     forceProbeRef.current ||= forceProbe;
@@ -387,7 +415,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       await load();
       setNotice(success);
     } catch (err) {
-      setError(langRef.current === "ja" ? "処理に失敗しました。入力内容と通信状態を確認してください。" : errorMessage(err));
+      setError(errorMessage(err, langRef.current));
     } finally {
       setBusy(false);
     }
@@ -422,6 +450,19 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   }, [items]);
   const itemName = (id: string) => itemNameById.get(id) ?? "Unknown item";
   const productName = (id: string) => productNameById.get(id) ?? "Unknown product";
+  const linkedSubassemblyOptions = useMemo(
+    () => compatibleSubassemblyProducts(bom, products, items, bomProduct, bomInventoryItem),
+    [bom, products, items, bomProduct, bomInventoryItem],
+  );
+  const selectedBomInventoryItem = items.find(item => item.id === bomInventoryItem);
+  const canLinkSelectedItem = !!selectedBomInventoryItem
+    && ["component", "finished_good"].includes(selectedBomInventoryItem.category)
+    && selectedBomInventoryItem.procurementType === "make";
+  useEffect(() => {
+    if (bomComponentProduct && !linkedSubassemblyOptions.some(product => product.id === bomComponentProduct)) {
+      setBomComponentProduct("");
+    }
+  }, [bomComponentProduct, linkedSubassemblyOptions]);
   const orderedBom = useMemo(() => bomProduct ? buildBomTree(bom, bomProduct) : [], [bom, bomProduct]);
   const summarizedBom = useMemo(() => bomProduct ? summarizeBom(bom, bomProduct) : [], [bom, bomProduct]);
 
@@ -469,7 +510,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       pic: profile.displayName || profile.username, notes: movementNotes, idempotencyKey: genUUID(),
     };
     try { writeRecovery(profile.id, "movement-submit", submission); }
-    catch (error) { setError(errorMessage(error)); return; }
+    catch (error) { setError(errorMessage(error, lang)); return; }
     void run(async () => {
       await addStockMovement(submission);
       removeRecovery(profile.id, "movement-submit");
@@ -523,7 +564,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       });
       setNotice(template ? text("Excel template downloaded.", "Excelテンプレートをダウンロードしました。") : text("Excel export downloaded.", "Excelデータをダウンロードしました。"));
     } catch (err) {
-      setError(lang === "ja" ? "Excelファイルを作成できませんでした。" : errorMessage(err));
+      setError(errorMessage(err, lang));
     }
   };
 
@@ -677,7 +718,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       try {
         prepared.push(prepareRow(row));
       } catch (err) {
-        throw new Error(`Row ${row.rowNumber}: ${errorMessage(err)}`);
+        throw new Error(`Row ${row.rowNumber}: ${errorMessage(err, lang)}`);
       }
     }
     const skipped = prepared.filter(row => row.kind === "skip").length;
@@ -731,7 +772,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       await load();
       setNotice(result);
     } catch (err) {
-      setError(lang === "ja" ? "Excelファイルを読み込めませんでした。内容を確認してください。" : errorMessage(err));
+      setError(errorMessage(err, lang));
     } finally {
       setBusy(false);
     }
@@ -823,12 +864,15 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                 <button onClick={() => setBomView("summary")} className={`rounded px-4 py-2 text-sm font-700 ${bomView === "summary" ? "bg-[#0d7377] text-white" : "text-slate-600"}`}>{text("Material summary", "材料（集計）")}</button>
               </div>
               <div className="grid gap-3 rounded bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_140px_auto]">
-                <Field label={text("Product", "製品")}><select value={bomProduct} onChange={e => { setBomProduct(e.target.value); setBomParent(""); }} className={inputClass}><option value="">{text("Select product", "製品を選択")}</option>{products.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
+                <Field label={text("Product", "製品")}><select value={bomProduct} onChange={e => { setBomProduct(e.target.value); setBomParent(""); setBomInventoryItem(""); setBomComponentProduct(""); }} className={inputClass}><option value="">{text("Select product", "製品を選択")}</option>{products.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
                 <Field label={text("Parent assembly", "親部品（任意）")}><select value={bomParent} onChange={e => setBomParent(e.target.value)} className={inputClass} disabled={!bomProduct}><option value="">{text("Root component", "製品直下")}</option>{bom.filter(row => row.productId === bomProduct).map(row => <option key={row.bomNo} value={row.bomNo}>{row.bomNo} · {itemName(row.inventoryItemId)}</option>)}</select></Field>
-                <Field label={text("Material / part", "材料 / 部品")}><select value={bomInventoryItem} onChange={e => setBomInventoryItem(e.target.value)} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.filter(item => item.category !== "finished_good").map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field>
-                <Field label={text("Linked subassembly (optional)", "中間製品リンク（任意）")}><select value={bomComponentProduct} onChange={e => setBomComponentProduct(e.target.value)} className={inputClass} disabled={!bomProduct}><option value="">{text("Use as purchased/raw part", "材料・購入部品として使用")}</option>{products.filter(product => product.id !== bomProduct).map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
+                <Field label={text("Material / part", "材料 / 部品")}><select value={bomInventoryItem} onChange={e => { setBomInventoryItem(e.target.value); setBomComponentProduct(""); }} className={inputClass}><option value="">{text("Select item", "品目を選択")}</option>{items.filter(item => item.active && item.category !== "finished_good").map(item => <option key={item.id} value={item.id}>{item.itemCode} · {item.itemName}</option>)}</select></Field>
+                <Field label={text("Linked subassembly (optional)", "中間製品リンク（任意）")}><select value={bomComponentProduct} onChange={e => setBomComponentProduct(e.target.value)} className={inputClass} disabled={!bomProduct || !canLinkSelectedItem || linkedSubassemblyOptions.length === 0}><option value="">{text("Use as purchased/raw part", "材料・購入部品として使用")}</option>{linkedSubassemblyOptions.map(product => <option key={product.id} value={product.id}>{product.productNumber} · {product.productName}</option>)}</select></Field>
+                {bomInventoryItem && linkedSubassemblyOptions.length === 0 && <p className="text-xs text-amber-800 md:col-span-2 xl:col-span-4">{!canLinkSelectedItem
+                  ? text("This inventory item is not a manufactured component, so it cannot link to a product. Leave this field blank or choose a make-type component.", "この在庫品目は社内製造部品ではないため、製品にリンクできません。未選択のままにするか、製造区分の部品を選んでください。")
+                  : text("No unique matching subassembly is available for this item, or it would create a circular BOM. Align the product and inventory item code/name, or select another item.", "この品目に一致する中間製品がないか、循環するBOMになります。製品と在庫品目の番号・名称を合わせるか、別の品目を選んでください。")}</p>}
                 <Field label={text("Qty per parent", "親あたり数量")}><input type="number" min="0.001" step="0.001" value={bomQty} onChange={e => setBomQty(number(e.target.value))} className={inputClass} /></Field>
-                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
+                <button disabled={busy || !bomProduct || !bomInventoryItem || bomQty <= 0 || (!!bomComponentProduct && !linkedSubassemblyOptions.some(product => product.id === bomComponentProduct))} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQty, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(1); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
               </div>
               {!bomProduct && <p className="mt-5 rounded border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text("Select a product to review its BOM.", "BOMを確認する製品を選択してください。")}</p>}
               {bomProduct && bomView === "summary" && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Material / consumable", "材料・消耗品")}</th><th className="px-4 py-3">{text("Item no", "品目番号")}</th><th className="px-4 py-3 text-right">{text("Total per finished product", "完成品1個あたり合計")}</th></tr></thead><tbody className="divide-y divide-slate-100">{summarizedBom.map(row => { const item = itemById(row.inventoryItemId); return <tr key={row.inventoryItemId}><td className="px-4 py-3 font-700">{item?.itemName ?? text("Unknown item", "不明な品目")}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item?.itemCode ?? "-"}</td><td className="px-4 py-3 text-right font-mono font-700">{row.requiredQuantity.toLocaleString()} {item?.unit ?? ""}</td></tr>; })}{summarizedBom.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">{text("No material requirements registered.", "材料所要量が登録されていません。")}</td></tr>}</tbody></table></div>}

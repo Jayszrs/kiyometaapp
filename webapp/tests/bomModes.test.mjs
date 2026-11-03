@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { moduleUrl } from './loadRecoveryModule.mjs';
 
-const { buildBomTree, summarizeBom } = await import(moduleUrl('bom.ts'));
+const { buildBomTree, compatibleSubassemblyProducts, summarizeBom, wouldCreateProductCycle } = await import(moduleUrl('bom.ts'));
 
 const row = (id, productId, inventoryItemId, quantityPerUnit, componentProductId = '', parentBomNo = '') => ({
   id, bomNo: id, productId, inventoryItemId, componentProductId, parentBomNo, quantityPerUnit, notes: '',
@@ -41,4 +41,31 @@ test('defensive traversal terminates if legacy data contains a product cycle', (
     row('BOM-2', 'b', 'a-stock', 1, 'a'),
   ];
   assert.equal(buildBomTree(rows, 'a').length, 2);
+});
+
+test('subassembly choices only match manufactured inventory items and clear ambiguous matches', () => {
+  const products = [
+    { id: 'assembly-a', productNumber: 'FG-A001', productName: 'Bracket assembly A' },
+    { id: 'assembly-b', productNumber: 'FG-B001', productName: 'Sensor mount B' },
+  ];
+  const items = [
+    { id: 'raw', itemCode: 'RM-001', itemName: 'Pelat aluminium', category: 'material', procurementType: 'buy' },
+    { id: 'stock-a', itemCode: 'FG-001', itemName: 'Bracket assembly A', category: 'finished_good', procurementType: 'make' },
+    { id: 'stock-unknown', itemCode: 'FG-999', itemName: 'Unknown assembly', category: 'component', procurementType: 'make' },
+  ];
+  assert.deepEqual(compatibleSubassemblyProducts([], products, items, 'finished', 'raw'), []);
+  assert.deepEqual(compatibleSubassemblyProducts([], products, items, 'finished', 'stock-a').map(product => product.id), ['assembly-a']);
+  assert.deepEqual(compatibleSubassemblyProducts([], products, items, 'finished', 'stock-unknown'), []);
+});
+
+test('subassembly choices exclude self-links and links that would form a product cycle', () => {
+  const products = [
+    { id: 'a', productNumber: 'A', productName: 'A' },
+    { id: 'b', productNumber: 'B', productName: 'B' },
+  ];
+  const items = [{ id: 'b-stock', itemCode: 'B', itemName: 'B', category: 'component', procurementType: 'make' }];
+  const rows = [row('BOM-1', 'b', 'a-stock', 1, 'a')];
+  assert.equal(wouldCreateProductCycle(rows, 'a', 'b'), true);
+  assert.deepEqual(compatibleSubassemblyProducts(rows, products, items, 'a', 'b-stock'), []);
+  assert.deepEqual(compatibleSubassemblyProducts([], products, items, 'b', 'b-stock'), []);
 });

@@ -11,6 +11,70 @@ export interface BomSummaryRow {
   requiredQuantity: number;
 }
 
+export interface LinkableProduct {
+  id: string;
+  productName: string;
+  productNumber: string;
+}
+
+export interface LinkableInventoryItem {
+  id: string;
+  itemCode: string;
+  itemName: string;
+  category: string;
+  procurementType: string;
+  active?: boolean;
+}
+
+function normalizedIdentity(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function wouldCreateProductCycle(rows: readonly BomItem[], parentProductId: string, componentProductId: string): boolean {
+  if (!parentProductId || !componentProductId || parentProductId === componentProductId) return true;
+  const childrenByProduct = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!row.componentProductId) continue;
+    const children = childrenByProduct.get(row.productId) ?? [];
+    children.push(row.componentProductId);
+    childrenByProduct.set(row.productId, children);
+  }
+  const pending = [componentProductId];
+  const visited = new Set<string>();
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (current === parentProductId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(childrenByProduct.get(current) ?? []));
+  }
+  return false;
+}
+
+export function compatibleSubassemblyProducts(
+  rows: readonly BomItem[],
+  products: readonly LinkableProduct[],
+  items: readonly LinkableInventoryItem[],
+  parentProductId: string,
+  inventoryItemId: string,
+): LinkableProduct[] {
+  const item = items.find(candidate => candidate.id === inventoryItemId);
+  if (!item || item.active === false || !["component", "finished_good"].includes(item.category) || item.procurementType !== "make") return [];
+
+  const itemCode = normalizedIdentity(item.itemCode);
+  const codeMatches = products.filter(product => normalizedIdentity(product.productNumber) === itemCode);
+  const productMatches = codeMatches.length
+    ? codeMatches
+    : products.filter(product => normalizedIdentity(product.productName) === normalizedIdentity(item.itemName));
+  // A stock part must resolve to exactly one product master record. Ambiguous
+  // names/codes are not guessed; the master data needs an explicit correction.
+  if (productMatches.length !== 1) return [];
+  const component = productMatches[0];
+  return component.id !== parentProductId && !wouldCreateProductCycle(rows, parentProductId, component.id)
+    ? [component]
+    : [];
+}
+
 function branchKey(productId: string, parentBomNo: string): string {
   return `${productId}\u0000${parentBomNo}`;
 }
