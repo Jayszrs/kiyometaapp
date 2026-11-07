@@ -62,12 +62,7 @@ drop policy if exists "administrators read admin invites" on public.admin_invite
 create policy "administrators read admin invites" on public.admin_invites
   for select to authenticated using (public.is_administrator());
 
--- The owner account is pre-registered so the first administrator is not locked
--- out by the trigger change below. It is consumed the first time that address
--- registers, and can be re-issued later with a single insert.
-insert into public.admin_invites (email, note)
-values ('operator@kiyometa.app', 'Initial administrator bootstrap')
-on conflict (email) do nothing;
+-- Add the chosen production administrator invite manually after migrations.
 
 -- ===========================================================================
 -- 2. Signup trigger: role is never taken from client metadata

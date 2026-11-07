@@ -118,27 +118,4 @@ drop policy if exists "public read drawings" on storage.objects;
 create policy "public read drawings" on storage.objects
   for select using (bucket_id = 'product-drawings');
 
--- 7. Seed data (same demo rows as the prototype's in-memory INIT_* arrays) --
-insert into public.clients (name, phone, email, postal_code, address) values
-  ('Shinwa Technos Co., Ltd.', '0266-28-0105', 'info@shinwa.co.jp', '393-0011', 'Nagano-ken Suwa-gun Shimosuwa-machi 4611-90'),
-  ('Masuda Corp. Sheet Metal Dept.', '0265-85-2100', 'sheetmetal@masuda.co.jp', '399-4301', 'Nagano-ken Kamiina-gun Miyada-mura 6623-2'),
-  ('Tsubaki Manufacturing Ltd.', '03-5678-9012', 'orders@tsubaki-mfg.co.jp', '140-0002', 'Tokyo-to Shinagawa-ku Higashishinagawa 2-3-8')
-on conflict (name) do nothing;
-
-insert into public.products (client_name, product_name, product_number, unit_price, tasks) values
-  ('Shinwa Technos Co., Ltd.', 'Tank', 'NHD-F1772-11', 5000,
-    '[{"content":"Cutting","time":15},{"content":"Bending","time":20},{"content":"Welding","time":30},{"content":"Grinding","time":10},{"content":"Inspection","time":5}]'::jsonb),
-  ('Masuda Corp. Sheet Metal Dept.', 'Tank (TOP)', 'NSQ-F0124-05', 6000,
-    '[{"content":"Cutting","time":12},{"content":"Pressing","time":18},{"content":"Welding","time":25},{"content":"Surface treatment","time":15}]'::jsonb),
-  ('Tsubaki Manufacturing Ltd.', 'Frame assembly', 'TBK-R3341-02', 12000,
-    '[{"content":"Laser cut","time":30},{"content":"Bending x6","time":45},{"content":"Assembly weld","time":60},{"content":"Finishing","time":20}]'::jsonb)
-on conflict (client_name, product_number) do nothing;
-
-insert into public.orders (order_date, delivery_date, client, order_number, product_name, quantity, order_amount, progress, required_manhours, worked_manhours, production_end_date) values
-  ('2025-11-04', '2025-11-06', 'Shinwa Technos Co., Ltd.', '199987', 'Tank', 2, 10000, 'Shipped', 40, 40, '2025-11-05'),
-  ('2025-11-04', '2025-11-07', 'Shinwa Technos Co., Ltd.', '199988', 'Tank', 2, 10000, 'Shipped', 40, 40, '2025-11-06'),
-  ('2025-11-02', '2025-11-07', 'Shinwa Technos Co., Ltd.', '199901', 'Frame assembly', 6, 42648, 'Shipped', 155, 155, '2025-11-06'),
-  ('2025-11-01', '2025-11-07', 'Masuda Corp. Sheet Metal Dept.', 'MS294541', 'Tank (TOP)', 1, 4650, 'Shipped', 30, 30, '2025-11-05'),
-  ('2025-11-01', '2025-11-07', 'Masuda Corp. Sheet Metal Dept.', 'MS294542', 'Tank (TOP)', 1, 4650, 'In production', 30, 12, '2025-11-06'),
-  ('2025-10-28', '2025-11-03', 'Tsubaki Manufacturing Ltd.', 'TBK-8812', 'Frame assembly', 2, 24000, 'Complete', 310, 310, '2025-11-02')
-on conflict do nothing;
+-- Production schema migration: do not seed client, product, or order records.

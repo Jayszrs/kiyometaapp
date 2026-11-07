@@ -21,14 +21,14 @@ drop index if exists inventory_items_item_code_key;
 alter table public.purchases drop constraint if exists purchases_purchase_no_key;
 drop index if exists purchases_purchase_no_key;
 
--- The tank-merge backup is unindexed. Give it a primary key so the advisor
--- stops flagging it; the rows stay intact as the merge record. Guarded with a
--- DO block because Postgres has no "add constraint if not exists".
+-- Older demo databases can have a tank-merge backup table. It does not exist
+-- on a clean production database, so skip this maintenance-only cleanup there.
 do $$
 begin
-  if not exists (
+  if to_regclass('maintenance.products_tank_backup_20261013') is not null
+     and not exists (
     select 1 from pg_constraint
-    where conrelid = 'maintenance.products_tank_backup_20261013'::regclass
+    where conrelid = to_regclass('maintenance.products_tank_backup_20261013')
       and contype = 'p'
   ) then
     alter table maintenance.products_tank_backup_20261013

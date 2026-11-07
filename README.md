@@ -33,21 +33,25 @@ cd ..
 flutter pub get
 ```
 
-Run these migrations in order from the Supabase SQL Editor when preparing a
-new Supabase project:
+For production, use the `production` branch and apply migrations in this
+order: `001` through `027`, the three `20261026` migrations, `028` through
+`032`, then the two `20261103` migrations. These migrations create the schema
+without demo clients, products, orders, or manufacturing operations.
+The first production administrator must be invited before signup.
 
-1. `backend/supabase/migrations/001_order_management.sql`
-2. `backend/supabase/migrations/002_roles_inventory_audit.sql`
-3. `backend/supabase/migrations/003_business_numbers_excel.sql`
-4. `backend/supabase/migrations/004_business_number_permissions.sql`
-5. `backend/supabase/migrations/005_all_roles_safe_undo.sql`
-6. `backend/supabase/migrations/006_employee_profiles.sql`
-7. `backend/supabase/migrations/007_product_inventory_integration.sql`
-8. `backend/supabase/migrations/008_order_management_constraints.sql`
-9. `backend/supabase/migrations/009_private_product_drawings.sql`
+In the Supabase SQL Editor, replace `ADMIN_EMAIL` with the administrator email:
 
-Then link the Supabase CLI to the project and deploy the protected user
-management function:
+```sql
+insert into public.admin_invites (email, note)
+values (lower(btrim('ADMIN_EMAIL')), 'Initial production administrator');
+```
+
+Then create that user from Supabase Dashboard -> Authentication -> Users, or
+use the app's signup flow if enabled. Set the password directly in Supabase.
+Never put the password in Git, a migration, or chat.
+
+Link the Supabase CLI to the project and deploy the protected user management
+function:
 
 ```powershell
 cd backend

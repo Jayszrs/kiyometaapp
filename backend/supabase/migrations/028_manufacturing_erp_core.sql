@@ -206,17 +206,4 @@ drop trigger if exists audit_production_costs on public.production_costs;
 create trigger audit_production_costs after insert or update or delete on public.production_costs
   for each row execute function public.audit_row_change();
 
-insert into public.manufacturing_operations
-  (operation_code, operation_name, operation_name_ja, default_minutes, sequence)
-values
-  ('FULL_MACHINING', 'Full machining', '全加工', null, 10),
-  ('LASER',          'Laser cutting',  'レーザー', 5, 20),
-  ('DEBURRING',      'Deburring',      'バリ取り', 1, 30),
-  ('BENDING',        'Bending',        '曲げ', 3, 40),
-  ('WELDING',        'Welding',        '溶接', 6, 50),
-  ('ACID_PICKLING',  'Acid pickling',  '酸洗', 5, 60)
-on conflict (operation_code) do update set
-  operation_name = excluded.operation_name,
-  operation_name_ja = excluded.operation_name_ja,
-  default_minutes = excluded.default_minutes,
-  sequence = excluded.sequence;
+-- Production schema migration: operation catalogue starts empty.
