@@ -1,0 +1,14 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/dist
+**/build
+**/.dart_tool
+**/.env.local
+**/.env.*.local
+**/models
+*.log
+docs
+resource
