@@ -37,6 +37,9 @@ For production, use the `production` branch and apply migrations in this
 order: `001` through `027`, the three `20261026` migrations, `028` through
 `032`, then the two `20261103` migrations. These migrations create the schema
 without demo clients, products, orders, or manufacturing operations.
+On this branch, `webapp/.env.development` and `webapp/.env.production` point
+to the Japan project. On `main`, the ignored `webapp/.env.local` remains the
+Singapore connection for local development.
 The first production administrator must be invited before signup.
 
 In the Supabase SQL Editor, replace `ADMIN_EMAIL` with the administrator email:
@@ -46,9 +49,8 @@ insert into public.admin_invites (email, note)
 values (lower(btrim('ADMIN_EMAIL')), 'Initial production administrator');
 ```
 
-Then create that user from Supabase Dashboard -> Authentication -> Users, or
-use the app's signup flow if enabled. Set the password directly in Supabase.
-Never put the password in Git, a migration, or chat.
+Then create that user from Supabase Dashboard -> Authentication -> Users and
+set the password there. Never put the password in Git, a migration, or chat.
 
 Link the Supabase CLI to the project and deploy the protected user management
 function:
