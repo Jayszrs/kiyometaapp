@@ -119,9 +119,84 @@ export interface ProductionTaskProgress {
   operationId: string;
   status: ProductionTaskStatus;
   actualMinutes: number | null;
+  actualTimeBasis: "per_unit" | "per_batch" | null;
+  processedQuantity: number | null;
+  completedQuantity: number | null;
   operatorId: string | null;
   completedAt: string | null;
   version: number;
+}
+
+export interface ProductRouteLink {
+  productId: string;
+  operationId: string;
+  standardMinutes: number | null;
+}
+
+export interface WipValuationSettings {
+  valuationMethod: "standard_time" | "actual_time" | null;
+  actualTimeBasis: "per_unit" | "per_batch" | null;
+  includeInProgressOperation: boolean | null;
+  materialIssuePoint: "issue" | "process_start" | "actual_consumption" | null;
+  outsourcingRecognition: "sent" | "received" | "invoiced" | null;
+  stockValuationMethod: "fifo" | "weighted_average" | "standard_cost" | null;
+  includeLaborCost: boolean | null;
+  includeMachineCost: boolean | null;
+  includeOverheadCost: boolean | null;
+  configuredAt: string | null;
+  clientDecisions: Record<string, string>;
+  version: number;
+}
+
+function wipSettingsFromRow(row: Record<string, unknown>): WipValuationSettings {
+  return {
+    valuationMethod: row.valuation_method as WipValuationSettings["valuationMethod"],
+    actualTimeBasis: row.actual_time_basis as WipValuationSettings["actualTimeBasis"],
+    includeInProgressOperation: row.include_in_progress_operation == null ? null : Boolean(row.include_in_progress_operation),
+    materialIssuePoint: row.material_issue_point as WipValuationSettings["materialIssuePoint"],
+    outsourcingRecognition: row.outsourcing_recognition as WipValuationSettings["outsourcingRecognition"],
+    stockValuationMethod: row.stock_valuation_method as WipValuationSettings["stockValuationMethod"],
+    includeLaborCost: row.include_labor_cost == null ? null : Boolean(row.include_labor_cost),
+    includeMachineCost: row.include_machine_cost == null ? null : Boolean(row.include_machine_cost),
+    includeOverheadCost: row.include_overhead_cost == null ? null : Boolean(row.include_overhead_cost),
+    configuredAt: row.configured_at ? String(row.configured_at) : null,
+    clientDecisions: (row.client_decisions ?? {}) as Record<string, string>,
+    version: Number(row.version ?? 1),
+  };
+}
+
+export async function fetchWipValuationSettings(): Promise<WipValuationSettings> {
+  const { data, error } = await supabase.from("wip_valuation_settings").select("*").eq("id", true).maybeSingle();
+  if (error) throw error;
+  return wipSettingsFromRow(data ?? {});
+}
+
+export async function saveWipValuationSettings(settings: WipValuationSettings): Promise<WipValuationSettings> {
+  const row = {
+    id: true,
+    client_decisions: settings.clientDecisions,
+    valuation_method: "standard_time" as const,
+    actual_time_basis: "per_unit" as const,
+    include_in_progress_operation: settings.includeInProgressOperation,
+    material_issue_point: settings.materialIssuePoint,
+    outsourcing_recognition: settings.outsourcingRecognition,
+    stock_valuation_method: settings.stockValuationMethod,
+    include_labor_cost: true,
+    include_machine_cost: true,
+    include_overhead_cost: true,
+    configured_at: new Date().toISOString(),
+    configured_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+  };
+  const { data, error } = await supabase.from("wip_valuation_settings").update({ ...row, version: settings.version + 1 }).eq("id", true).eq("version", settings.version).select().maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("The policy changed on another device. Reload before saving again.");
+  return wipSettingsFromRow(data);
+}
+
+export async function calculateWipValuation(asOf?: string): Promise<{ configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>>; policy?: WipValuationSettings }> {
+  const { data, error } = await supabase.rpc("calculate_wip_valuation", { p_as_of: asOf ?? new Date().toISOString().slice(0, 10) });
+  if (error) throw error;
+  return data as { configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>>; policy?: WipValuationSettings };
 }
 
 function functionError(data: unknown, fallback: string): Error {
@@ -560,6 +635,9 @@ function productionTaskFromRow(row: Record<string, unknown>): ProductionTaskProg
     operationId: String(row.operation_id),
     status: row.status as ProductionTaskStatus,
     actualMinutes: row.actual_minutes == null ? null : Number(row.actual_minutes),
+    actualTimeBasis: row.actual_time_basis as ProductionTaskProgress["actualTimeBasis"] ?? null,
+    processedQuantity: row.processed_quantity == null ? null : Number(row.processed_quantity),
+    completedQuantity: row.completed_quantity == null ? null : Number(row.completed_quantity),
     operatorId: row.operator_id ? String(row.operator_id) : null,
     completedAt: row.completed_at ? String(row.completed_at) : null,
     version: Number(row.version ?? 1),
@@ -569,18 +647,38 @@ function productionTaskFromRow(row: Record<string, unknown>): ProductionTaskProg
 export async function fetchManufacturingProgress(signal?: AbortSignal): Promise<{
   operations: ManufacturingOperation[];
   tasks: ProductionTaskProgress[];
+  routes: ProductRouteLink[];
 }> {
   const operationQuery = supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name");
   const taskResult = fetchAllPages((from, to) => {
     const query = supabase.from("production_tasks").select("*").order("updated_at").order("id").range(from, to);
     return signal ? query.abortSignal(signal) : query;
   });
+  const routeQuery = fetchAllPages((from, to) => {
+    const query = supabase.from("products").select("id,tasks").range(from, to);
+    return signal ? query.abortSignal(signal) : query;
+  });
   if (signal) operationQuery.abortSignal(signal);
-  const [operationRes, tasks] = await Promise.all([operationQuery, taskResult]);
+  const [operationRes, tasks, products] = await Promise.all([operationQuery, taskResult, routeQuery]);
   if (operationRes.error) throw operationRes.error;
   return {
     operations: (operationRes.data ?? []).map(row => operationFromRow(row)),
     tasks: tasks.map(row => productionTaskFromRow(row)),
+    routes: products.flatMap(product => (Array.isArray(product.tasks) ? product.tasks : [])
+      .flatMap((task: unknown) => {
+        if (!task || typeof task !== "object") return [];
+        const row = task as Record<string, unknown>;
+        const operation = (operationRes.data ?? []).find(operation => row.operationId
+          ? operation.id === row.operationId
+          : operation.operation_name === String(row.content ?? "").trim()
+            || (operation.operation_name_ja && operation.operation_name_ja === String(row.content ?? "").trim()));
+        const time = Number(row.time);
+        return operation ? [{
+          productId: String(product.id),
+          operationId: String(operation.id),
+          standardMinutes: row.time === "" || row.time == null || !Number.isFinite(time) || time < 0 ? null : time,
+        }] : [];
+      })),
   };
 }
 
@@ -612,12 +710,33 @@ export async function createManufacturingOperation(input: {
   return operationFromRow(data);
 }
 
+export async function updateManufacturingOperationName(
+  operationId: string,
+  expectedVersion: number,
+  operationName: string,
+  operationNameJa: string,
+): Promise<void> {
+  const { data, error } = await supabase.from("manufacturing_operations")
+    .update({ operation_name: operationName.trim(), operation_name_ja: operationNameJa.trim(), version: expectedVersion + 1 })
+    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("This process changed on another device. Reload the process list before editing it again.");
+}
+
 export async function updateManufacturingOperationCharge(operationId: string, expectedVersion: number, baseTimeChargeJpy: number): Promise<void> {
   const { data, error } = await supabase.from("manufacturing_operations")
     .update({ base_time_charge_jpy: baseTimeChargeJpy, version: expectedVersion + 1 })
     .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
   if (error) throw error;
   if (!data) throw new Error("This process rate changed on another device. Reload the process list before editing it again.");
+}
+
+export async function updateManufacturingOperationDefaultMinutes(operationId: string, expectedVersion: number, defaultMinutes: number | null): Promise<void> {
+  const { data, error } = await supabase.from("manufacturing_operations")
+    .update({ default_minutes: defaultMinutes, version: expectedVersion + 1 })
+    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("This standard time changed on another device. Reload the process list before editing it again.");
 }
 
 export class StaleProductionTaskError extends Error {
@@ -630,37 +749,34 @@ export class StaleProductionTaskError extends Error {
 export async function saveProductionTask(input: {
   existingId?: string;
   expectedVersion?: number;
+  requestId: string;
+  completedAt?: string | null;
   orderId: string;
   operationId: string;
   status: ProductionTaskStatus;
   actualMinutes: number | null;
   operatorId: string;
+  actualTimeBasis: "per_unit" | "per_batch" | null;
+  processedQuantity: number | null;
+  completedQuantity: number | null;
 }): Promise<ProductionTaskProgress> {
-  const row = {
-    order_id: input.orderId,
-    operation_id: input.operationId,
-    status: input.status,
-    actual_minutes: input.actualMinutes,
-    operator_id: input.operatorId,
-    completed_at: input.status === "completed" ? new Date().toISOString() : null,
-  };
-  if (input.existingId) {
-    const version = input.expectedVersion ?? 1;
-    const { data, error } = await supabase.from("production_tasks")
-      .update({ ...row, version: version + 1 }).eq("id", input.existingId).eq("version", version)
-      .select().maybeSingle();
-    if (error) throw error;
-    if (data) return productionTaskFromRow(data);
-    const latest = await supabase.from("production_tasks").select("*").eq("id", input.existingId).maybeSingle();
-    if (latest.error) throw latest.error;
-    throw new StaleProductionTaskError(latest.data ? productionTaskFromRow(latest.data) : null);
-  }
-  const { data, error } = await supabase.from("production_tasks").insert({ ...row, version: 1 }).select().single();
-  if (error?.code === "23505") {
-    const latest = await supabase.from("production_tasks").select("*").eq("order_id", input.orderId).eq("operation_id", input.operationId).maybeSingle();
-    if (latest.error) throw latest.error;
-    throw new StaleProductionTaskError(latest.data ? productionTaskFromRow(latest.data) : null);
-  }
+  const { data, error } = await supabase.rpc("save_production_task_once", {
+    p_request_id: input.requestId,
+    p_existing_id: input.existingId ?? null,
+    p_expected_version: input.expectedVersion ?? null,
+    p_order_id: input.orderId,
+    p_operation_id: input.operationId,
+    p_status: input.status,
+    p_actual_minutes: input.actualMinutes,
+    p_actual_time_basis: input.actualTimeBasis,
+    p_processed_quantity: input.processedQuantity,
+    p_completed_quantity: input.completedQuantity,
+    p_completed_at: input.completedAt ?? null,
+    p_operator_id: input.operatorId,
+  });
   if (error) throw error;
-  return productionTaskFromRow(data);
+  const result = data as { ok?: boolean; conflict?: boolean; task?: Record<string, unknown>; latest?: Record<string, unknown> | null };
+  if (result?.conflict) throw new StaleProductionTaskError(result.latest ? productionTaskFromRow(result.latest) : null);
+  if (!result?.ok || !result.task) throw new Error("The production update could not be confirmed. It will retry safely.");
+  return productionTaskFromRow(result.task);
 }

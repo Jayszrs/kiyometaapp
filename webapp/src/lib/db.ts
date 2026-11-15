@@ -11,6 +11,7 @@ interface ClientRow {
   email: string;
   postal_code: string;
   address: string;
+  version: number;
 }
 
 // A drawing is referenced by its Storage object key and nothing else. The
@@ -31,10 +32,12 @@ interface ProductRow {
   unit_price: number;
   tasks: ProductTask[];
   drawings: DrawingRef[];
+  version: number;
 }
 
 interface OrderRow {
   id: string;
+  product_id?: string;
   order_date: string;
   delivery_date: string;
   client: string;
@@ -59,7 +62,7 @@ interface OrderRow {
 }
 
 function clientFromRow(r: ClientRow): Client {
-  return { id: r.id, name: r.name, phone: r.phone, email: r.email, postalCode: r.postal_code, address: r.address };
+  return { id: r.id, name: r.name, phone: r.phone, email: r.email, postalCode: r.postal_code, address: r.address, version: r.version ?? 1 };
 }
 
 function clientToRow(c: Client) {
@@ -84,6 +87,7 @@ function productFromRow(r: ProductRow): Product {
     // signs the ones it needs, and only for the product actually opened.
     drawings: drawings.map(() => ""),
     drawingPaths: drawings.map(d => d?.path ?? ""),
+    version: r.version ?? 1,
   };
 }
 
@@ -101,6 +105,7 @@ function productListFromRow(r: ProductListRow): Product {
     tasks: [],
     drawings: [],
     drawingPaths: [],
+    version: r.version ?? 1,
   };
 }
 
@@ -119,6 +124,7 @@ function productToRow(p: Product, drawingRefs: DrawingRef[]) {
 function orderFromRow(r: OrderRow): OrderRecord {
   return {
     id: r.id,
+    productId: r.product_id,
     orderDate: r.order_date,
     deliveryDate: r.delivery_date,
     client: r.client,
@@ -171,7 +177,7 @@ function orderToRow(o: OrderRecord) {
 // every product on every load. The product form asks for them itself when a
 // product is opened, which is the only place they are displayed.
 const PRODUCT_LIST_COLUMNS =
-  "id, client_name, product_name, product_number, internal_company_name, unit_price, updated_at";
+  "id, client_name, product_name, product_number, internal_company_name, unit_price, version, updated_at";
 
 // The list projection omits tasks and drawings, so it needs its own row type
 // instead of being forced through ProductRow.
@@ -236,13 +242,25 @@ export async function fetchProductTasksByIds(ids: readonly string[]): Promise<Ma
 // ---- Clients ----
 
 export async function upsertClient(c: Client): Promise<Client> {
-  const { data, error } = await supabase
-    .from("clients")
-    .upsert({ id: c.id, ...clientToRow(c) })
-    .select()
-    .single();
+  if (c.version == null) {
+    const { data, error } = await supabase.from("clients").insert({ id: c.id, ...clientToRow(c), version: 1 }).select().single();
+    if (error) throw error;
+    return clientFromRow(data as ClientRow);
+  }
+  const { data, error } = await supabase.from("clients")
+    .update({ ...clientToRow(c), version: c.version + 1 }).eq("id", c.id).eq("version", c.version).select().maybeSingle();
   if (error) throw error;
-  return clientFromRow(data as ClientRow);
+  if (data) return clientFromRow(data as ClientRow);
+  const latest = await supabase.from("clients").select("*").eq("id", c.id).maybeSingle();
+  if (latest.error) throw latest.error;
+  throw new StaleClientError(latest.data ? clientFromRow(latest.data as ClientRow) : null);
+}
+
+export class StaleClientError extends Error {
+  constructor(public readonly latest: Client | null) {
+    super(latest ? "This client changed on another device. The latest record is available. Reload it before editing again." : "This client was removed on another device. Reload the client list.");
+    this.name = "StaleClientError";
+  }
 }
 
 export async function deleteClient(id: string): Promise<void> {
@@ -379,13 +397,27 @@ export async function signProductDrawings(paths: string[]): Promise<string[]> {
 
 export async function upsertProduct(p: Product): Promise<Product> {
   const drawingRefs = await persistDrawings(p.id, p.drawings, p.drawingPaths);
-  const { data, error } = await supabase
-    .from("products")
-    .upsert({ id: p.id, ...productToRow(p, drawingRefs) })
-    .select()
-    .single();
+  if (p.version == null) {
+    const { data, error } = await supabase.from("products")
+      .insert({ id: p.id, ...productToRow(p, drawingRefs), version: 1 }).select().single();
+    if (error) throw error;
+    return productFromRow(data as ProductRow);
+  }
+  const { data, error } = await supabase.from("products")
+    .update({ ...productToRow(p, drawingRefs), version: p.version + 1 })
+    .eq("id", p.id).eq("version", p.version).select().maybeSingle();
   if (error) throw error;
-  return productFromRow(data as ProductRow);
+  if (data) return productFromRow(data as ProductRow);
+  const latest = await supabase.from("products").select("*").eq("id", p.id).maybeSingle();
+  if (latest.error) throw latest.error;
+  throw new StaleProductError(latest.data ? productFromRow(latest.data as ProductRow) : null);
+}
+
+export class StaleProductError extends Error {
+  constructor(public readonly latest: Product | null) {
+    super(latest ? "This product changed on another device. The latest record is available. Reload it before editing again." : "This product was removed on another device. Reload the product list.");
+    this.name = "StaleProductError";
+  }
 }
 
 export async function deleteProduct(id: string): Promise<void> {

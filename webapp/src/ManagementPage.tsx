@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useReadRefresh } from "./lib/useReadRefresh";
 import { useAuth, type UserRole } from "./lib/auth";
-import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
+import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import { passwordBreachCount } from "./lib/pwnedPassword";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
@@ -150,14 +150,14 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   return (
     <AppShell onNavigate={onNavigate} title={text("Role Management & Audit", "権限管理・操作履歴")} activePage="management" showBack backTarget="home" backLabel={text("Home", "ホーム")} lang={lang} setLang={setLang}>
       <div className="border-b border-slate-200 bg-white px-4 sm:px-8">
-        <div className="mx-auto flex max-w-7xl gap-1 py-2">
+        <PageContainer className="flex gap-1 py-2">
           <button onClick={() => setTab("users")} className={`rounded px-4 py-2 text-sm font-600 ${tab === "users" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{text("Employees", "従業員")}</button>
           <button onClick={() => setTab("audit")} className={`rounded px-4 py-2 text-sm font-600 ${tab === "audit" ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{text("Activity audit", "操作履歴")}</button>
-        </div>
+        </PageContainer>
       </div>
 
       <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
+        <PageContainer className="space-y-4">
           {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load(true)} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? text("Checking...", "確認中…") : text("Check again", "再確認")}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
@@ -256,7 +256,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
                 </div>}
               </section>
           )}
-        </div>
+        </PageContainer>
       </main>
 
       {resetTarget && (

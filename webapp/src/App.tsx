@@ -1,3 +1,4 @@
+import { buildBomTree } from "./lib/bom";
 import { createContext, lazy, Suspense, useContext, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
 import { fetchAll, fetchProduct, fetchProductTasksByIds, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
@@ -25,6 +26,7 @@ import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge
 import {
   deleteBomItem,
   fetchManufacturingOperations,
+  fetchWipValuationSettings,
   fetchProductMaterialData,
   saveBomItem,
   type BomItem,
@@ -74,6 +76,7 @@ interface ScanRouting {
 
 export interface OrderRecord {
   id: string;
+  productId?: string;
   orderDate: string;
   deliveryDate: string;
   client: string;
@@ -107,6 +110,7 @@ export interface Client {
   email: string;
   postalCode: string;
   address: string;
+  version?: number;
 }
 
 export interface ProductTask {
@@ -524,6 +528,10 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
       </div>
     </div>
   );
+}
+
+export function PageContainer({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <div className={`mx-auto w-full max-w-7xl ${className}`}>{children}</div>;
 }
 
 function UserMenuButton({ onNavigate, lang }: { onNavigate: (p: Page) => void; lang: Lang }) {
@@ -1012,7 +1020,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
     <AppShell onNavigate={onNavigate} title={t("appTitle", lang)} activePage="home" lang={lang} setLang={setLang}>
       <div className="page-enter flex-1 overflow-y-auto">
         <div className="border-b border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
+          <PageContainer className="flex flex-col gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:px-8 sm:pt-7">
             <div>
               <h1 className="text-2xl font-700 text-[#1a3458]">{t(greetingKey, lang)}</h1>
               <p className="text-base text-slate-500 mt-1">{dateStr}</p>
@@ -1021,10 +1029,10 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
               <span className="font-600 text-slate-700">{inProd}</span>{t("inProdSuffix", lang)},{" "}
               <span className="font-600 text-slate-700">{shipped}</span>{t("shippedSuffix", lang)}
             </p>
-          </div>
+          </PageContainer>
         </div>
 
-        <div className="mx-auto max-w-5xl space-y-6 px-4 py-5 sm:px-8 sm:py-6">
+        <PageContainer className="space-y-6 px-4 py-5 sm:px-8 sm:py-6">
 
           {/* Row 1: Quick actions */}
           <div className="grid grid-cols-1 gap-3 min-[390px]:grid-cols-2">
@@ -1123,7 +1131,7 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
             </div>
           </section>
 
-        </div>
+        </PageContainer>
       </div>
     </AppShell>
   );
@@ -1269,7 +1277,7 @@ const LABELS = {
   sendersCompany:   { ja: "株式会社キヨメタ",     en: "Kiyometa" },
   returnButton:     { ja: "戻る",              en: "Return" },
   orderNotFound:    { ja: "注文が見つかりません。", en: "Order not found." },
-  tasksButton:      { ja: "作業",              en: "Tasks" },
+  tasksButton:      { ja: "製作工程の進捗",       en: "Production Stage Progress" },
   saveAndReturn:    { ja: "登録して戻る",        en: "Save & Return" },
   toCad:            { ja: "CAD図面へ",          en: "To CAD" },
   taskLabelPrefix:  { ja: "作業",              en: "Task " },
@@ -1923,10 +1931,6 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               </div>
               <div className="flex flex-col">
                 <span className="block text-sm font-700 text-slate-600 mb-1">{L("tasksButton")}</span>
-                <button type="button" onClick={() => onNavigate("checklist", undefined, form.id)}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 text-base font-600 border border-slate-300 rounded-sm bg-white hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
-                  {L("tasksButton")}
-                </button>
               </div>
             </div>
 
@@ -2158,6 +2162,13 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     await billingAction.run(async () => {
     if (popup) popup.opener = null;
     const escape = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+    // Existing installations keep their current list until policy storage is deployed.
+    const policy = await fetchWipValuationSettings().catch(() => null);
+    const separatePages = policy?.clientDecisions.preparationLayout === "per_order";
+    const includeBom = policy?.clientDecisions.preparationBom === "include";
+    const includeOperatorLog = policy?.clientDecisions.preparationOperatorLog === "include";
+    const materials = includeBom ? await fetchProductMaterialData() : null;
+    const materialById = new Map(materials?.items.map(item => [item.id, item]) ?? []);
     const baseProducts = selectedOrders.map(productInfo);
     const missingTasks = [...new Set(baseProducts.filter((product): product is Product => Boolean(product && product.tasks.length === 0)).map(product => product.id))];
     const fetchedTasks = missingTasks.length ? await fetchProductTasksByIds(missingTasks) : new Map<string, ProductTask[]>();
@@ -2171,9 +2182,14 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     const rows = selectedOrders.map(order => {
       const product = productByOrderId.get(order.id);
       const tasks = product?.tasks.filter(task => task.content.trim()).map(task => `${task.content}${task.time === "" ? "" : ` (${task.time}${lang === "ja" ? "分" : " min"})`}`).join("、") || "-";
-      return `<tr><td class="mono">${escape(order.id)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}</td><td class="mono">${escape(product?.productNumber ?? "-")}</td><td class="num">${escape(order.quantity)}</td><td>${escape(tasks)}</td><td>${escape(lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress)}</td></tr>`;
+      const bomDetails = includeBom && product && materials ? buildBomTree(materials.bom, product.id).map(entry => {
+        const item = materialById.get(entry.row.inventoryItemId);
+        return `<div style="margin-left:${entry.depth * 10}px">${escape(item?.itemCode)} ${escape(item?.itemName)}: ${escape(entry.requiredQuantity * order.quantity)} ${escape(item?.unit)}</div>`;
+      }).join("") : "";
+      const operatorLog = includeOperatorLog ? (product?.tasks ?? []).filter(task => task.content.trim()).map(task => `<div>${escape(task.content)}<br>${lang === "ja" ? "担当 / 状態 / 実績分 / 数量" : "Operator / status / actual min / quantity"}: ____________________</div>`).join("") : "";
+      return `<tr><td class="mono">${escape(order.orderNumber)}</td><td>${escape(order.client)}</td><td>${escape(order.productName)}${product?.internalCompanyName ? `<br>${escape(product.internalCompanyName)}` : ""}</td><td class="mono">${escape(product?.productNumber ?? "-")}</td><td class="num">${escape(order.quantity)}</td><td>${escape(tasks)}</td><td>${escape(lang === "ja" ? (PROGRESS_JA[order.progress] ?? order.progress) : order.progress)}</td>${includeBom ? `<td>${bomDetails || "-"}</td>` : ""}${includeOperatorLog ? `<td>${operatorLog || "-"}</td>` : ""}</tr>`;
     }).join("");
-    const printHtml = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${escape(labels.title)}</title><style>body{font:14px "Noto Sans JP",Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px;color:#1a3458}p{color:#64748b;margin:0 0 24px}.meta{display:flex;justify-content:space-between;border-bottom:2px solid #1a3458;padding-bottom:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ebbd0;padding:9px 8px;text-align:left;vertical-align:top}th{background:#dbeef8;font-size:12px;color:#1a3458}.num{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}@media print{body{padding:0}thead{display:table-header-group}}</style></head><body><div class="meta"><div><h1>${escape(labels.title)}</h1><p>${escape(fromDate)} ～ ${escape(toDate)} ・ ${selectedOrders.length}${lang === "ja" ? "件" : " order(s)"}</p></div><div>${escape(new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US"))}</div></div><table><thead><tr><th>${escape(labels.id)}</th><th>${escape(labels.client)}</th><th>${escape(labels.product)}</th><th>${escape(labels.number)}</th><th class="num">${escape(labels.qty)}</th><th>${escape(labels.tasks)}</th><th>${escape(labels.status)}</th></tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`;
+    const printHtml = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>${escape(labels.title)}</title><style>body{font:14px "Noto Sans JP",Arial,sans-serif;color:#172033;padding:32px}h1{font-size:24px;margin:0 0 6px;color:#1a3458}p{color:#64748b;margin:0 0 24px}.meta{display:flex;justify-content:space-between;border-bottom:2px solid #1a3458;padding-bottom:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #9ebbd0;padding:9px 8px;text-align:left;vertical-align:top}th{background:#dbeef8;font-size:12px;color:#1a3458}.num{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}@media print{body{padding:0}thead{display:table-header-group}${separatePages ? "tbody tr{break-after:page;page-break-after:always}tbody tr:last-child{break-after:auto;page-break-after:auto}" : ""}}</style></head><body><div class="meta"><div><h1>${escape(labels.title)}</h1><p>${escape(fromDate)} ～ ${escape(toDate)} ・ ${selectedOrders.length}${lang === "ja" ? "件" : " order(s)"}</p></div><div>${escape(new Date().toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US"))}</div></div><table><thead><tr><th>${escape(labels.id)}</th><th>${escape(labels.client)}</th><th>${escape(labels.product)}</th><th>${escape(labels.number)}</th><th class="num">${escape(labels.qty)}</th><th>${escape(labels.tasks)}</th><th>${escape(labels.status)}</th>${includeBom ? `<th>BOM</th>` : ""}${includeOperatorLog ? `<th>${lang === "ja" ? "作業記録" : "Operator log"}</th>` : ""}</tr></thead><tbody>${rows}</tbody></table><script>window.onload=()=>window.print()<\/script></body></html>`;
     if (bridge) {
       printNative(printHtml, labels.title);
     } else if (popup) {
@@ -2232,7 +2248,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   };
 
   const productInfo = (o: OrderRecord) =>
-    productByKey.get(`${o.client}|${o.productName}`) ?? null;
+    (o.productId ? products.find(product => product.id === o.productId) : productByKey.get(`${o.client}|${o.productName}`)) ?? null;
 
   return (
     <AppShell onNavigate={onNavigate} title={t("searchBilling", lang)} activePage="search-billing" showBack backTarget="home" backLabel={t("backButton", lang)} lang={lang} setLang={setLang}>
@@ -2828,7 +2844,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
       {isScanRouted && (
         <ScanBanner message={lang === "ja" ? `取引先「${sd?.client}」が取引先マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Client "${sd?.client}" was not found in the Client Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="responsive-workspace flex flex-1 overflow-hidden">
+      <PageContainer className="responsive-workspace flex flex-1 overflow-hidden">
         <aside ref={listPanel.panelRef} className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
@@ -2899,7 +2915,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
             </div>
           </div>
         </main>
-      </div>
+      </PageContainer>
 
       <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
@@ -3238,7 +3254,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       {isScanRouted && (
         <ScanBanner message={lang === "ja" ? `製品「${sd?.productName}」(${sd?.productNumber}) が製品マスタに見つかりませんでした。下の入力内容を確認のうえ保存してください。スキャン受注の取込を続行できます。` : `Product "${sd?.productName}" (${sd?.productNumber}) was not found in the Product Master. Please review the pre-filled details below and click Save to continue the scanned order import.`} />
       )}
-      <div className="responsive-workspace flex flex-1 overflow-hidden">
+      <PageContainer className="responsive-workspace flex flex-1 overflow-hidden">
         <aside ref={listPanel.panelRef} className="responsive-panel responsive-panel-list w-60 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-hidden">
           <div className="p-3 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2 px-3.5 py-2.5 border-2 border-slate-300 rounded-sm bg-white transition-colors">
@@ -3511,7 +3527,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
             </div>
           </div>
         </main>
-      </div>
+      </PageContainer>
 
       <footer className="grid shrink-0 grid-cols-2 gap-2 bg-[#1a3458] px-3 py-3 min-[390px]:grid-cols-3 sm:flex sm:items-center sm:gap-3 sm:px-5">
         <Btn variant="ghost" size="lg" onClick={handleNew}><Icon name="plus" size={15} />{t("newButton", lang)}</Btn>
@@ -3959,8 +3975,8 @@ function ChecklistPage({ orderId, orders, setOrders, products, onNavigate, lang 
     );
   }
 
-  const tasks = product?.tasks || Array(54).fill({ content: "", time: "" });
-  const completed = order.completedTasks || Array(54).fill(false);
+  const tasks = product?.tasks.filter(task => task.content.trim()) || [];
+  const completed = order.completedTasks || [];
 
   const toggleTask = async (index: number) => {
     const newCompleted = [...completed];
@@ -4086,6 +4102,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   const [scanRouting, setScanRouting] = useDurableState<ScanRouting>("scan-routing", { stage: "idle", data: null });
   const [scanOpen, setScanOpen] = useState(() => !!getOcrRecovery(profile.id));
   const [checklistOrderId, setChecklistOrderId] = useDurableState<string | null>("checklist-order", null);
+  const [progressProductId, setProgressProductId] = useState<string | null>(null);
   // Orders ticked for the invoice and delivery slip. Held at the top level
   // because the print pages are reached by navigation, not by props from the
   // search page, and they need to know exactly which rows were selected.
@@ -4125,28 +4142,34 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     let cancelled = false;
     const controller = new AbortController();
     let requestInFlight = false;
+    let refreshQueued = false;
     let initialLoadComplete = !!cached;
-    let refreshPaused = false;
 
     const refreshData = async () => {
-      if (requestInFlight || refreshPaused || (!navigator.onLine && cached)) return;
+      if (cancelled || (!navigator.onLine && cached)) return;
+      if (requestInFlight) { refreshQueued = true; return; }
       requestInFlight = true;
 
       try {
-        const data = await fetchAll(controller.signal);
-        if (cancelled) return;
-        try { writeRecovery(profile.id, "data-cache", data); } catch { /* recovery status warns */ }
-        setClients(previous => sameRows(previous, data.clients) ? previous : data.clients);
-        setProducts(previous => sameRows(previous, data.products) ? previous : data.products);
-        setOrders(previous => sameRows(previous, data.orders) ? previous : data.orders);
-        setDataState("ready");
-        setDataError("");
-        initialLoadComplete = true;
+        do {
+          refreshQueued = false;
+          const data = await fetchAll(controller.signal);
+          if (cancelled) return;
+          // A realtime event arrived during this read. Discard this snapshot and
+          // read again so a slower response cannot replace newer data.
+          if (refreshQueued) continue;
+          try { writeRecovery(profile.id, "data-cache", data); } catch { /* recovery status warns */ }
+          setClients(previous => sameRows(previous, data.clients) ? previous : data.clients);
+          setProducts(previous => sameRows(previous, data.products) ? previous : data.products);
+          setOrders(previous => sameRows(previous, data.orders) ? previous : data.orders);
+          setDataState("ready");
+          setDataError("");
+          initialLoadComplete = true;
+        } while (refreshQueued && !cancelled);
       } catch (err) {
-        if (!cancelled && !initialLoadComplete) {
+        if (!cancelled) {
           setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
-          setDataState("error");
-          refreshPaused = true;
+          if (!initialLoadComplete) setDataState("error");
         }
       } finally {
         requestInFlight = false;
@@ -4163,7 +4186,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     const refreshTimer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void refreshData();
-    }, 300000);
+    }, 60000);
     let realtimeTimer: number | undefined;
     const scheduleRealtimeRefresh = () => {
       window.clearTimeout(realtimeTimer);
@@ -4209,6 +4232,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   }, [profile.id]);
 
   const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
+    if (p !== "production-progress") setProgressProductId(null);
     if (mode) setDeliveryMode(mode);
     if (orderId) setChecklistOrderId(orderId);
     // Record the page being left, capped so a long session cannot grow forever.
@@ -4308,7 +4332,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "product-master" && <ProductMasterPage products={products} setProducts={setProducts} clients={clients} scanRouting={scanRouting} setScanRouting={setScanRouting} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "delivery-slip"  && <DeliverySlipPage mode={deliveryMode} orders={dedupedOrders} clients={clients} products={products} orderIds={billingOrderIds} lang={lang} setLang={setLang} onNavigate={navigate} />}
         {page === "schedule"       && <SchedulePage orders={dedupedOrders} setOrders={setOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-        {page === "production-progress" && <ProgressBoard orders={dedupedOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "production-progress" && <ProgressBoard orders={dedupedOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} focusOrderId={checklistOrderId ?? undefined} focusProductId={progressProductId ?? undefined} />}
         {page === "checklist"      && <ChecklistPage key={checklistOrderId} orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
         {page === "inventory"       && <InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role === "administrator" && <ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} />}

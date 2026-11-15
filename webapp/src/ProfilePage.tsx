@@ -2,7 +2,7 @@ import { useDurableState } from "./lib/useDurableState";
 import { useEffect, useRef, useState } from "react";
 import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
-import { AppShell, type DeliverySlipMode, type Lang, type Page } from "./App";
+import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page } from "./App";
 
 interface Props {
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
@@ -155,7 +155,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
   return (
     <AppShell onNavigate={onNavigate} title={lang === "ja" ? "プロフィール" : "My Profile"} activePage="profile" showBack backTarget="home" backLabel={lang === "ja" ? "ホーム" : "Home"} lang={lang} setLang={setLang}>
       <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6">
-        <div className="mx-auto max-w-5xl space-y-4">
+        <PageContainer className="space-y-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
           {notice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
@@ -199,7 +199,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
               <button type="button" disabled={busy} onClick={() => void save()} className="rounded-md bg-[#1a3458] px-6 py-2.5 text-sm font-700 text-white hover:bg-[#112240] disabled:opacity-50">{busy ? (lang === "ja" ? "保存中…" : "Saving…") : (lang === "ja" ? "プロフィールを保存" : "Save profile")}</button>
             </div>
           </section>
-        </div>
+        </PageContainer>
       </main>
     </AppShell>
   );

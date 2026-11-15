@@ -1,8 +1,9 @@
+import WipPolicyForm from "./components/WipPolicyForm";
 import { useDurableState } from "./lib/useDurableState";
 import { readRecovery, writeRecovery, removeRecovery } from "./lib/recoveryStorage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReadRefresh } from "./lib/useReadRefresh";
-import { AppShell, type DeliverySlipMode, type Lang, type Page, type Product } from "./App";
+import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page, type Product } from "./App";
 import { useAuth } from "./lib/auth";
 import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backendStatus";
 import { createExcelWorkbook, readExcelRows, type ExcelColumn, type ImportedExcelRow } from "./lib/excel";
@@ -15,6 +16,9 @@ import {
   deletePurchase,
   deleteStockMovement,
   fetchInventoryData,
+  fetchWipValuationSettings,
+  calculateWipValuation,
+  saveWipValuationSettings,
   importInventoryRows,
   saveBomItem,
   saveInventoryItem,
@@ -26,6 +30,7 @@ import {
   type ProcurementType,
   type Purchase,
   type StockMovement,
+  type WipValuationSettings,
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
 import { isAndroidWebView, printBillingDocument, useBillingAction } from "./lib/billingActions";
@@ -33,6 +38,7 @@ import { hasNativeBridge } from "./lib/nativeBridge";
 import { supabase } from "./lib/supabaseClient";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
+import WorkflowHint from "./components/WorkflowHint";
 import { buildBomTree, compatibleSubassemblyProducts, summarizeBom } from "./lib/bom";
 
 interface Props {
@@ -338,9 +344,14 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [bomQty, setBomQty] = useDurableState("bom-quantity-v2", "");
   const [bomView, setBomView] = useDurableState<"structure" | "summary">("bom-view", "structure");
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
+  const [printValuation, setPrintValuation] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [wipSettings, setWipSettings] = useState<WipValuationSettings | null>(null);
+  const [wipResult, setWipResult] = useState<{ configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>> } | null>(null);
+  const [wipAsOf, setWipAsOf] = useState(today());
+  const [wipBusy, setWipBusy] = useState(false);
   const [transferDialog, setTransferDialog] = useState<TransferDialogState | null>(null);
   const [search, setSearch] = useState("");
   const isWide = useIsTabletOrWider();
@@ -388,6 +399,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     forceProbeRef.current ||= forceProbe;
     return refresh();
   }, [refresh]);
+
+  useEffect(() => { void fetchWipValuationSettings().then(setWipSettings).catch(error => { setWipSettings(null); setError(errorMessage(error, langRef.current)); }); }, []);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -792,16 +805,20 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   return (
     <AppShell onNavigate={onNavigate} title={text("Inventory & Purchasing", "在庫・仕入管理")} activePage="inventory" showBack backTarget="home" backLabel={text("Home", "ホーム")} lang={lang} setLang={setLang} noPrint>
       <div className="border-b border-slate-200 bg-white px-4 sm:px-8 print:hidden">
-        <div className="mx-auto grid max-w-7xl grid-cols-2 gap-1 py-2 sm:flex sm:overflow-x-auto">
-          {(["inventory", "purchases", "movements", "bom"] as Tab[]).map(value => <button key={value} onClick={() => setTab(value)} className={`rounded px-2 py-2 text-xs font-600 capitalize sm:whitespace-nowrap sm:px-4 sm:text-sm ${tab === value ? "bg-[#1a3458] text-white" : "text-slate-600 hover:bg-slate-100"}`}>{value === "bom" ? text("Product materials (BOM)", "製品材料（BOM）") : ({ inventory: text("Inventory", "在庫"), purchases: text("Purchases", "仕入"), movements: text("Movements", "在庫移動") } as const)[value]}</button>)}
-        </div>
+        <PageContainer className="py-2"><nav aria-label={text("Inventory sections", "在庫管理の画面")} className="flex gap-1 overflow-x-auto">
+          {(["inventory", "purchases", "movements", "bom"] as Tab[]).map(value => <button key={value} aria-current={tab === value ? "page" : undefined} onClick={() => setTab(value)} className={`shrink-0 rounded px-3 py-2 text-sm font-600 ${tab === value ? "bg-[#1a3458] text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}>{value === "bom" ? text("Product materials (BOM)", "製品材料（BOM）") : ({ inventory: text("Inventory", "在庫"), purchases: text("Purchases", "仕入"), movements: text("Movements", "在庫移動") } as const)[value]}</button>)}
+        </nav></PageContainer>
       </div>
 
       <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6 print:hidden">
-        <div className="mx-auto max-w-7xl space-y-5">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <PageContainer className="space-y-5">
+          {profile.role === "administrator" && wipSettings && <WipPolicyForm settings={wipSettings} lang={lang} onSave={async draft => { const saved = await saveWipValuationSettings(draft); setWipSettings(saved); setWipResult(null); }} />}
+          <section className="rounded-lg bg-white p-4 ring-1 ring-slate-200"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h2 className="font-700 text-[#1a3458]">{text("WIP total", "WIP合計")}</h2><p className="text-xs text-slate-500">{text("This uses the actual work recorded in Production Stage Progress.", "製作工程進捗に入力した実績を使います。")}</p></div><button type="button" onClick={() => onNavigate("production-progress")} className="rounded border border-slate-300 px-3 py-2 text-sm font-700 text-[#1a3458]">{text("Open progress", "進捗を開く")}</button><label className="text-xs font-700">{text("Date", "日付")}<input type="date" value={wipAsOf} onChange={event => setWipAsOf(event.target.value)} className="mt-1 block rounded border px-2 py-2" /></label><button type="button" disabled={wipBusy} onClick={() => { setWipBusy(true); void calculateWipValuation(wipAsOf).then(setWipResult).catch(error => setError(errorMessage(error, langRef.current))).finally(() => setWipBusy(false)); }} className="rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40">{wipBusy ? text("Calculating…", "計算中…") : text("Calculate", "計算")}</button></div>{wipResult && (wipResult.configured ? <><p className="mt-4 text-right text-xl font-700 text-[#1a3458]">{text("Total WIP", "WIP合計")}: {money(Number(wipResult.total ?? 0))}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b text-left text-xs text-slate-500"><tr><th className="py-2">{text("Order", "受注")}</th><th className="py-2 text-right">{text("WIP value", "WIP金額")}</th></tr></thead><tbody>{(wipResult.rows ?? []).map(row => <tr key={String(row.order_id)} className="border-b border-slate-100"><td className="py-2">{String(row.order_number ?? row.order_id)}</td><td className="py-2 text-right font-mono">{money(Number(row.wip_value ?? 0))}</td></tr>)}</tbody></table></div></> : <p className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-800">{wipResult.reason ?? text("WIP is not ready.", "WIPの準備ができていません。")}</p>)}</section>
+          <WorkflowHint steps={[{ number: "1", title: text("Order", "注文"), detail: text("Order quantity sets the plan.", "注文数量が予定を決めます。") }, { number: "2", title: text("Progress", "進捗"), detail: text("Enter actual minutes and quantities.", "実績分数と数量を入力します。") }, { number: "3", title: text("WIP total", "WIP合計"), detail: text("Calculate the current unfinished cost.", "未完了分の原価を計算します。") }]} />
+          <div className="flex flex-wrap items-stretch gap-3">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-4">
             {[{ label: text("Master items", "登録品目数"), value: summary.itemCount.toLocaleString(), danger: false }, { label: text("Stock value", "在庫金額"), value: money(summary.stockValue), danger: false }, { label: text("Out of stock", "在庫切れ"), value: summary.outOfStock.toLocaleString(), danger: summary.outOfStock > 0 }, { label: text("Need purchase", "要発注"), value: summary.reorderCount.toLocaleString(), danger: false }].map(card => <div key={card.label} className={`rounded-lg p-4 shadow-sm ring-1 ${card.danger ? "bg-red-50 ring-red-200" : "bg-white ring-slate-200"}`}><p className={`text-xs font-600 ${card.danger ? "text-red-600" : "text-slate-500"}`}>{card.label}</p><p className={`mt-2 text-xl font-700 sm:text-2xl ${card.danger ? "text-red-700" : "text-[#1a3458]"}`}>{card.value}</p></div>)}
-          </div>
+          </div><button type="button" onClick={() => void printAction.run(async () => { setPrintValuation(true); await printBillingDocument(lang, message => dialog.alert(message)); })} disabled={printAction.busy || !items.length} className="self-start rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40 sm:self-end">{text("Print stock valuation", "在庫評価を印刷")}</button></div>
           {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load(true)} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? text("Checking...", "確認中…") : text("Check again", "再確認")}</button></div>}
           {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
@@ -881,7 +898,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
               {bomProduct && bomView === "structure" && isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product level", "製品階層")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Required qty", "必要数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{orderedBom.map(({ row, depth, requiredQuantity }) => <tr key={`${row.id}-${depth}`}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.componentProductId && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">→ {productName(row.componentProductId)}</span>}</div></td><td className="px-3 py-3 text-right font-mono">{requiredQuantity.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
             </section>
           )}
-        </div>
+        </PageContainer>
       </main>
 
       {itemForm && <div className="popup-backdrop fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-2 pt-4 print:hidden sm:items-center sm:p-4"><div className="popup-panel max-h-[94dvh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-4 shadow-2xl sm:max-h-[90vh] sm:p-6">
@@ -920,6 +937,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       </div>}
 
       {printPurchase && <article id="purchase-receipt" className="hidden print:block"><div className="mx-auto max-w-3xl p-10 text-black"><div className="flex items-start justify-between border-b-2 border-black pb-5"><div className="flex items-center gap-4"><img src="/app-logo.png" alt="Kiyometa" className="h-14 w-14 rounded object-cover" /><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="mt-1 text-3xl font-700">{text("Purchase receipt", "仕入伝票")}</h1></div></div><div className="text-right"><p className="font-mono text-lg font-700">{printPurchase.purchaseNo}</p><p>{printPurchase.purchaseDate}</p></div></div><div className="mt-8 grid grid-cols-2 gap-8"><div><p className="text-xs font-700 text-slate-500">{text("Supplier", "仕入先")}</p><p className="mt-1 text-lg font-700">{printPurchase.supplierName}</p></div><div><p className="text-xs font-700 text-slate-500">{text("PIC", "担当者")}</p><p className="mt-1 text-lg">{printPurchase.pic || "-"}</p></div></div><table className="mt-8 w-full border-collapse"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3 text-right">{text("Qty", "数量")}</th><th className="py-3 text-right">{text("Unit price", "単価")}</th><th className="py-3 text-right">{text("Total", "合計")}</th></tr></thead><tbody><tr><td className="py-4">{itemName(printPurchase.itemId)}</td><td className="py-4 text-right">{printPurchase.orderedQty.toLocaleString()}</td><td className="py-4 text-right">{money(printPurchase.unitPrice)}</td><td className="py-4 text-right font-700">{money(printPurchase.orderedQty * printPurchase.unitPrice)}</td></tr></tbody></table><div className="mt-10 border-t border-black pt-4 text-sm"><p>{text("Received quantity:", "入荷数：")} <strong>{printPurchase.receivedQty.toLocaleString()}</strong></p><p>{text("Status:", "状態：")} <strong>{purchaseStatusLabel(printPurchase.status)}</strong></p><p className="mt-3">{text("Notes:", "備考：")} {printPurchase.notes || "-"}</p></div></div></article>}
+      {printValuation && <article className="hidden print:block"><div className="mx-auto max-w-5xl p-10 text-black"><div className="flex items-end justify-between border-b-2 border-black pb-4"><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="text-3xl font-700">{text("Stock valuation report", "在庫評価報告書")}</h1></div><p>{new Date().toISOString().slice(0, 10)}</p></div><table className="mt-8 w-full border-collapse text-sm"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3">{text("Category", "分類")}</th><th className="py-3 text-right">{text("Quantity", "数量")}</th><th className="py-3 text-right">{text("Unit cost", "単価")}</th><th className="py-3 text-right">{text("Stock value", "在庫金額")}</th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-b border-slate-300"><td className="py-3">{item.itemCode} · {item.itemName}</td><td className="py-3">{categoryLabel(item.category)}</td><td className="py-3 text-right">{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</td><td className="py-3 text-right">{money(item.unitCost)}</td><td className="py-3 text-right font-700">{money(item.stockValue)}</td></tr>)}</tbody><tfoot><tr className="border-t-2 border-black"><td colSpan={4} className="py-4 text-right font-700">{text("Total", "合計")}</td><td className="py-4 text-right font-700">{money(summary.stockValue)}</td></tr></tfoot></table><p className="mt-6 text-xs">{text("Basis: current available balance multiplied by the stored unit cost. This report does not apply an unapproved WIP valuation formula.", "基準：現在の在庫数に登録単価を乗算しています。未承認のWIP評価式は適用していません。")}</p></div></article>}
     </AppShell>
   );
 }

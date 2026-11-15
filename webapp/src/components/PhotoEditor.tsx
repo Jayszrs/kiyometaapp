@@ -165,9 +165,9 @@ export default function PhotoEditor({ file, lang, onConfirm, onCancel, onRetake 
       </ol>
       {!preview && <button className="photo-text-action min-h-11 text-sm text-slate-600" disabled={!image || saving} onClick={reset}>{ja ? "リセット" : "Reset"}</button>}
     </div>
-    <h3 className="text-lg font-semibold text-slate-800">{preview ? (ja ? "切り抜きを確認" : "Check your crop") : (ja ? "書類に枠を合わせる" : "Frame your quotation")}</h3>
+    <h3 className="text-lg font-semibold text-slate-800">{preview ? (ja ? "切り抜きを確認" : "Check your crop") : (ja ? "書類に枠を合わせる" : "Frame your order document")}</h3>
     <p id="photo-crop-guidance" className="mt-1 mb-4 text-sm leading-relaxed text-slate-600">{preview
-      ? (ja ? "必要な項目と文字が鮮明に写っていれば、読み取りを開始できます。" : "Check that the details are visible and the text is clear. Ready? Scan your quotation.")
+      ? (ja ? "必要な項目と文字が鮮明に写っていれば、読み取りを開始できます。" : "Check that the details are visible and the text is clear. Ready? Scan the order document.")
       : (ja ? "角を動かして必要な項目を囲み、プレビューで確認してください。" : "Drag the corners around the details you need, then preview your crop.")}</p>
     {error && <p role="alert" className="mb-3 text-sm text-red-700">{ja ? "写真を読み込めません。撮り直してください。" : "Could not prepare this photo. Please retake it."}</p>}
     <div className="photo-stage flex min-h-48 items-center justify-center overflow-hidden rounded-sm bg-slate-900 p-7 sm:p-8">
@@ -212,7 +212,7 @@ export default function PhotoEditor({ file, lang, onConfirm, onCancel, onRetake 
       <button className="photo-primary ml-auto inline-flex min-h-11 items-center justify-center gap-2 rounded-sm bg-[#1a3458] px-4 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
         disabled={!image || saving || error} onClick={preview ? confirm : () => setPreview(true)}>
         {saving ? <Icon name="loader" size={16} className="animate-spin" /> : <Icon name={preview ? "scan" : "eye"} size={17} />}
-        {saving ? (ja ? "処理中…" : "Preparing…") : preview ? (ja ? "見積書を読み取る" : "Scan quotation") : (ja ? "切り抜きを確認" : "Preview crop")}
+        {saving ? (ja ? "処理中…" : "Preparing…") : preview ? (ja ? "注文書を読み取る" : "Scan order document") : (ja ? "切り抜きを確認" : "Preview crop")}
         {!preview && <Icon name="arrow-right" size={16} />}
       </button>
     </div>
