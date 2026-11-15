@@ -47,12 +47,12 @@ Angka stok saat ini tidak digunakan untuk mengarang saldo masa lalu.
 
 ## Penerapan dan pengujian
 
-Project uji Singapore telah menerima dua migrasi terbaru melalui Supabase. File migrasi lokal mencatat perubahan yang sama untuk branch `main`.
+Project uji telah menerima dua migrasi terbaru melalui Supabase. File migrasi lokal mencatat perubahan yang sama untuk branch `main`.
 
 1. `20261111143026_add_wip_valuation_settings_and_confirmed_policy.sql` membuat tabel kebijakan, menyimpan jawaban klien, dan menambahkan perhitungan WIP yang menolak nilai tanpa riwayat biaya yang cukup.
 2. `20261111143525_protect_full_machining_and_link_manufacturing_routes.sql` melindungi nama proses dan mengaitkan rute produk ke ID proses.
 
-Tabel WIP dan dua kebijakan aksesnya sudah terlihat pada project uji Supabase Singapore yang dipakai branch Git `main`. Project Supabase Tokyo `hhiklzunsjccbuvrutlg` untuk branch Git `production` tidak diubah.
+Tabel WIP dan dua kebijakan aksesnya sudah terlihat pada project uji Supabase yang dipakai branch Git `main`. Project Supabase Tokyo `hhiklzunsjccbuvrutlg` untuk branch Git `production` tidak diubah.
 
-Migrasi `20261111152000_idempotent_production_task_submissions.sql` menambahkan ID permintaan dan tanda terima untuk simpan progres. Jika jawaban server hilang setelah simpan berhasil, pengulangan permintaan yang sama mengembalikan hasil semula. Jika tablet lain mengubah tahap lebih dulu, pemeriksaan versi tetap menahan perubahan basi untuk ditinjau.\n\nMigrasi diterapkan pada Supabase uji Singapore untuk branch `main`; RPC dan tabel tanda terima telah diverifikasi. Supabase Tokyo untuk branch `production` tidak disentuh. Typecheck, 93 tes, dan build berhasil.
+Migrasi `20261111152000_idempotent_production_task_submissions.sql` menambahkan ID permintaan dan tanda terima untuk simpan progres. Jika jawaban server hilang setelah simpan berhasil, pengulangan permintaan yang sama mengembalikan hasil semula. Jika tablet lain mengubah tahap lebih dulu, pemeriksaan versi tetap menahan perubahan basi untuk ditinjau.\n\nMigrasi diterapkan pada Supabase uji untuk branch `main`; RPC dan tabel tanda terima telah diverifikasi. Supabase Tokyo untuk branch `production` tidak disentuh. Typecheck, 93 tes, dan build berhasil.
 

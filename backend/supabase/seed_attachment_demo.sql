@@ -1,4 +1,4 @@
--- Attachment-derived demo reset for the Singapore/main project.
+-- Attachment-derived demo reset for the main project.
 -- This removes only dummy operational/master rows. Auth, profiles and audit logs remain.
 begin;
 

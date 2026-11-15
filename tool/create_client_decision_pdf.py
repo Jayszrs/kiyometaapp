@@ -79,7 +79,7 @@ story = [
     P("Mohon isi tanda centang atau kolom kosong pada nomor 1-5. Setelah semua terisi, keputusan ini akan dipakai sebagai konfigurasi aplikasi. Operator lantai produksi tidak perlu memilih aturan biaya atau rute."),
     P("Nama penanggung jawab: ____________________________<br/>Tanggal: ____________________<br/>Catatan tambahan: ________________________________________________________________<br/>________________________________________________________________________________", "Question"),
     P("Status aplikasi saat ini", "H"),
-    P("Penjelasan kondisi aplikasi pada setiap bagian berasal dari pemeriksaan branch main Singapore. Screenshot operasional tidak dimasukkan agar dokumen ini hanya memuat bukti layar yang dapat diverifikasi dan tidak menampilkan data uji atau data akun.", "Small")
+    P("Penjelasan kondisi aplikasi pada setiap bagian berasal dari pemeriksaan branch main. Screenshot operasional tidak dimasukkan agar dokumen ini hanya memuat bukti layar yang dapat diverifikasi dan tidak menampilkan data uji atau data akun.", "Small")
 ]
 
 doc = SimpleDocTemplate(str(OUT / "Kiyometa_Daftar_Keputusan_Klien_dengan_Bukti.pdf"), pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=16*mm, bottomMargin=17*mm)

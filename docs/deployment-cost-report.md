@@ -140,7 +140,7 @@ berhari-hari tanpa manfaat biaya (Postgres terkelola Fly $38/bln, lebih mahal da
 ### Region
 
 Project Supabase dibuat di region **Tokyo** agar berada di lokasi yang sama dengan server
-aplikasi. Latensi aplikasi → database sekitar 1–5 ms. Jika diletakkan di Singapore,
+aplikasi. Latensi aplikasi → database sekitar 1–5 ms. Jika diletakkan di lokasi yang dekat pengguna,
 tambahan 60–70 ms terjadi pada setiap query.
 
 ---
