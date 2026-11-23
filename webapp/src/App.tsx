@@ -22,7 +22,7 @@ import { ResizeHandle, useResizablePanel } from "./components/ResizablePanel";
 import { supabase } from "./lib/supabaseClient";
 import { useLoadingScope } from "./lib/loading";
 import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
-import { NETWORK_STATUS_EVENT, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { NETWORK_STATUS_EVENT, friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
   deleteBomItem,
@@ -682,6 +682,7 @@ const SCAN_FIELD_LABEL: Record<string, keyof typeof LABELS> = {
 
 function saveErrorMessage(error: unknown, lang: Lang): string {
   if (error instanceof QueuedOrderError && lang === "ja") return "端末に送信を保存しました。再接続またはアプリ再起動後に同期します。";
+  if (isConnectivityError(error)) return friendlyNetworkMessage(error, lang);
   return error instanceof Error ? error.message : (error as {message?: string})?.message ?? String(error);
 }
 
@@ -3152,7 +3153,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   useEffect(() => {
-    void reloadMaterials().catch(error => setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."));
+    void reloadMaterials().catch(error => { if (isConnectivityError(error)) reportConnectivityError(error); else setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."); });
   }, []); // Product/inventory data is refreshed again after every BOM write.
 
   useEffect(() => {
@@ -3160,7 +3161,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     void fetchManufacturingOperations(controller.signal).then(setOperationCatalog).catch(error => {
       if (!controller.signal.aborted) {
         if (isConnectivityError(error)) { reportConnectivityError(error); return; }
-        setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
+        if (isConnectivityError(error)) reportConnectivityError(error);
+        else setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
       }
     });
     return () => controller.abort();

@@ -5,6 +5,7 @@ import { useAuth } from "./lib/auth";
 import { useDialog } from "./components/AppDialog";
 import { supabase } from "./lib/supabaseClient";
 import { useReadRefresh } from "./lib/useReadRefresh";
+import { friendlyNetworkMessage, isConnectivityError } from "./lib/networkStatus";
 import { useDurableState } from "./lib/useDurableState";
 import HelpDialog from "./components/HelpDialog";
 import WorkflowHint from "./components/WorkflowHint";
@@ -90,7 +91,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
   const load = useReadRefresh(
     signal => fetchManufacturingProgress(signal),
     data => { setOperations(data.operations); setTasks(data.tasks); setRoutes(data.routes); setError(""); setLoaded(true); },
-    failure => setError(failure instanceof Error ? failure.message : String(failure)),
+    failure => setError(isConnectivityError(failure) ? "" : friendlyNetworkMessage(failure, lang)),
     setLoading,
   );
 
@@ -268,7 +269,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
         if (failure.latest) setTasks(previous => [...previous.filter(task => !(task.orderId === orderId && task.operationId === operationId)), failure.latest!]);
         setTaskDrafts(previous => ({ ...previous, [key]: { ...submittedDraft, conflict: true, baseVersion: failure.latest?.version ?? null } }));
       }
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(friendlyNetworkMessage(failure, lang));
     } finally {
       pendingWrites.current.delete(key);
       setSaving(previous => { const next = new Set(previous); next.delete(key); return next; });
@@ -310,7 +311,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
       setNewName(""); setNewNameJa(""); setNewMinutes(""); setNewCharge("");
       load();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(friendlyNetworkMessage(failure, lang));
     }
   };
 
@@ -323,7 +324,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
       await updateManufacturingOperationCharge(operation.id, operation.version, charge);
       setOperations(previous => previous.map(row => row.id === operation.id ? { ...row, baseTimeChargeJpy: charge, version: row.version + 1 } : row));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(friendlyNetworkMessage(failure, lang));
     }
   };
 
@@ -341,7 +342,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
       await updateManufacturingOperationDefaultMinutes(operation.id, operation.version, minutes);
       setOperations(previous => previous.map(row => row.id === operation.id ? { ...row, defaultMinutes: minutes, version: row.version + 1 } : row));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(friendlyNetworkMessage(failure, lang));
       load();
     }
   };
@@ -359,7 +360,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
         ? { ...row, operationName: trimmedName, operationNameJa: trimmedNameJa, version: row.version + 1 }
         : row));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(friendlyNetworkMessage(failure, lang));
       load();
     }
   };
