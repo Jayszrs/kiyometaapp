@@ -8,6 +8,7 @@ const PATHS: Record<string, string> = {
   "chevron-left": "M15 18l-6-6 6-6",
   "chevron-right": "M9 18l6-6-6-6",
   save: "M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2zM17 21v-8H7v8M7 3v5h8",
+  copy: "M8 8h11a2 2 0 012 2v9a2 2 0 01-2 2H10a2 2 0 01-2-2V8zM5 16H4a2 2 0 01-2-2V5a2 2 0 012-2h9a2 2 0 012 2v1",
   trash: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
   plus: "M12 5v14M5 12h14",
   printer: "M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z",

@@ -209,6 +209,17 @@ function displayUnit(unit: string, lang: Lang): string {
   return ({ pcs: "個", pc: "個", piece: "個", pieces: "個", set: "セット", sets: "セット" } as Record<string, string>)[normalized] ?? unit;
 }
 
+// Search text can contain Kanji, Hiragana, Katakana, full-width characters,
+// Latin text, or a mixture. NFKC makes width variants comparable. Converting
+// Katakana to Hiragana also lets Japanese users find the same text when the
+// keyboard or master data uses a different kana form.
+function normalizeSuggestionText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("ja-JP")
+    .replace(/[\u30a1-\u30f6]/g, char => String.fromCharCode(char.charCodeAt(0) - 0x60));
+}
+
 // Delete is administrator-only (see useCanDelete). The buttons stay visible but
 // disabled so the reason is discoverable instead of the control vanishing on a
 // page an operator still has to use.
@@ -1456,6 +1467,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     : blankForm()), isFilling);
   const [isNew, setIsNew] = useDurableState("entry-new", true);
   const [errors, setErrors] = useState<FormErrors>({});
+  const [suggestionField, setSuggestionField] = useState<"client" | "product" | null>(null);
   const [searchText, setSearchText] = useState("");
   const [sortBy, setSortBy] = useState<"delivery" | "order">("delivery");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1518,6 +1530,45 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     const unitPrice = p && p.unitPrice !== "" ? Number(p.unitPrice) : 0;
     setForm(prev => ({ ...prev, productName: name, requiredManhours: total, orderAmount: prev.quantity * unitPrice }));
     setErrors(prev => ({ ...prev, productName: "", requiredManhours: "", orderAmount: "" }));
+  };
+
+  const reRegisterOrder = () => {
+    const source = form;
+    const next = blankForm();
+    setForm({
+      ...next,
+      client: source.client,
+      productName: source.productName,
+      orderDate: today,
+      deliveryDate: today,
+      quantity: 1,
+      orderAmount: products.find(product => product.clientName === source.client && product.productName === source.productName)?.unitPrice || 0,
+      requiredManhours: products.find(product => product.clientName === source.client && product.productName === source.productName)?.tasks.reduce((sum, task) => sum + (Number(task.time) || 0), 0) || 0,
+    });
+    setIsNew(true);
+    setSelectedId("");
+    setErrors({});
+  };
+
+  const clientSuggestions = useMemo(() => {
+    const needle = normalizeSuggestionText(form.client.trim());
+    if (!needle) return [];
+    return clients.filter(client => normalizeSuggestionText(client.name).includes(needle)).slice(0, 6);
+  }, [clients, form.client]);
+  const productSuggestions = useMemo(() => {
+    const needle = normalizeSuggestionText(form.productName.trim());
+    if (!needle) return [];
+    return products.filter(product => (!form.client || product.clientName === form.client) && normalizeSuggestionText(product.productName).includes(needle)).slice(0, 6);
+  }, [form.client, form.productName, products]);
+  const matchingOrderHistory = useMemo(
+    () => orders.filter(order => order.client === form.client && order.productName === form.productName).slice(0, 20),
+    [form.client, form.productName, orders],
+  );
+
+  const suggestionParts = (value: string, needle: string) => {
+    const start = value.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase());
+    if (start < 0 || !needle) return <>{value}</>;
+    return <>{value.slice(0, start)}<strong className="font-800 text-[#1a3458]">{value.slice(start, start + needle.length)}</strong>{value.slice(start + needle.length)}</>;
   };
 
   const handleNew = () => { setForm(blankForm()); setIsNew(true); setSelectedId(""); setErrors({}); };
@@ -1753,17 +1804,17 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <input type="date" value={form.deliveryDate}
                   onClick={event => event.currentTarget.showPicker?.()}
                   onChange={e => { setForm(prev => ({ ...prev, deliveryDate: e.target.value })); setErrors(prev => ({ ...prev, deliveryDate: e.target.value && form.orderDate && e.target.value < form.orderDate ? "Delivery date must be on or after order date." : "" })); }}
-                  className={inputCls(!!errors.deliveryDate)} />
+                  list="delivery-date-history" className={inputCls(!!errors.deliveryDate)} />
+                <datalist id="delivery-date-history">{matchingOrderHistory.map(order => <option key={order.id} value={order.deliveryDate} />)}</datalist>
                 {errors.deliveryDate && <p className="text-xs text-red-600 mt-0.5">{errors.deliveryDate}</p>}
               </div>
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("client")}</label>
                 <div className="relative">
-                  <select value={form.client} onChange={e => sf("client")(e.target.value)}
-                    className={inputCls(!!errors.client) + " pr-9 appearance-none"}>
-                    {["", ...clients.map(c => c.name)].map(o => <option key={o} value={o}>{o || L("selectPlaceholder")}</option>)}
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500">▾</span>
+                  <input value={form.client} onFocus={() => setSuggestionField("client")} onChange={e => { sf("client")(e.target.value); setSuggestionField("client"); }} placeholder={L("selectPlaceholder")} className={inputCls(!!errors.client) + " pr-3"} autoComplete="off" />
+                  {suggestionField === "client" && clientSuggestions.length > 0 && <div className="suggestion-popover absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-sm border border-slate-200 bg-white shadow-lg">
+                    {clientSuggestions.map(client => <button type="button" key={client.id} onMouseDown={event => event.preventDefault()} onClick={() => { sf("client")(client.name); setSuggestionField(null); }} className="suggestion-item block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50">{suggestionParts(client.name, form.client)}</button>)}
+                  </div>}
                 </div>
                 {errors.client && <p className="text-xs text-red-600 mt-0.5">{errors.client}</p>}
               </div>
@@ -1771,7 +1822,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("orderNumber")}</label>
                 <div className="relative">
                   <input value={form.orderNumber} onChange={e => sf("orderNumber")(e.target.value)} maxLength={50}
-                    className={inputCls(!!errors.orderNumber) + " pr-9"} />
+                    list="order-number-history" className={inputCls(!!errors.orderNumber) + " pr-9"} />
+                  <datalist id="order-number-history">{matchingOrderHistory.map(order => <option key={order.id} value={order.orderNumber} />)}</datalist>
                   <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500">▾</span>
                 </div>
                 {errors.orderNumber && <p className="text-xs text-red-600 mt-0.5">{errors.orderNumber}</p>}
@@ -1783,11 +1835,10 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
               <div>
                 <label className="block text-sm font-700 text-slate-600 mb-1">{L("productName")}</label>
                 <div className="relative">
-                  <select value={form.productName} onChange={e => setProductByName(e.target.value)}
-                    className={inputCls(!!errors.productName) + " pr-9 appearance-none"}>
-                    {["", ...products.filter(p => !form.client || p.clientName === form.client).map(p => p.productName)].map(o => <option key={o} value={o}>{o || L("selectPlaceholder")}</option>)}
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500">▾</span>
+                  <input value={form.productName} onFocus={() => setSuggestionField("product")} onChange={e => { setForm(prev => ({ ...prev, productName: e.target.value })); setErrors(prev => ({ ...prev, productName: "" })); setSuggestionField("product"); }} placeholder={L("selectPlaceholder")} className={inputCls(!!errors.productName) + " pr-3"} autoComplete="off" />
+                  {suggestionField === "product" && productSuggestions.length > 0 && <div className="suggestion-popover absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-sm border border-slate-200 bg-white shadow-lg">
+                    {productSuggestions.map(product => <button type="button" key={product.id} onMouseDown={event => event.preventDefault()} onClick={() => { setProductByName(product.productName); setSuggestionField(null); }} className="suggestion-item block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"><span className="block">{suggestionParts(product.productName, form.productName)}</span><span className="font-mono text-xs text-slate-400">{product.productNumber}</span></button>)}
+                  </div>}
                 </div>
                 {errors.productName && <p className="text-xs text-red-600 mt-0.5">{errors.productName}</p>}
               </div>
@@ -1818,7 +1869,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                     setForm(prev => ({ ...prev, quantity: qty, orderAmount: qty * unitPrice, requiredManhours: qty * perUnitMinutes }));
                     setErrors(prev => ({ ...prev, quantity: "", orderAmount: "", requiredManhours: "" }));
                   }}
-                  className={inputCls(!!errors.quantity)} />
+                  list="quantity-history" className={inputCls(!!errors.quantity)} />
+                <datalist id="quantity-history">{matchingOrderHistory.map(order => <option key={order.id} value={order.quantity} />)}</datalist>
                 {errors.quantity && <p className="text-xs text-red-600 mt-0.5">{errors.quantity}</p>}
               </div>
               <div>
@@ -1828,8 +1880,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 </label>
                 <div className="flex gap-1.5">
                   <input type="number" value={form.orderAmount === 0 ? "" : form.orderAmount}
-                    onChange={e => { const c = e.target.value.replace(/^0+(?=\d)/, ""); setForm(prev => ({ ...prev, orderAmount: c === "" ? 0 : parseInt(c, 10) })); setErrors(prev => ({ ...prev, orderAmount: "" })); }}
+                    list="amount-history" onChange={e => { const c = e.target.value.replace(/^0+(?=\d)/, ""); setForm(prev => ({ ...prev, orderAmount: c === "" ? 0 : parseInt(c, 10) })); setErrors(prev => ({ ...prev, orderAmount: "" })); }}
                     className={`flex-1 min-w-0 px-3 py-2 text-base border rounded-sm bg-white focus:outline-none focus:ring-2 transition-colors ${errors.orderAmount ? "border-red-400" : "border-slate-300 focus:border-[#1a3458] focus:ring-[#1a3458]/20"}`} />
+                  <datalist id="amount-history">{matchingOrderHistory.map(order => <option key={order.id} value={order.orderAmount} />)}</datalist>
                   <span className="flex items-center text-base font-700 text-slate-600 shrink-0">{L("yenUnit")}</span>
                 </div>
                 {errors.orderAmount && <p className="text-xs text-red-600 mt-0.5">{errors.orderAmount}</p>}
@@ -1977,6 +2030,9 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
         <div className="hidden flex-1 sm:block" />
         <Btn variant="ghost" size="lg" onClick={handleNew}>
           <Icon name="plus" size={16} /><span>{L("newButton")}</span>
+        </Btn>
+        <Btn variant="outline" size="lg" disabled={isNew || !form.client || !form.productName} onClick={reRegisterOrder}>
+          <Icon name="copy" size={16} /><span>{lang === "ja" ? "再登録" : "Re-register"}</span>
         </Btn>
         <Btn variant="action" size="lg" onClick={handleSave}>
           <Icon name="save" size={16} /><span>{L("saveButton")}</span>
