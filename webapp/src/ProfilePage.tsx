@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
 import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page } from "./App";
+import { isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 
 interface Props {
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
@@ -142,6 +143,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
       }
       setNotice(lang === "ja" ? "プロフィールを保存しました。元に戻す場合は「操作を元に戻す」を使用してください。" : "Profile saved. You can undo this change from the Undo button.");
     } catch (err) {
+      if (isConnectivityError(err)) { reportConnectivityError(err); return; }
       if (uploadedPath) await supabase.storage.from("profile-images").remove([uploadedPath]);
       setError(lang === "ja" ? "プロフィールを保存できませんでした。入力内容と通信状態を確認してください。" : messageOf(err));
     } finally {

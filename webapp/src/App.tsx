@@ -22,6 +22,7 @@ import { ResizeHandle, useResizablePanel } from "./components/ResizablePanel";
 import { supabase } from "./lib/supabaseClient";
 import { useLoadingScope } from "./lib/loading";
 import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
+import { NETWORK_STATUS_EVENT, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
   deleteBomItem,
@@ -482,6 +483,38 @@ function ScanBanner({ message }: { message: string }) {
   );
 }
 
+function NetworkStatusBanner({ lang }: { lang: Lang }) {
+  const [offline, setOffline] = useState(() => !navigator.onLine);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+    const markOffline = () => { setOffline(true); setChecking(false); };
+    const markOnline = () => { setOffline(false); setChecking(false); };
+    const onNetworkStatus = (event: Event) => {
+      if ((event as CustomEvent<{ online?: boolean }>).detail?.online === false) markOffline();
+    };
+    window.addEventListener("offline", markOffline);
+    window.addEventListener("online", markOnline);
+    window.addEventListener(NETWORK_STATUS_EVENT, onNetworkStatus);
+    return () => {
+      window.removeEventListener("offline", markOffline);
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener(NETWORK_STATUS_EVENT, onNetworkStatus);
+    };
+  }, []);
+  if (!offline) return null;
+  const text = lang === "ja"
+    ? "ネットワークに接続できません。保存済みの画面はそのまま利用できます。"
+    : "Connection problem. Saved screens remain available; data actions will retry when the network returns.";
+  return (
+    <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+      <div className="flex min-w-0 items-center gap-2"><Icon name="wifi-off" size={16} className="shrink-0" /><span>{text}</span></div>
+      <button type="button" disabled={checking} onClick={() => { setChecking(true); window.dispatchEvent(new Event("kiyometa-retry-reads")); window.setTimeout(() => setChecking(false), 1200); }} className="shrink-0 rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-700 hover:bg-amber-100 disabled:opacity-50">
+        {checking ? (lang === "ja" ? "確認中…" : "Checking…") : (lang === "ja" ? "再確認" : "Try again")}
+      </button>
+    </div>
+  );
+}
+
 // ---- Shell ----
 
 // Shared so every page's header can send the operator to the screen they came
@@ -731,6 +764,10 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
       setResolvedAlerts(new Set());
     } catch (err) {
       if (requestRef.current === controller && !controller.signal.aborted) {
+        if (isConnectivityError(err)) {
+          reportConnectivityError(err);
+          return;
+        }
         const kind = err instanceof OcrError ? err.kind : "service";
         setError(t(kind === "timeout" ? "scanErrTimeout" : kind === "unreadable" ? "scanErrNoFields"
           : kind === "auth" ? "scanErrAuth" : kind === "busy" ? "scanErrBusy"
@@ -3121,7 +3158,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   useEffect(() => {
     const controller = new AbortController();
     void fetchManufacturingOperations(controller.signal).then(setOperationCatalog).catch(error => {
-      if (!controller.signal.aborted) setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
+      if (!controller.signal.aborted) {
+        if (isConnectivityError(error)) { reportConnectivityError(error); return; }
+        setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
+      }
     });
     return () => controller.abort();
   }, []);
@@ -4224,6 +4264,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         } while (refreshQueued && !cancelled);
       } catch (err) {
         if (!cancelled) {
+          reportConnectivityError(err);
           setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
           if (!initialLoadComplete) setDataState("error");
         }
@@ -4258,11 +4299,13 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       if (document.visibilityState === "visible") void refreshData();
     };
     const refreshOnAppResume = () => void refreshData();
+    const refreshOnRetry = () => void refreshData();
 
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnVisibility);
     window.addEventListener("kiyometa-resume", refreshOnAppResume);
     window.addEventListener("online", refreshOnAppResume);
+    window.addEventListener("kiyometa-retry-reads", refreshOnRetry);
 
     return () => {
       cancelled = true;
@@ -4274,6 +4317,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       document.removeEventListener("visibilitychange", refreshOnVisibility);
       window.removeEventListener("kiyometa-resume", refreshOnAppResume);
       window.removeEventListener("online", refreshOnAppResume);
+      window.removeEventListener("kiyometa-retry-reads", refreshOnRetry);
     };
   }, []);
 
@@ -4357,6 +4401,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   return (
     <div className="flex h-full flex-col overflow-hidden" style={{ fontFamily: "'Work Sans', system-ui, sans-serif", fontSize: "16px" }}>
       <RecoveryStatus lang={lang} onOpenScan={openScan} scanOpen={scanOpen} />
+      <NetworkStatusBanner lang={lang} />
       {/* One stable boundary around every page. Because it is always mounted,
           a transition into a still-downloading module keeps the previous page
           visible instead of revealing the fallback; the fallback only appears

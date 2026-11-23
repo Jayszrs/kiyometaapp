@@ -39,6 +39,7 @@ const PATHS: Record<string, string> = {
   undo: "M1 4v6h6M3.51 15a9 9 0 102.13-9.36L1 10",
   database: "M20 6c0 1.66-3.58 3-8 3S4 7.66 4 6s3.58-3 8-3 8 1.34 8 3zM4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6",
   shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4",
+  "wifi-off": "M1 1l22 22M5.5 5.5A16 16 0 0112 4c4.08 0 7.81 1.53 10.64 4.04M8.53 8.53A10 10 0 0112 8c2.56 0 4.9.95 6.69 2.52M12 20h.01",
 };
 
 export function Icon({ name, size = 18, className = "" }: { name: string; size?: number; className?: string }) {

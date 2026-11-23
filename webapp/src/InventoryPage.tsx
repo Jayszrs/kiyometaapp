@@ -40,6 +40,7 @@ import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 import WorkflowHint from "./components/WorkflowHint";
 import { buildBomTree, compatibleSubassemblyProducts, summarizeBom } from "./lib/bom";
+import { isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 
 interface Props {
   products: Product[];
@@ -206,6 +207,10 @@ const blankPurchase = (): Purchase => ({
 });
 
 function errorMessage(error: unknown, lang: Lang = "en") {
+  if (isConnectivityError(error)) {
+    reportConnectivityError(error);
+    return "";
+  }
   const details = error as { code?: string; message?: string } | null;
   const message = error instanceof Error ? error.message : details?.message ?? "";
   const code = details?.code ?? "";

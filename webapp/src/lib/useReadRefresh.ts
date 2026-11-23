@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { createReadRefresh } from "./readRefresh";
+import { reportConnectivityError } from "./networkStatus";
 
 export function useReadRefresh<T>(
   read: (signal: AbortSignal) => Promise<T>,
@@ -18,6 +19,7 @@ export function useReadRefresh<T>(
         const data = await callbacks.current.read(signal);
         if (!signal.aborted) callbacks.current.apply(data);
       } catch (error) {
+        reportConnectivityError(error);
         if (!signal.aborted) callbacks.current.fail(error);
       } finally {
         if (!signal.aborted) callbacks.current.busy(false);
@@ -25,8 +27,13 @@ export function useReadRefresh<T>(
     });
     queue.current = current;
     void current.refresh();
+    const retryWhenOnline = () => { void current.refresh(); };
+    window.addEventListener("online", retryWhenOnline);
+    window.addEventListener("kiyometa-retry-reads", retryWhenOnline);
     return () => {
       current.dispose();
+      window.removeEventListener("online", retryWhenOnline);
+      window.removeEventListener("kiyometa-retry-reads", retryWhenOnline);
       if (queue.current === current) queue.current = null;
     };
   }, []);

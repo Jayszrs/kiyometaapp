@@ -6,6 +6,7 @@ import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backen
 import { passwordBreachCount } from "./lib/pwnedPassword";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import { useDialog } from "./components/AppDialog";
+import { isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 import {
   createManagedUser,
   fetchAuditLogs,
@@ -88,6 +89,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
       setUsers(nextUsers);
       setLogs(nextLogs);
     }, err => {
+      if (isConnectivityError(err)) { reportConnectivityError(err); return; }
       setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : messageOf(err));
     }, active => { setBusy(active); if (active) setError(""); });
   const load = useCallback((forceProbe = false) => {
@@ -112,6 +114,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
       setNotice(success);
       await load();
     } catch (err) {
+      if (isConnectivityError(err)) { reportConnectivityError(err); return; }
       setError(lang === "ja" ? "処理に失敗しました。入力内容と通信状態を確認してください。" : messageOf(err));
     } finally {
       setBusy(false);
