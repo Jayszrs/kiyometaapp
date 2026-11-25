@@ -4,7 +4,7 @@ Reference copy of what runs on the server. The live files are outside this repo:
 
 | Repo file | Live location |
 |---|---|
-| docker-compose.yml, nginx-kiyometa.conf, auto-deploy.sh, ocr-fix/ | /srv/kiyometa/deploy/ |
+| docker-compose.yml, nginx-kiyometa.conf, auto-deploy.sh | /srv/kiyometa/deploy/ |
 | systemd/kiyometa-autodeploy.{service,timer} | /etc/systemd/system/ |
 
 Secrets (secrets.env etc.) are not committed; compose reads them from the server.

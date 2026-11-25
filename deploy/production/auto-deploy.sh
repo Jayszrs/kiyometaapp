@@ -44,11 +44,7 @@ export APP_RELEASE="$REMOTE"
 git reset -q --hard origin/main >> "$LOG" 2>&1
 
 cd "$DEPLOY_DIR"
-# The ocr service builds from ./ocr-fix, which only layers system libs on top of
-# kiyometa-ocr:latest — so that base image must be rebuilt from the repo first,
-# otherwise ocr-service changes never reach the running container.
-if docker build -q -t kiyometa-ocr:latest "$APP_DIR/ocr-service" >> "$LOG" 2>&1 \
-   && docker compose up -d --build --no-deps orders-webapp ocr >> "$LOG" 2>&1; then
+if docker compose up -d --build --no-deps orders-webapp ocr >> "$LOG" 2>&1; then
   echo "$REMOTE" > "$STATE"
   docker image prune -f >> "$LOG" 2>&1 || true
   log "deploy done"

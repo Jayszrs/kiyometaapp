@@ -5,8 +5,8 @@ name: kiyometa
 services:
   ocr:
     build:
-      context: ./ocr-fix
-    image: kiyometa-ocr-fixed
+      context: ../app/ocr-service
+    image: kiyometa-ocr:latest
     container_name: kiyometa-ocr
     restart: unless-stopped
     environment:
