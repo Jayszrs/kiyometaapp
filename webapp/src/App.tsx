@@ -20,6 +20,7 @@ import { PageLoading } from "./components/LoadingDialog";
 import ModuleErrorBoundary from "./components/ModuleErrorBoundary";
 import { ResizeHandle, useResizablePanel } from "./components/ResizablePanel";
 import { supabase } from "./lib/supabaseClient";
+import { subscribeRealtime } from "./lib/diagnostics";
 import { useLoadingScope } from "./lib/loading";
 import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
 import { NETWORK_STATUS_EVENT, friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
@@ -4307,7 +4308,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     for (const table of ["clients", "products", "orders"] as const) {
       realtime.on("postgres_changes", { event: "*", schema: "public", table }, scheduleRealtimeRefresh);
     }
-    void realtime.subscribe();
+    subscribeRealtime(realtime, "core-data-refresh");
     const refreshOnFocus = () => void refreshData();
     const refreshOnVisibility = () => {
       if (document.visibilityState === "visible") void refreshData();

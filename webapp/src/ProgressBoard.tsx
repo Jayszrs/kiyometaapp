@@ -4,6 +4,7 @@ import { AppShell, PageContainer, StatusBadge, type DeliverySlipMode, type Lang,
 import { useAuth } from "./lib/auth";
 import { useDialog } from "./components/AppDialog";
 import { supabase } from "./lib/supabaseClient";
+import { subscribeRealtime } from "./lib/diagnostics";
 import { useReadRefresh } from "./lib/useReadRefresh";
 import { friendlyNetworkMessage, isConnectivityError } from "./lib/networkStatus";
 import { useDurableState } from "./lib/useDurableState";
@@ -104,7 +105,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
     const channel = supabase.channel("production-progress-board")
       .on("postgres_changes", { event: "*", schema: "public", table: "production_tasks" }, schedule)
       .on("postgres_changes", { event: "*", schema: "public", table: "manufacturing_operations" }, schedule);
-    void channel.subscribe();
+    subscribeRealtime(channel, "production-progress-board");
     return () => {
       window.clearTimeout(timer);
       void supabase.removeChannel(channel);

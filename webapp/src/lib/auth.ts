@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
+import { refreshProcessContext, startProcess, traceQuery } from "./diagnostics";
 import { readRecovery, writeRecovery } from "./recoveryStorage";
 import {
   getOperationsBackendStatus,
@@ -198,24 +199,26 @@ export function useSession() {
 }
 
 export async function signIn(identity: string, password: string) {
+  const processId = startProcess("auth.login");
   const normalized = identity.trim().toLowerCase();
   let email = normalized;
 
   if (!normalized.includes("@")) {
-    const { data } = await supabase.rpc("resolve_login_email", { p_username: normalized });
+    const { data } = await traceQuery(supabase.rpc("resolve_login_email", { p_username: normalized }), processId, "auth.resolve_login");
     email = typeof data === "string" && data ? data : `${normalized}@kiyometa.app`;
   }
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
+  await refreshProcessContext(processId);
 
   if (getOperationsBackendStatus() === "ready") {
     try {
-      await supabase.rpc("record_audit_event", {
+      await traceQuery(supabase.rpc("record_audit_event", {
         p_action: "login",
         p_entity: "session",
         p_metadata: { source: "webapp" },
-      });
+      }), processId, "auth.login.audit");
     } catch {
       // Login must not fail if audit logging is temporarily unavailable.
     }
@@ -223,13 +226,14 @@ export async function signIn(identity: string, password: string) {
 }
 
 export async function signOut() {
+  const processId = startProcess("auth.logout");
   if (getOperationsBackendStatus() === "ready") {
     try {
-      await supabase.rpc("record_audit_event", {
+      await traceQuery(supabase.rpc("record_audit_event", {
         p_action: "logout",
         p_entity: "session",
         p_metadata: { source: "webapp" },
-      });
+      }), processId, "auth.logout.audit");
     } catch {
       // Sign-out must not be blocked by audit availability.
     }

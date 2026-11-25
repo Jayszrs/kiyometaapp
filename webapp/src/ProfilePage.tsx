@@ -4,6 +4,7 @@ import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
 import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { processHeaders, startProcess, traceQuery } from "./lib/diagnostics";
 
 interface Props {
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
@@ -88,6 +89,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
     setError("");
     setNotice("");
     let uploadedPath = "";
+    const processId = startProcess("profile.save");
     try {
       let nextAvatarPath = removeAvatar ? "" : form.avatarPath;
       if (avatarFile) {
@@ -97,12 +99,13 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
           contentType: avatarFile.type,
           cacheControl: "3600",
           upsert: false,
+          headers: processHeaders(processId, "profile.avatar.upload"),
         });
         if (upload.error) throw upload.error;
         nextAvatarPath = uploadedPath;
       }
 
-      const { data, error: saveError } = await supabase.rpc("update_own_profile", {
+      const { data, error: saveError } = await traceQuery(supabase.rpc("update_own_profile", {
         p_display_name: form.displayName.trim(),
         p_avatar_path: nextAvatarPath,
         p_employee_number: form.employeeNumber.trim(),
@@ -112,7 +115,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
         p_birth_date: form.birthDate || null,
         p_address: form.address.trim(),
         p_bio: form.bio.trim(),
-      });
+      }), processId, "profile.save");
       if (saveError) throw saveError;
       const row = data as Record<string, unknown>;
       const updated: UserProfile = {

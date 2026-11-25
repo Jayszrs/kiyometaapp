@@ -36,6 +36,7 @@ import { genUUID } from "./lib/uuid";
 import { isAndroidWebView, printBillingDocument, useBillingAction } from "./lib/billingActions";
 import { hasNativeBridge } from "./lib/nativeBridge";
 import { supabase } from "./lib/supabaseClient";
+import { startProcess, subscribeRealtime, traceQuery } from "./lib/diagnostics";
 import { useDialog } from "./components/AppDialog";
 import { Icon } from "./components/Icon";
 import WorkflowHint from "./components/WorkflowHint";
@@ -365,7 +366,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     // The editor's username sits on the row already; user_label only adds the
     // current display name + role, which are hidden from other users by RLS.
     void (async () => {
-      const { data } = await supabase.rpc("user_label", { p_user_id: purchaseForm.updatedBy });
+      const processId = startProcess("inventory.purchase.editor_label");
+      const { data } = await traceQuery(supabase.rpc("user_label", { p_user_id: purchaseForm.updatedBy }), processId, "inventory.purchase.editor_label");
       if (!cancelled) setPurchaseEditorLabel((data as string | null) ?? null);
     })().catch(() => {});
     return () => { cancelled = true; };
@@ -450,7 +452,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     for (const table of ["inventory_items", "purchases", "stock_movements", "product_materials"] as const) {
       channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleLoad);
     }
-    void channel.subscribe();
+    subscribeRealtime(channel, "inventory-data-refresh");
     return () => {
       window.clearTimeout(timer);
       void supabase.removeChannel(channel);

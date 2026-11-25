@@ -204,7 +204,7 @@ export async function calculateWipValuation(asOf?: string): Promise<{ configured
 async function invokeUsers(body: Record<string, unknown>, signal?: AbortSignal) {
   const operation = `user_management.${String(body.action ?? "request")}`;
   const processId = startProcess(operation);
-  const headers = { "x-process-id": processId, "x-parent-process-id": processId, "x-process-operation": operation };
+  const headers = { "x-process-id": processId, "x-process-operation": operation };
   let result = await supabase.functions.invoke("manage-users", { body, signal, headers });
   let { data, error } = result;
   let candidate = error as (Error & { context?: Response }) | null;
@@ -566,7 +566,7 @@ export async function addStockMovement(
   // PostgREST insert is revoked on stock_movements; the only client path is
   // record_stock_movement, which rejects a reference_type that would imply a
   // purchase or an order exists behind the movement.
-  const processId = startProcess("inventory.movement.record", input.idempotencyKey);
+  const processId = startProcess("inventory.movement.record", { idempotencyKey: input.idempotencyKey });
   const { data, error } = await traceQuery(supabase.rpc("record_stock_movement", {
     p_movement_date: input.movementDate,
     p_movement_type: input.movementType,
@@ -775,7 +775,7 @@ export async function saveProductionTask(input: {
   processedQuantity: number | null;
   completedQuantity: number | null;
 }): Promise<ProductionTaskProgress> {
-  const processId = startProcess("production.task.save", input.requestId);
+  const processId = startProcess("production.task.save", { idempotencyKey: input.requestId });
   const { data, error } = await traceQuery(supabase.rpc("save_production_task_once", {
     p_request_id: input.requestId,
     p_existing_id: input.existingId ?? null,

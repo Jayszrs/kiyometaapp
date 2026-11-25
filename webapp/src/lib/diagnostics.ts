@@ -6,25 +6,31 @@ const startedProcesses = new Set<string>();
 let flushing = false;
 const deviceKey = "kiyometa-diagnostic-device";
 const currentProcessByOperation = new Map<string, string>();
+const parentProcessById = new Map<string, string>();
+const idempotencyKeyByProcess = new Map<string, string>();
 export function newProcessId(): string { return crypto.randomUUID(); }
 export function getCurrentProcessId(operation: string): string | null { return currentProcessByOperation.get(operation) ?? null; }
-export function startProcess(operation: string, parentProcessId?: string): string {
+export function startProcess(operation: string, options: { parentProcessId?: string; idempotencyKey?: string } = {}): string {
   const processId = newProcessId();
   currentProcessByOperation.set(operation, processId);
-  if (parentProcessId) currentProcessByOperation.set(`parent:${operation}`, parentProcessId);
-  if (parentProcessId) currentProcessByOperation.set(`request-parent:${processId}`, parentProcessId);
+  if (options.parentProcessId) parentProcessById.set(processId, options.parentProcessId);
+  if (options.idempotencyKey) idempotencyKeyByProcess.set(processId, options.idempotencyKey);
   startedProcesses.add(processId);
+  record("web", operation, "process.start", "00", { process_id: processId,
+    parent_process_id: options.parentProcessId, idempotency_key: options.idempotencyKey,
+    request_id: crypto.randomUUID(), device_id: deviceId(), release_id: import.meta.env.VITE_APP_RELEASE ?? "dev" });
   void (async () => {
-    const { actorId, sessionId } = await getAuthContext();
-    record("web", operation, "process.start", "00", { process_id: processId,
-      parent_process_id: parentProcessId ?? undefined, request_id: crypto.randomUUID(), actor_id: actorId,
-      session_id: sessionId, device_id: deviceId(), release_id: import.meta.env.VITE_APP_RELEASE ?? "dev" });
+    await refreshProcessContext(processId);
     await flushDiagnostics();
   })();
   return processId;
 }
+export async function refreshProcessContext(processId: string): Promise<void> {
+  const { actorId, sessionId } = await getAuthContext();
+  updateQueuedProcessContext(processId, { actor_id: actorId, session_id: sessionId });
+}
 export function startTrace(operation: string, parentProcessId?: string): string {
-  const processId = startProcess(operation, parentProcessId);
+  const processId = startProcess(operation, { parentProcessId });
   return processId;
 }
 async function getAuthContext(): Promise<{ actorId?: string; sessionId?: string }> {
@@ -39,14 +45,49 @@ async function getAuthContext(): Promise<{ actorId?: string; sessionId?: string 
 export function traceQuery<T>(query: T, processId: string, operation: string): T {
   const traced = query as T & { setHeader?: (name: string, value: string) => unknown };
   if (typeof traced.setHeader === "function") {
-    traced.setHeader("x-process-id", processId);
-    traced.setHeader("x-parent-process-id", currentProcessByOperation.get(`request-parent:${processId}`) ?? processId);
-    traced.setHeader("x-process-operation", operation);
-    traced.setHeader("x-request-id", crypto.randomUUID());
-    traced.setHeader("x-device-id", deviceId());
-    traced.setHeader("x-app-release", import.meta.env.VITE_APP_RELEASE ?? "dev");
+    for (const [name, value] of Object.entries(processHeaders(processId, operation))) traced.setHeader(name, value);
   }
   return query;
+}
+export function processHeaders(processId: string, operation: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "x-process-id": processId,
+    "x-process-operation": operation,
+    "x-request-id": crypto.randomUUID(),
+    "x-device-id": deviceId(),
+    "x-app-release": import.meta.env.VITE_APP_RELEASE ?? "dev",
+  };
+  const parentProcessId = parentProcessById.get(processId);
+  if (parentProcessId) headers["x-parent-process-id"] = parentProcessId;
+  const idempotencyKey = idempotencyKeyByProcess.get(processId);
+  if (idempotencyKey) headers["x-idempotency-key"] = idempotencyKey;
+  return headers;
+}
+export function subscribeRealtime<T extends { subscribe: (callback?: (status: string, error?: Error) => void) => T }>(channel: T, operation: string): T {
+  const name = `realtime.${operation}`;
+  const processId = startProcess(name);
+  const requestId = crypto.randomUUID();
+  const context = { process_id: processId, request_id: requestId,
+    service_host: new URL(import.meta.env.VITE_SUPABASE_URL).hostname,
+    device_id: deviceId(), release_id: import.meta.env.VITE_APP_RELEASE ?? "dev" };
+  record("supabase", name, "request.start", "00", context);
+  return channel.subscribe((status, error) => {
+    const rc = status === "SUBSCRIBED" ? "00" : status === "TIMED_OUT" ? "NET-003"
+      : status === "CHANNEL_ERROR" ? "SVC-001" : status === "CLOSED" ? "CANCEL-001" : "00";
+    void (async () => {
+      const auth = await getAuthContext();
+      record("supabase", name, "realtime.status", rc, { ...context,
+        request_id: crypto.randomUUID(), realtime_status: status,
+        actor_id: auth.actorId, session_id: auth.sessionId,
+        error_class: error?.name, error_fingerprint: error ? await errorFingerprint(error) : undefined });
+      await flushDiagnostics("supabase");
+    })();
+  });
+}
+async function errorFingerprint(error: unknown): Promise<string> {
+  const value = error instanceof Error ? `${error.name}:${error.message}` : String(error);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).slice(0, 8).map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 export async function traceFetch(input: RequestInfo | URL, init: RequestInit | undefined, processId: string, operation: string, source: "web" | "supabase" = "supabase"): Promise<Response> {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
@@ -60,7 +101,8 @@ export async function traceFetch(input: RequestInfo | URL, init: RequestInit | u
     } catch { /* Preserve the SDK's regular authorization behavior. */ }
   }
   headers.set("x-process-id", processId);
-  headers.set("x-parent-process-id", processId);
+  const parentProcessId = parentProcessById.get(processId);
+  if (parentProcessId) headers.set("x-parent-process-id", parentProcessId);
   headers.set("x-process-operation", operation);
   const request = new Request(input, { ...init, headers });
   if (source === "supabase") return diagnosticFetch(request);
@@ -73,7 +115,7 @@ async function diagnosticExternalFetch(request: Request, source: "web"): Promise
   const requestId = crypto.randomUUID();
   const url = new URL(request.url);
   const started = performance.now();
-  const context = { process_id: processId, parent_process_id: request.headers.get("x-parent-process-id") ?? processId,
+  const context = { process_id: processId, parent_process_id: request.headers.get("x-parent-process-id") ?? undefined,
     request_id: requestId, service_host: url.hostname, device_id: deviceId(), release_id: import.meta.env.VITE_APP_RELEASE ?? "dev" };
   if (!startedProcesses.has(processId)) {
     startedProcesses.add(processId);
@@ -105,7 +147,22 @@ function record(source: string, operation: string, stage: string, rc: string, ex
     queue.push(event);
     localStorage.setItem(key, JSON.stringify(queue.slice(-500)));
     window.dispatchEvent(new CustomEvent("kiyometa:diagnostic", { detail: event }));
+    return event;
   } catch { /* Diagnostics must not block business operations. */ }
+  return { event_id: "" };
+}
+function updateQueuedProcessContext(processId: string, values: Record<string, unknown>) {
+  try {
+    const queue = JSON.parse(localStorage.getItem(key) ?? "[]") as Array<Record<string, unknown>>;
+    let changed = false;
+    for (const event of queue) {
+      if (event.process_id !== processId) continue;
+      for (const [name, value] of Object.entries(values)) {
+        if (value !== undefined && event[name] === undefined) { event[name] = value; changed = true; }
+      }
+    }
+    if (changed) localStorage.setItem(key, JSON.stringify(queue));
+  } catch { /* Do not block the user action if local storage is unavailable. */ }
 }
 function logMessage(source: string, stage: string, rc: string): string {
   if (rc !== "00") return `Langkah ${stage} gagal dengan kode ${rc}`;
@@ -169,8 +226,8 @@ function queueSnapshot(): Array<{ event_id: string; actor_id?: string; timestamp
 }
 export async function diagnosticFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin);
-  const requestId = crypto.randomUUID();
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  const requestId = headers.get("x-request-id") ?? crypto.randomUUID();
   headers.set("x-device-id", deviceId());
   headers.set("x-app-release", import.meta.env.VITE_APP_RELEASE ?? "dev");
   if (!headers.has("authorization") && url.pathname.startsWith("/storage/v1/")) {
@@ -184,13 +241,22 @@ export async function diagnosticFetch(input: RequestInfo | URL, init?: RequestIn
     } catch { /* Keep the SDK's normal auth behavior if local session lookup fails. */ }
   }
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-  const operation = headers.get("x-process-operation") ?? (url.pathname.startsWith("/rest/v1/") || url.pathname.startsWith("/storage/v1/") || url.pathname.includes("/functions/v1/") || url.pathname.startsWith("/auth/v1/")
-    ? `supabase.${method.toLowerCase()}` : `${method} ${safePath(url.pathname)}`);
-  const activeProcess = headers.get("x-process-id") ?? currentProcessByOperation.get(operation) ?? currentProcessByOperation.get(`parent:${operation}`) ?? crypto.randomUUID();
+  const signedBucket = url.pathname.match(/^\/storage\/v1\/object\/sign\/([^/]+)/)?.[1];
+  const operation = headers.get("x-process-operation") ?? (signedBucket
+    ? `storage.${signedBucket}.sign`
+    : url.pathname.startsWith("/rest/v1/") || url.pathname.startsWith("/storage/v1/") || url.pathname.includes("/functions/v1/") || url.pathname.startsWith("/auth/v1/")
+      ? `supabase.${method.toLowerCase()}` : `${method} ${safePath(url.pathname)}`);
+  const authProcess = url.pathname.endsWith("/token") && method === "POST" ? currentProcessByOperation.get("auth.login")
+    : url.pathname.endsWith("/logout") ? currentProcessByOperation.get("auth.logout") : undefined;
+  const activeProcess = headers.get("x-process-id") ?? currentProcessByOperation.get(operation) ?? authProcess ?? crypto.randomUUID();
+  const processOperation = authProcess ? (url.pathname.endsWith("/token") ? "auth.login" : "auth.logout") : operation;
   headers.set("x-process-id", activeProcess);
-  headers.set("x-parent-process-id", headers.get("x-parent-process-id") ?? currentProcessByOperation.get(`request-parent:${activeProcess}`) ?? currentProcessByOperation.get(`parent:${operation}`) ?? activeProcess);
+  const parentProcessId = headers.get("x-parent-process-id") ?? parentProcessById.get(activeProcess);
+  if (parentProcessId) headers.set("x-parent-process-id", parentProcessId);
+  const idempotencyKey = headers.get("x-idempotency-key") ?? idempotencyKeyByProcess.get(activeProcess);
+  if (idempotencyKey) headers.set("x-idempotency-key", idempotencyKey);
   headers.set("x-request-id", requestId);
-  headers.set("x-process-operation", operation);
+  headers.set("x-process-operation", processOperation);
   const started = performance.now();
   const source = url.pathname.startsWith("/ocr") ? "web" : "supabase";
   let actorId: string | undefined;
@@ -218,24 +284,28 @@ export async function diagnosticFetch(input: RequestInfo | URL, init?: RequestIn
   const context = { process_id: activeProcess, request_id: requestId, service_host: url.hostname, actor_id: actorId,
     session_id: typeof claims.session_id === "string" ? claims.session_id : undefined,
     device_id: deviceId(), release_id: import.meta.env.VITE_APP_RELEASE ?? "dev" };
-  if (init?.signal?.aborted) return fetch(input, { ...init, headers });
   if (!startedProcesses.has(activeProcess)) {
     startedProcesses.add(activeProcess);
-    record(source, operation, "process.start", "00", context);
+    record(source, processOperation, "process.start", "00", context);
   }
-  record(source, operation, "request.start", "00", context);
+  record(source, processOperation, "request.start", "00", context);
   void flushDiagnostics(source);
+  if (init?.signal?.aborted) {
+    record(source, processOperation, "request.end", "CANCEL-001", { ...context, duration_ms: Math.round(performance.now() - started) });
+    void flushDiagnostics(source);
+    return fetch(input, { ...init, headers });
+  }
   try {
     const response = await fetch(input, { ...init, headers });
     const responseRc = response.ok ? "00" : source === "web" && url.pathname.startsWith("/ocr/") && [400, 422].includes(response.status)
       ? "OCR-001" : resultCode(null, response.status);
-    record(source, operation, "request.end", responseRc, { ...context, http_status: response.status, duration_ms: Math.round(performance.now() - started) });
+    record(source, processOperation, "request.end", responseRc, { ...context, http_status: response.status, duration_ms: Math.round(performance.now() - started) });
     void flushDiagnostics(source);
     return response;
   } catch (error) {
     const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(method) && (url.pathname.startsWith("/rest/v1/") || url.pathname.includes("/functions/v1/"));
     const rc = mutating ? "TXN-001" : resultCode(error);
-    record(source, operation, "request.end", rc, { ...context, duration_ms: Math.round(performance.now() - started) });
+    record(source, processOperation, "request.end", rc, { ...context, duration_ms: Math.round(performance.now() - started) });
     void flushDiagnostics(source);
     throw error;
   }

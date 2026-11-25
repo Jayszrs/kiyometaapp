@@ -1,5 +1,5 @@
 import { supabase } from "./supabaseClient";
-import { startProcess, traceQuery } from "./diagnostics";
+import { processHeaders, startProcess, traceQuery } from "./diagnostics";
 import type { Client, Product, ProductTask, OrderRecord } from "../App";
 
 // DB columns are snake_case; the UI types are camelCase. This module is the
@@ -353,7 +353,7 @@ async function persistDrawings(productId: string, drawings: string[], existingPa
       (async () => {
         const { error } = await supabase.storage
           .from("product-drawings")
-          .upload(path, dataUriToBytes(d), { contentType: step.mime, upsert: true, headers: { "x-process-id": processId, "x-parent-process-id": processId, "x-process-operation": "product.drawing.upload", "x-device-id": localStorage.getItem("kiyometa-diagnostic-device") ?? "unavailable", "x-app-release": import.meta.env.VITE_APP_RELEASE ?? "dev" } });
+          .upload(path, dataUriToBytes(d), { contentType: step.mime, upsert: true, headers: processHeaders(processId, "product.drawing.upload") });
         if (error) throw error;
         out[i] = { path };
       })(),
@@ -493,7 +493,7 @@ export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
 }
 
 export async function submitOrderOnce(requestId: string, order: OrderRecord, owner: string): Promise<OrderRecord> {
-  const processId = startProcess("order.submit", requestId);
+  const processId = startProcess("order.submit", { idempotencyKey: requestId });
   const { data, error, status } = await traceQuery(supabase.rpc("submit_order_once", {
     p_request_id: requestId,
     p_owner_id: owner,

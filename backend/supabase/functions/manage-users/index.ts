@@ -10,14 +10,14 @@ const defaultDiagnosticsUrl = "https://kiyometa.smartbsd.my.id/ocr/diagnostics";
 type Role = "administrator" | "operator";
 
 function tracedFetch(input: RequestInfo | URL, init: RequestInit | undefined, trace: {
-  processId: string; parentProcessId: string; deviceId: string; releaseId: string; sessionId: string; token: string;
+  processId: string; parentProcessId?: string; deviceId: string; releaseId: string; sessionId: string; token: string;
 }, source = "supabase") {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const requestId = crypto.randomUUID();
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set("x-process-id", trace.processId);
-  headers.set("x-parent-process-id", trace.parentProcessId || trace.processId);
+  if (trace.parentProcessId) headers.set("x-parent-process-id", trace.parentProcessId);
   headers.set("x-request-id", requestId);
   headers.set("x-device-id", trace.deviceId);
   headers.set("x-app-release", trace.releaseId);
@@ -30,7 +30,7 @@ function tracedFetch(input: RequestInfo | URL, init: RequestInit | undefined, tr
   const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil(task: Promise<unknown>): void } }).EdgeRuntime;
   const emit = (stage: string, rc: string, status = 0, duration = 0) => {
     const event = { event_id: crypto.randomUUID(), process_id: trace.processId,
-      parent_process_id: trace.parentProcessId || trace.processId, request_id: requestId,
+      parent_process_id: trace.parentProcessId, request_id: requestId,
       operation, stage, rc, http_status: status, duration_ms: Math.round(duration),
       service_host: url.hostname, device_id: trace.deviceId, release_id: trace.releaseId };
     const endpoint = Deno.env.get("KIYOMETA_DIAGNOSTICS_URL") ?? defaultDiagnosticsUrl;
@@ -111,7 +111,7 @@ serve(async (request) => {
     const processId = request.headers.get("x-process-id") ?? crypto.randomUUID();
     const trace = {
       processId,
-      parentProcessId: request.headers.get("x-parent-process-id") ?? processId,
+      parentProcessId: request.headers.get("x-parent-process-id") ?? undefined,
       deviceId: request.headers.get("x-device-id") ?? "unknown",
       releaseId: request.headers.get("x-app-release") ?? "unknown",
       sessionId: request.headers.get("x-session-id") ?? "",

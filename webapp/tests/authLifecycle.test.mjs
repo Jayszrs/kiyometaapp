@@ -44,6 +44,7 @@ async function fixture() {
   source = source
     .replace(/import \{[^\n]+\} from "react";/, 'const { createContext, useContext, useEffect, useState } = globalThis.__authLifecycleFixture.react;')
     .replace('import { supabase } from "./supabaseClient";', 'const { supabase } = globalThis.__authLifecycleFixture;')
+    .replace('import { refreshProcessContext, startProcess, traceQuery } from "./diagnostics";', 'const refreshProcessContext = async () => {}; const startProcess = () => "test-process"; const traceQuery = query => query;')
     .replace('import { readRecovery, writeRecovery } from "./recoveryStorage";', 'const readRecovery = () => undefined; const writeRecovery = () => {};')
     .replace(/import \{[\s\S]*?getOperationsBackendStatus,[\s\S]*?\} from "\.\/backendStatus";/, 'const getOperationsBackendStatus = () => "ready"; const isMissingOperationsSchema = () => false; const markOperationsMigrationRequired = () => {};');
   const { outputText } = ts.transpileModule(source + `\n// fixture ${fixtureNumber++}`, {

@@ -75,7 +75,7 @@ def write_event(source, event):
         handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(handler)
         _writers[source] = logger
-    allowed = ("event_id", "process_id", "parent_process_id", "request_id", "lifecycle_id", "related_lifecycle_ids", "timestamp", "operation", "stage", "rc", "http_status", "duration_ms", "service_host", "origin", "job_id", "actor_id", "session_id", "device_id", "release_id", "client_ip", "error_class", "error_fingerprint", "component_stack")
+    allowed = ("event_id", "process_id", "parent_process_id", "idempotency_key", "request_id", "lifecycle_id", "related_lifecycle_ids", "timestamp", "operation", "stage", "rc", "http_status", "duration_ms", "service_host", "origin", "job_id", "actor_id", "session_id", "device_id", "release_id", "client_ip", "error_class", "error_fingerprint", "component_stack", "realtime_status")
     safe = {}
     for key in allowed:
         if key not in event:

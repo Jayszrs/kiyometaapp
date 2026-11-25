@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { startProcess, traceQuery } from "./diagnostics";
 
 type BackendAvailability = "unknown" | "ready" | "migration-required";
 
@@ -22,10 +23,11 @@ export async function probeOperationsBackend(force = false): Promise<boolean> {
   if (operationsProbe) return operationsProbe;
 
   operationsProbe = (async () => {
+    const processId = startProcess("backend.capability_probe");
     const [{ error: profilesError }, { error: numbersError }, { data: undoData, error: undoError }] = await Promise.all([
-      supabase.from("profiles").select("id").limit(1),
-      supabase.from("stock_movements").select("movement_no").limit(1),
-      supabase.rpc("undo_capabilities"),
+      traceQuery(supabase.from("profiles").select("id").limit(1), processId, "backend.profiles_probe"),
+      traceQuery(supabase.from("stock_movements").select("movement_no").limit(1), processId, "backend.stock_probe"),
+      traceQuery(supabase.rpc("undo_capabilities"), processId, "backend.undo_probe"),
     ]);
     const error = profilesError ?? numbersError ?? undoError;
     const undoVersion = Number((undoData as { version?: unknown } | null)?.version ?? 0);

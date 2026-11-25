@@ -1,10 +1,10 @@
 # Kiyometa logging guide
 
-This guide describes the diagnostics code in this branch. It is not active in production until the branch is released, the Supabase migration is applied, and the Edge Function secret below is set. A small local demo can show the event format before rollout, but it does not exercise network delivery or production storage.
+This guide describes the diagnostics code on `main`. The audit-context migrations are applied to the Singapore Supabase project. Web delivery to centralized files still depends on releasing the web/OCR collector to the app host. The Edge Function has a built-in collector URL; the optional secret only overrides that URL. A small local demo does not exercise network delivery or production storage.
 
 ## Find one complete process
 
-Every traced user action, including grouped data loads, writes a `process.start` event with a UUID `process_id`. Requests made by that action carry the same ID. Service requests and audit rows also carry a `request_id`; OCR upload and polling share the OCR scan process ID. A stable idempotency key is recorded as the parent process reference for order and production task retries.
+Every traced user action, including grouped data loads, writes `process.start` synchronously before its first request. Requests made by that action carry the same UUID `process_id`; each request has its own `request_id`. A true child activity uses `parent_process_id`. Retry keys are recorded separately as `idempotency_key` and never used as parent process IDs. OCR upload and polling share the OCR scan process ID. Realtime subscriptions log connection status changes under their own process IDs.
 
 First find the root event, optionally filter by operation, then copy the `process_id` and search all files:
 
@@ -47,9 +47,9 @@ The collector allowlists metadata fields and excludes request/response bodies, c
 
 ## Supabase audit correlation
 
-`backend/supabase/migrations/20261125071841_audit_request_context.sql` adds process/request/session/device/release/operation and business-record lifecycle context to the existing `audit_logs.metadata` using a `BEFORE INSERT` trigger. The trigger runs inside the audit insert transaction, so it does not create a separate, partially committed audit record. Existing audit snapshots and undo behavior remain the source of historical changes.
+`backend/supabase/migrations/20261125071841_audit_request_context.sql` adds process/request/session/device/release/operation and business-record lifecycle context to the existing `audit_logs.metadata` using a `BEFORE INSERT` trigger. `backend/supabase/migrations/20261125074356_audit_idempotency_context.sql` stores retry keys separately from parent-process IDs and adds an index for lookup. The trigger runs inside the audit insert transaction, so it does not create a separate, partially committed audit record. Existing audit snapshots and undo behavior remain the source of historical changes.
 
-The migration must be applied to the same Supabase project as the app. It does not create a Supabase log file. `supabase.log` is Kiyometa's copy of traced service-call metadata. Supabase's own platform logs remain separately available in the Supabase dashboard. Some SDK calls may bypass the traced fetch path; verify representative read/write/Storage calls in a deployed preview before claiming complete HTTP coverage.
+The migrations must be applied to the same Supabase project as the app. They do not create a Supabase log file. `supabase.log` is Kiyometa's copy of traced service-call metadata. Supabase's own platform logs remain separately available in the Supabase dashboard. HTTP requests, including Storage and Auth, use the traced fetch path; Realtime connection states are logged through the subscription callback. Activities that do not carry an explicit process context are still recorded by request, but may not group with neighboring requests from the same UI action.
 
 ## Edge Function forwarding
 
@@ -87,7 +87,7 @@ For a report such as “the product disappeared” or “the total is wrong”:
 4. Verify one read, one data update, one OCR scan, and one undo using a test account; inspect each process across the files and confirm the matching audit row.
 5. Monitor disk use and configure rotation for `deploy.log`.
 
-Rollback the app release first if needed. The migration rollback removes only the correlation trigger/function/indexes; it leaves existing audit records intact. Edge Function forwarding can be stopped by unsetting the secret. Keep the existing audit log and its policies enabled.
+Rollback the app release first if needed. The migration rollback removes only the added correlation index and restores the prior trigger function; it leaves existing audit records intact. Edge Function forwarding can be redirected by changing the optional secret. Keep the existing audit log and its policies enabled.
 
 ## English service naming
 
