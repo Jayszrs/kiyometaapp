@@ -159,7 +159,7 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
       <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6">
         <PageContainer className="space-y-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-          {notice && <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
+          {notice && <div className="motion-notice rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
           <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
             {/* Solid navy, no gradient. The gradient ran across the full width

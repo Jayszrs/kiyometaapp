@@ -282,16 +282,23 @@ export async function resetManagedUserPassword(userId: string, password: string)
   await invokeUsers({ action: "reset-password", userId, password });
 }
 
-export async function fetchAuditLogs(limit = 200, signal?: AbortSignal): Promise<AuditLog[]> {
-  const query = supabase
-    .from("audit_logs")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (signal) query.abortSignal(signal);
-  const { data, error } = await traceQuery(query, startProcess("audit.fetch"), "audit.fetch");
-  if (error) throw error;
-  return (data ?? []).map(row => ({
+export interface AuditLogQuery {
+  limit?: number;
+  offset?: number;
+  from?: string;
+  to?: string;
+  search?: string;
+  sortBy?: "created_at" | "username" | "action" | "entity" | "entity_id";
+  ascending?: boolean;
+}
+
+export interface AuditLogPage {
+  logs: AuditLog[];
+  total: number;
+}
+
+function auditLogFromRow(row: Record<string, any>): AuditLog {
+  return {
     id: row.id,
     username: row.username,
     action: row.action,
@@ -302,7 +309,40 @@ export async function fetchAuditLogs(limit = 200, signal?: AbortSignal): Promise
     metadata: row.metadata ?? {},
     createdAt: row.created_at,
     undoneAt: row.undone_at,
-  }));
+  };
+}
+
+export async function fetchAuditLogPage(options: AuditLogQuery = {}, signal?: AbortSignal): Promise<AuditLogPage> {
+  const limit = Math.min(200, Math.max(1, options.limit ?? 50));
+  const offset = Math.max(0, options.offset ?? 0);
+  let query = supabase.from("audit_logs").select("*", { count: "exact" });
+  if (options.from) query = query.gte("created_at", options.from);
+  if (options.to) query = query.lte("created_at", options.to);
+  const search = options.search?.normalize("NFKC").trim().replace(/[^\p{L}\p{N}_.@\- ]/gu, "").slice(0, 100);
+  if (search) query = query.or(`username.ilike.%${search}%,action.ilike.%${search}%,entity.ilike.%${search}%`);
+  query = query
+    .order(options.sortBy ?? "created_at", { ascending: options.ascending ?? false })
+    .order("id", { ascending: options.ascending ?? false })
+    .range(offset, offset + limit - 1);
+  if (signal) query.abortSignal(signal);
+  const { data, error, count } = await traceQuery(query, startProcess("audit.fetch_page"), "audit.fetch_page");
+  if (error) throw error;
+  return { logs: (data ?? []).map(row => auditLogFromRow(row)), total: count ?? 0 };
+}
+
+export async function fetchAuditLogs(options: number | AuditLogQuery = 200, signal?: AbortSignal): Promise<AuditLog[]> {
+  const normalized = typeof options === "number" ? { limit: options } : options;
+  let query = supabase
+    .from("audit_logs")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (normalized.from) query = query.gte("created_at", normalized.from);
+  if (normalized.to) query = query.lte("created_at", normalized.to);
+  query = query.limit(normalized.limit ?? 1000);
+  if (signal) query.abortSignal(signal);
+  const { data, error } = await traceQuery(query, startProcess("audit.fetch"), "audit.fetch");
+  if (error) throw error;
+  return (data ?? []).map(row => auditLogFromRow(row));
 }
 
 export async function undoAuditLog(id: string): Promise<void> {
@@ -435,6 +475,80 @@ export async function fetchInventoryData(signal?: AbortSignal) {
       notes: row.notes,
       version: Number(row.version ?? 1),
     })) as BomItem[],
+  };
+}
+
+export type InventoryPageOptions = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  movementDirection?: "all" | "outgoing" | "incoming";
+  productId?: string;
+  signal?: AbortSignal;
+};
+export type InventoryPage<T> = { rows: T[]; total: number; page: number; pageSize: number };
+export type InventoryTab = "inventory" | "purchases" | "movements" | "bom";
+export type InventorySummary = { itemCount: number; stockValue: number; reorderCount: number; outOfStock: number };
+
+/** One bounded inventory query. Use this for visible tabs; full fetch remains for export/print. */
+export async function fetchInventoryPage(tab: InventoryTab, options: InventoryPageOptions = {}): Promise<InventoryPage<InventoryItem | Purchase | StockMovement | BomItem>> {
+  const processId = startProcess("inventory.page");
+  const pageSize = Math.min(100, Math.max(1, Math.floor(options.pageSize ?? 50)));
+  const page = Math.max(0, Math.floor(options.page ?? 0));
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+  const search = options.search?.trim().replace(/[%,()]/g, " ");
+  const run = async <T>(q: any, map: (row: any) => T): Promise<InventoryPage<T>> => {
+    const traced = traceQuery(q, processId, "inventory.page");
+    const result = await (options.signal ? traced.abortSignal(options.signal) : traced);
+    if (result.error) throw result.error;
+    return { rows: (result.data ?? []).map(map), total: result.count ?? 0, page, pageSize };
+  };
+  const movementMap = (row: any): StockMovement => ({ id: row.id, movementNo: row.movement_no ?? "", movementDate: row.movement_date, movementType: row.movement_type, referenceType: row.reference_type, referenceId: row.reference_id, itemId: row.item_id, quantity: Number(row.quantity), delta: Number(row.delta), pic: row.pic, notes: row.notes, createdAt: row.created_at });
+  const bomMap = (row: any): BomItem => ({ id: row.id, bomNo: row.bom_no ?? "", productId: row.product_id, inventoryItemId: row.inventory_item_id, componentProductId: row.component_product_id ?? "", parentBomNo: row.parent_bom_no ?? "", quantityPerUnit: Number(row.quantity_per_unit), notes: row.notes, version: Number(row.version ?? 1) });
+  if (tab === "inventory") {
+    let query = supabase.from("inventory_balances").select("*", { count: "exact" }).order("item_code").range(from, to);
+    if (search) query = query.or(`item_code.ilike.%${search}%,item_name.ilike.%${search}%,supplier_name.ilike.%${search}%`);
+    return run(query, inventoryFromRow);
+  }
+  if (tab === "purchases") {
+    let query = supabase.from("purchases").select("*", { count: "exact" }).order("purchase_date", { ascending: false }).order("id").range(from, to);
+    if (search) query = query.or(`purchase_no.ilike.%${search}%,supplier_name.ilike.%${search}%,pic.ilike.%${search}%,notes.ilike.%${search}%`);
+    return run(query, purchaseFromRow);
+  }
+  if (tab === "movements") {
+    let query = supabase.from("stock_movements").select("*", { count: "exact" }).order("created_at", { ascending: false }).order("id").range(from, to);
+    if (search) query = query.or(`movement_no.ilike.%${search}%,reference_id.ilike.%${search}%,pic.ilike.%${search}%,notes.ilike.%${search}%`);
+    if (options.movementDirection === "outgoing") query = query.lt("delta", 0);
+    if (options.movementDirection === "incoming") query = query.gt("delta", 0);
+    return run(query, movementMap);
+  }
+  let query = supabase.from("product_materials").select("*", { count: "exact" }).order("product_id").order("id").range(from, to);
+  if (options.productId) query = query.eq("product_id", options.productId);
+  if (search) query = query.or(`bom_no.ilike.%${search}%,parent_bom_no.ilike.%${search}%,notes.ilike.%${search}%`);
+  return run(query, bomMap);
+}
+
+export async function fetchInventorySummary(signal?: AbortSignal): Promise<InventorySummary> {
+  const processId = startProcess("inventory.summary");
+  const make = (filter?: (query: any) => any) => {
+    let query: any = supabase.from("inventory_balances").select("stock_value", { count: "exact" });
+    if (filter) query = filter(query);
+    const traced = traceQuery(query, processId, "inventory.summary");
+    return signal ? traced.abortSignal(signal) : traced;
+  };
+  const [all, reorder, out] = await Promise.all([
+    fetchAllPages((from, to) => make(query => query.range(from, to))),
+    make(query => query.eq("needs_reorder", true).limit(0)),
+    make(query => query.lte("available_qty", 0).limit(0)),
+  ]);
+  if (reorder.error) throw reorder.error;
+  if (out.error) throw out.error;
+  return {
+    itemCount: all.length,
+    stockValue: (all as Array<{ stock_value?: number | string | null }>).reduce((sum, row) => sum + Number(row.stock_value ?? 0), 0),
+    reorderCount: reorder.count ?? 0,
+    outOfStock: out.count ?? 0,
   };
 }
 
@@ -654,19 +768,27 @@ function productionTaskFromRow(row: Record<string, unknown>): ProductionTaskProg
   };
 }
 
-export async function fetchManufacturingProgress(signal?: AbortSignal): Promise<{
+export async function fetchManufacturingProgress(signal?: AbortSignal, scope?: { orderIds?: readonly string[]; productIds?: readonly string[] }): Promise<{
   operations: ManufacturingOperation[];
   tasks: ProductionTaskProgress[];
   routes: ProductRouteLink[];
 }> {
   const processId = startProcess("production.progress.fetch");
   const operationQuery = traceQuery(supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name"), processId, "production.progress.fetch");
+  const orderIds = [...new Set((scope?.orderIds ?? []).filter(Boolean))];
+  const productIds = [...new Set((scope?.productIds ?? []).filter(Boolean))];
   const taskResult = fetchAllPages((from, to) => {
-    const query = traceQuery(supabase.from("production_tasks").select("*").order("updated_at").order("id").range(from, to), processId, "production.progress.fetch");
+    let builder = supabase.from("production_tasks").select("*");
+    if (scope && orderIds.length === 0) builder = builder.in("order_id", ["00000000-0000-0000-0000-000000000000"]);
+    else if (orderIds.length) builder = builder.in("order_id", orderIds);
+    const query = traceQuery(builder.order("updated_at").order("id").range(from, to), processId, "production.progress.fetch");
     return signal ? query.abortSignal(signal) : query;
   });
   const routeQuery = fetchAllPages((from, to) => {
-    const query = traceQuery(supabase.from("products").select("id,tasks").range(from, to), processId, "production.progress.fetch");
+    let builder = supabase.from("products").select("id,tasks");
+    if (scope && productIds.length === 0) builder = builder.in("id", ["00000000-0000-0000-0000-000000000000"]);
+    else if (productIds.length) builder = builder.in("id", productIds);
+    const query = traceQuery(builder.range(from, to), processId, "production.progress.fetch");
     return signal ? query.abortSignal(signal) : query;
   });
   if (signal) operationQuery.abortSignal(signal);

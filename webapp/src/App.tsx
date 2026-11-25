@@ -1,7 +1,7 @@
 import { buildBomTree } from "./lib/bom";
 import { createContext, lazy, Suspense, useContext, useState, useMemo, useEffect, useRef, useTransition } from "react";
 import { useAuth, useCanDelete } from "./lib/auth";
-import { fetchAll, fetchProduct, fetchProductTasksByIds, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
+import { fetchMasterPage, fetchClientsPage, fetchProductsPage, fetchOrdersPage, fetchOrdersForRange, fetchOrderStatusCounts, fetchProduct, fetchProductTasksByIds, markPreparationPrinted, fetchOrdersByIds, StaleOrderError, deleteOrder, upsertClient, deleteClient, upsertProduct, deleteProduct, signProductDrawings, validateDrawingFile } from "./lib/db";
 import RecoveryStatus from "./components/RecoveryStatus";
 import { useDurableState } from "./lib/useDurableState";
 import { readRecovery, writeRecovery } from "./lib/recoveryStorage";
@@ -23,7 +23,7 @@ import { supabase } from "./lib/supabaseClient";
 import { subscribeRealtime } from "./lib/diagnostics";
 import { useLoadingScope } from "./lib/loading";
 import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
-import { NETWORK_STATUS_EVENT, friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { NETWORK_RESTORED_EVENT, NETWORK_STATUS_EVENT, friendlyNetworkMessage, isConnectivityError, reportConnectivityError, reportConnectivityRestored } from "./lib/networkStatus";
 import { userError } from "./lib/resultCodes";
 import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
@@ -69,6 +69,24 @@ type Page =
   | "profile";
 
 type DeliverySlipMode = "single" | "multiple";
+
+function preparePage(page: Page): Promise<unknown> | null {
+  if (page === "inventory") return pageLoaders.inventory().then(module => module.preloadInventoryPage());
+  if (page === "production-progress") return pageLoaders.productionProgress();
+  if (page === "management") return pageLoaders.management();
+  if (page === "profile") return pageLoaders.profile();
+  return null;
+}
+
+function waitAtMost(promise: Promise<unknown>, milliseconds: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = window.setTimeout(resolve, milliseconds);
+    void promise.catch(() => undefined).finally(() => {
+      window.clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 
 type ScanStage = "idle" | "need-client" | "need-product" | "filling";
 
@@ -486,45 +504,64 @@ function ScanBanner({ message }: { message: string }) {
 }
 
 function NetworkStatusBanner({ lang }: { lang: Lang }) {
-  const [offline, setOffline] = useState(() => !navigator.onLine);
+  const [networkState, setNetworkState] = useState<"offline" | "service" | null>(() => navigator.onLine ? null : "offline");
   const [checking, setChecking] = useState(false);
-  const verifyConnection = async () => {
-    setChecking(true);
-    try {
-      const response = await fetch("/ocr/health", { cache: "no-store", signal: AbortSignal.timeout(8000) });
-      if (!response.ok) throw new Error("unavailable");
-      setOffline(false);
-      window.dispatchEvent(new Event("kiyometa-retry-reads"));
-    } catch { setOffline(true); }
-    finally { setChecking(false); }
-  };
+  const [mounted, setMounted] = useState(() => !navigator.onLine);
+
   useEffect(() => {
-    const markOffline = () => { setOffline(true); setChecking(false); };
-    // `navigator.onLine` only means a network interface is up. Keep the banner
-    // until a real application endpoint responds successfully.
-    const markOnline = () => { void verifyConnection(); };
-    const onNetworkStatus = (event: Event) => {
-      if ((event as CustomEvent<{ online?: boolean }>).detail?.online === false) markOffline();
+    if (networkState) {
+      setMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setMounted(false), 220);
+    return () => window.clearTimeout(timer);
+  }, [networkState]);
+
+  useEffect(() => {
+    let checkingTimer: number | undefined;
+    const retryReads = () => {
+      setChecking(true);
+      setNetworkState(navigator.onLine ? "service" : "offline");
+      window.dispatchEvent(new Event("kiyometa-retry-reads"));
+      window.clearTimeout(checkingTimer);
+      checkingTimer = window.setTimeout(() => setChecking(false), 700);
     };
+    const markOffline = () => { setNetworkState("offline"); setChecking(false); };
+    const onNetworkStatus = (event: Event) => {
+      const state = (event as CustomEvent<{ state?: "offline" | "service" }>).detail?.state;
+      setNetworkState(!navigator.onLine || state === "offline" ? "offline" : "service");
+      setChecking(false);
+    };
+    const onRestored = () => { setNetworkState(null); setChecking(false); };
     window.addEventListener("offline", markOffline);
-    window.addEventListener("online", markOnline);
+    window.addEventListener("online", retryReads);
     window.addEventListener(NETWORK_STATUS_EVENT, onNetworkStatus);
+    window.addEventListener(NETWORK_RESTORED_EVENT, onRestored);
     return () => {
+      window.clearTimeout(checkingTimer);
       window.removeEventListener("offline", markOffline);
-      window.removeEventListener("online", markOnline);
+      window.removeEventListener("online", retryReads);
       window.removeEventListener(NETWORK_STATUS_EVENT, onNetworkStatus);
+      window.removeEventListener(NETWORK_RESTORED_EVENT, onRestored);
     };
   }, []);
-  if (!offline) return null;
-  const text = lang === "ja"
-    ? "ネットワークに接続できません。保存済みの画面はそのまま利用できます。"
-    : "Connection problem. Saved screens remain available; data actions will retry when the network returns.";
+
+  if (!mounted) return null;
+  const visible = networkState !== null;
+  const offline = networkState === "offline";
+  const message = lang === "ja"
+    ? offline ? "オフラインです。接続が戻ると保存済みの変更を再試行します。" : "Kiyometaのサービスに接続できません。接続を確認するか、再試行してください。"
+    : offline ? "You are offline. Saved changes will retry when your connection returns." : "Kiyometa cannot reach a service. Your device is online; check the connection or retry.";
   return (
-    <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
-      <div className="flex min-w-0 items-center gap-2"><Icon name="wifi-off" size={16} className="shrink-0" /><span>{text}</span></div>
-      <button type="button" disabled={checking} onClick={() => void verifyConnection()} className="shrink-0 rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-700 hover:bg-amber-100 disabled:opacity-50">
-        {checking ? (lang === "ja" ? "確認中…" : "Checking…") : (lang === "ja" ? "再確認" : "Try again")}
-      </button>
+    <div className={`network-banner-slot ${visible ? "is-visible" : "is-closing"}`} aria-hidden={!visible}>
+      <div className="network-banner-clip">
+        <div role="status" aria-live="polite" className="network-banner-panel flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+          <div className="flex min-w-0 items-center gap-2"><Icon name={offline ? "wifi-off" : "alert-triangle"} size={16} className="shrink-0" /><span>{message}</span></div>
+          <button type="button" disabled={checking} onClick={() => { setChecking(true); setNetworkState(navigator.onLine ? "service" : "offline"); window.dispatchEvent(new Event("kiyometa-retry-reads")); window.setTimeout(() => setChecking(false), 700); }} className="shrink-0 rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-700 transition-colors hover:bg-amber-100 disabled:opacity-50">
+            {checking ? (lang === "ja" ? "確認中…" : "Retrying…") : (lang === "ja" ? "再試行" : "Try again")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -534,6 +571,15 @@ function NetworkStatusBanner({ lang }: { lang: Lang }) {
 // Shared so every page's header can send the operator to the screen they came
 // from instead of a fixed target. Pages keep their own fallback label/target.
 const BackNavContext = createContext<(() => void) | null>(null);
+type NavigationGuard = { dirty: boolean; save: () => Promise<boolean>; discard: () => void };
+const NavigationGuardContext = createContext<((guard: NavigationGuard | null) => void) | null>(null);
+export function useNavigationGuard(guard: NavigationGuard): void {
+  const register = useContext(NavigationGuardContext);
+  useEffect(() => {
+    register?.(guard);
+    return () => register?.(null);
+  }, [register, guard.dirty, guard.save, guard.discard]);
+}
 
 function AppShell({ children, onNavigate, showBack = false, backTarget = "home" as Page, backLabel = "Home", title, lang, setLang, noPrint = false, activePage }: {
   children: React.ReactNode; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
@@ -542,6 +588,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
   lang?: "ja" | "en"; setLang?: (l: "ja" | "en") => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { profile } = useAuth();
   const goBack = useContext(BackNavContext);
   return (
     <div className="flex flex-col h-full bg-[#f5f6f8]" style={{ fontFamily: "'Work Sans', system-ui, sans-serif" }}>
@@ -577,7 +624,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
               />
             </div>
           )}
-          <UndoButton lang={lang ?? "ja"} />
+          <UndoButton lang={lang ?? "ja"} canViewAudit={profile.role === "administrator"} />
           <UserMenuButton onNavigate={onNavigate} lang={lang ?? "ja"} />
         </div>
       </header>
@@ -618,7 +665,16 @@ function UserMenuButton({ onNavigate, lang }: { onNavigate: (p: Page) => void; l
 
 function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { open: boolean; onClose: () => void; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang?: Lang; activePage?: Page }) {
   const { profile } = useAuth();
-  if (!open) return null;
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setMounted(false), 190);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  if (!mounted) return null;
   const items = [
     { key: "navHome" as const, page: "home" as Page, icon: "home" },
     { key: "navOrderEntry" as const, page: "order-entry" as Page, icon: "file-text" },
@@ -634,9 +690,9 @@ function NavDrawer({ open, onClose, onNavigate, lang = "en", activePage }: { ope
       : []),
   ];
   return (
-    <div className="popup-backdrop fixed inset-0 z-50 flex">
+    <div className={`drawer-backdrop fixed inset-0 z-50 flex ${open ? "is-open" : "is-closing"}`} aria-hidden={!open}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-       <nav className="nav-drawer-panel relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl">
+       <nav className={`nav-drawer-panel relative h-full w-[min(18rem,88vw)] bg-white flex flex-col shadow-xl ${open ? "is-open" : "is-closing"}`}>
         <div className="flex items-center justify-between px-5 py-4 bg-[#1a3458] text-white">
           <span className="font-600 text-base">{t("navTitle", lang)}</span>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/20 cursor-pointer" aria-label={lang === "ja" ? "閉じる" : "Close"}>
@@ -1059,8 +1115,19 @@ function HomePage({ orders, onNavigate, onOpenScan, lang, setLang }: { orders: O
   const dateStr = new Date(nowJst).toLocaleDateString(lang === "ja" ? "ja-JP" : "en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const jstHour = new Date(nowJst).getHours();
   const greetingKey = jstHour < 11 ? "greetingMorning" : jstHour < 18 ? "greetingDay" : "greetingEvening";
-  const inProd = orders.filter(o => o.progress === "In production").length;
-  const shipped = orders.filter(o => o.progress === "Shipped").length;
+  const [statusCounts, setStatusCounts] = useState(() => ({
+    inProduction: orders.filter(o => o.progress === "In production").length,
+    shipped: orders.filter(o => o.progress === "Shipped").length,
+  }));
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchOrderStatusCounts(controller.signal).then(setStatusCounts).catch(error => {
+      if (!controller.signal.aborted) reportConnectivityError(error);
+    });
+    return () => controller.abort();
+  }, []);
+  const inProd = statusCounts.inProduction;
+  const shipped = statusCounts.shipped;
 
   // Every module in the drawer belongs here too. Schedule had been left out of
   // this list, so the sections grid silently offered only 7 of the 8 modules.
@@ -1516,9 +1583,12 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const [form, setForm] = useDurableState<OrderRecord>("entry-form", () => (isFilling && scanRouting.data
     ? { ...blankForm(), orderDate: scanRouting.data.orderDate, deliveryDate: scanRouting.data.deliveryDate, client: scanRouting.data.client, orderNumber: scanRouting.data.orderNumber, productName: scanRouting.data.productName, quantity: scanRouting.data.quantity, orderAmount: scanRouting.data.orderAmount }
     : blankForm()), isFilling);
+  const formBaselineRef = useRef(JSON.stringify(form));
   const [isNew, setIsNew] = useDurableState("entry-new", true);
   const [errors, setErrors] = useState<FormErrors>({});
   const [suggestionField, setSuggestionField] = useState<"client" | "product" | null>(null);
+  const [clientSuggestions, setClientSuggestions] = useState<Client[]>([]);
+  const [productSuggestions, setProductSuggestions] = useState<Product[]>([]);
   const [searchText, setSearchText] = useState("");
   const [sortBy, setSortBy] = useState<"delivery" | "order">("delivery");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1529,6 +1599,8 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
   const [deliveryFilterDate, setDeliveryFilterDate] = useState(today);
   const [calendarDisplay, setCalendarDisplay] = useState(false);
   const [arrangement, setArrangement] = useDurableState("entry-arrangement", "");
+  const [listPage, setListPage] = useState(0);
+  const [orderPage, setOrderPage] = useState({ rows: orders.slice(0, 50), total: orders.length });
   const filterPanel = useResizablePanel({ initial: 208, min: 150, max: 420, storageKey: "kiyometa.order-entry.filter" });
   const listPanel = useResizablePanel({ initial: 224, min: 160, max: 460, storageKey: "kiyometa.order-entry.list" });
 
@@ -1551,23 +1623,20 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     "No arrangement": "手配なし",
   };
 
-  const filtered = useMemo(() => {
-    const seen = new Set<string>();
-    return orders
-      .filter(o => { if (seen.has(o.id)) return false; seen.add(o.id); return true; })
-      // searchText.toLowerCase() was evaluated twice per order.
-      .filter(o => {
-        if (!searchText) return true;
-        const needle = searchText.toLowerCase();
-        return o.productName.toLowerCase().includes(needle) || o.client.toLowerCase().includes(needle);
-      })
-      .filter(o => progressFilter[o.progress])
-      .filter(o => !deliveryFilterOn || o.deliveryDate >= deliveryFilterDate)
-      .sort((a, b) => {
-        const k = sortBy === "delivery" ? "deliveryDate" : "orderDate";
-        return sortDir === "asc" ? a[k].localeCompare(b[k]) : b[k].localeCompare(a[k]);
-      });
-  }, [orders, searchText, progressFilter, sortBy, sortDir, deliveryFilterOn, deliveryFilterDate]);
+  const selectedProgresses = useMemo(() => Object.entries(progressFilter).filter(([, enabled]) => enabled).map(([status]) => status), [progressFilter]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchOrdersPage({ page: listPage, pageSize: 50, search: searchText,
+        fromDate: deliveryFilterOn ? deliveryFilterDate : undefined, statuses: selectedProgresses,
+        sortBy: sortBy === "delivery" ? "delivery_date" : "order_date", ascending: sortDir === "asc", signal: controller.signal })
+        .then(({ rows, total }) => setOrderPage({ rows, total }))
+        .catch(error => { if (!controller.signal.aborted) reportConnectivityError(error); });
+    }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [listPage, searchText, deliveryFilterOn, deliveryFilterDate, selectedProgresses, sortBy, sortDir]);
+  useEffect(() => setListPage(0), [searchText, deliveryFilterOn, deliveryFilterDate, selectedProgresses, sortBy, sortDir]);
+  const filtered = orderPage.rows;
 
   const sf = (v: keyof OrderRecord) => (e: string) => {
     setForm(prev => ({ ...prev, [v]: e }));
@@ -1601,16 +1670,20 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     setErrors({});
   };
 
-  const clientSuggestions = useMemo(() => {
+  useEffect(() => {
+    const controller = new AbortController();
     const needle = normalizeSuggestionText(form.client.trim());
-    if (!needle) return [];
-    return clients.filter(client => normalizeSuggestionText(client.name).includes(needle)).slice(0, 6);
-  }, [clients, form.client]);
-  const productSuggestions = useMemo(() => {
-    const needle = normalizeSuggestionText(form.productName.trim());
-    if (!needle) return [];
-    return products.filter(product => (!form.client || product.clientName === form.client) && normalizeSuggestionText(product.productName).includes(needle)).slice(0, 6);
-  }, [form.client, form.productName, products]);
+    if (!needle) { setClientSuggestions([]); return () => controller.abort(); }
+    const timer = window.setTimeout(() => void fetchClientsPage({ search: needle, pageSize: 6, signal: controller.signal }).then(page => setClientSuggestions(page.rows)).catch(() => undefined), 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [form.client]);
+  useEffect(() => {
+    const controller = new AbortController();
+    const needle = form.productName.trim();
+    if (!needle) { setProductSuggestions([]); return () => controller.abort(); }
+    const timer = window.setTimeout(() => void fetchProductsPage({ search: needle, client: form.client || undefined, pageSize: 6, signal: controller.signal }).then(page => setProductSuggestions(page.rows)).catch(() => undefined), 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [form.client, form.productName]);
   const matchingOrderHistory = useMemo(
     () => orders.filter(order => order.client === form.client && order.productName === form.productName).slice(0, 20),
     [form.client, form.productName, orders],
@@ -1622,17 +1695,18 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
     return <>{value.slice(0, start)}<strong className="font-800 text-[#1a3458]">{value.slice(start, start + needle.length)}</strong>{value.slice(start + needle.length)}</>;
   };
 
-  const handleNew = () => { setForm(blankForm()); setIsNew(true); setSelectedId(""); setErrors({}); };
+  const handleNew = () => { const blank = blankForm(); formBaselineRef.current = JSON.stringify(blank); setForm(blank); setIsNew(true); setSelectedId(""); setErrors({}); };
 
   const handleSave = async () => {
     const cleaned = cleanOrder(form);
     setForm(cleaned);
     const errs = validateOrder(cleaned, clients, products, lang);
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) { setErrors(errs); return false; }
     const record = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: newId() } : cleaned;
     setForm(record);
     try {
       const saved = await saveOrderDurably(record, profile.id);
+      formBaselineRef.current = JSON.stringify(saved);
       setOrders(prev => prev.some(o => o.id === saved.id)
         ? prev.map(o => o.id === saved.id ? saved : o)
         : [saved, ...prev]);
@@ -1643,10 +1717,18 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
       }
     } catch (err) {
       dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `受注の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save order: ${saveErrorMessage(err, lang)}`);
-      return;
+      return false;
     }
     setErrors({});
+    return true;
   };
+
+  const orderDraftDirty = JSON.stringify(form) !== formBaselineRef.current;
+  useNavigationGuard({
+    dirty: orderDraftDirty,
+    save: handleSave,
+    discard: () => { const blank = blankForm(); formBaselineRef.current = JSON.stringify(blank); setForm(blank); setIsNew(true); setSelectedId(""); setErrors({}); },
+  });
 
   const handleDelete = async () => {
     if (!(await dialog.confirm("Delete this order? You can recover it with Undo.", { tone: "danger" }))) return;
@@ -1781,13 +1863,13 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
                 className="flex-1 text-base focus:outline-none bg-transparent" />
             </div>
             <p className="text-sm text-slate-600 mt-1.5 font-600">
-              <span className="text-lg font-700 text-[#1a3458]">{filtered.length}</span> {lang === "ja" ? "件" : "items"}
+              <span className="text-lg font-700 text-[#1a3458]">{orderPage.total}</span> {lang === "ja" ? "件" : "items"}
             </p>
           </div>
 
           <div className="flex-1 overflow-y-auto min-h-0">
             {filtered.map(o => (
-              <button key={o.id} onClick={() => { setForm(o); setSelectedId(o.id); setIsNew(false); setErrors({}); }}
+              <button key={o.id} onClick={() => { formBaselineRef.current = JSON.stringify(o); setForm(o); setSelectedId(o.id); setIsNew(false); setErrors({}); }}
                 className={`w-full text-left px-3 py-3 border-b border-slate-200 hover:bg-white cursor-pointer transition-colors ${selectedId === o.id ? "bg-blue-50 border-l-4 border-l-[#1a3458]" : "border-l-4 border-l-transparent"}`}>
                 <div className="flex items-center justify-between mb-0.5">
                   <span className="text-xs text-slate-500 font-mono font-600">{lang === "ja" ? `(納)${o.deliveryDate}` : `(Dlv)${o.deliveryDate}`}</span>
@@ -1804,6 +1886,11 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
             {filtered.length === 0 && (
               <div className="px-3 py-6 text-center text-sm text-slate-400">{lang === "ja" ? "データが見つかりません" : "No records found"}</div>
             )}
+          </div>
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-slate-200 p-2 text-xs text-slate-500">
+            <button type="button" disabled={listPage === 0} onClick={() => setListPage(page => Math.max(0, page - 1))} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">{lang === "ja" ? "前へ" : "Previous"}</button>
+            <span>{listPage + 1} / {Math.max(1, Math.ceil(orderPage.total / 50))}</span>
+            <button type="button" disabled={(listPage + 1) * 50 >= orderPage.total} onClick={() => setListPage(page => page + 1)} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">{lang === "ja" ? "次へ" : "Next"}</button>
           </div>
         </aside>
 
@@ -2098,7 +2185,7 @@ function OrderEntryPage({ orders, setOrders, clients, products, scanRouting, set
 
 // ---- Page 2: Search & billing ----
 
-function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, billingOrderIds, setBillingOrderIds, lang, setLang }: {
+function SearchBillingPage({ orders: _orders, setOrders, clients, products, onNavigate, billingOrderIds, setBillingOrderIds, lang, setLang }: {
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   clients: Client[]; products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
   billingOrderIds: string[]; setBillingOrderIds: React.Dispatch<React.SetStateAction<string[]>>;
@@ -2114,6 +2201,9 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     Object.fromEntries(PROGRESS_OPTIONS.map(p => [p, true]))
   );
   const [listPage, setListPage] = useState(0);
+  const [selectedOrdersData, setSelectedOrders] = useState<OrderRecord[]>([]);
+  const [orderPage, setOrderPage] = useState({ rows: [] as OrderRecord[], total: 0 });
+  const [orderPageLoading, setOrderPageLoading] = useState(true);
 
   const productByKey = useMemo(() => {
     const m = new Map<string, Product>();
@@ -2133,6 +2223,8 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   });
   const [selectedId, setSelectedId] = useDurableState<string | null>("search-selection", null);
   const [panelForm, setPanelForm] = useDurableState<OrderRecord>("search-form", blankSBForm);
+  const panelBaselineRef = useRef(JSON.stringify(panelForm));
+  const panelDirty = selectedId !== null && JSON.stringify(panelForm) !== panelBaselineRef.current;
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const filterPanel = useResizablePanel({ initial: 224, min: 150, max: 420, storageKey: "kiyometa.search.filter" });
   const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.search.detail" });
@@ -2147,19 +2239,22 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     setBillingOrderIds(prev => prev.includes(o.id) ? prev.filter(id => id !== o.id) : [...prev, o.id]);
   };
 
-  const selectOrder = (o: OrderRecord) => { setSelectedId(o.id); setPanelForm({ ...o }); setDeleteConfirm(null); };
-  const resetSelection = () => { setSelectedId(null); setPanelForm(blankSBForm()); setDeleteConfirm(null); };
+  const selectOrder = (o: OrderRecord) => { panelBaselineRef.current = JSON.stringify(o); setSelectedId(o.id); setPanelForm({ ...o }); setDeleteConfirm(null); };
+  const resetSelection = () => { const blank = blankSBForm(); panelBaselineRef.current = JSON.stringify(blank); setSelectedId(null); setPanelForm(blank); setDeleteConfirm(null); };
 
   const handleSave = async () => {
     if (!panelForm.client || !panelForm.productName || !panelForm.deliveryDate) return;
     try {
       const saved = await saveOrderDurably(panelForm, profile.id);
+      panelBaselineRef.current = JSON.stringify(saved);
       setOrders(prev => prev.map(o => o.id === saved.id ? saved : o));
       setPanelForm(current => current.id === saved.id ? { ...current, version: saved.version } : current);
     } catch (err) {
       dialog.alert(err instanceof QueuedOrderError ? saveErrorMessage(err, lang) : lang === "ja" ? `受注の保存に失敗しました: ${saveErrorMessage(err, lang)}` : `Failed to save order: ${saveErrorMessage(err, lang)}`);
     }
   };
+
+  useNavigationGuard({ dirty: panelDirty, save: async () => { await handleSave(); return true; }, discard: resetSelection });
 
   const handleDelete = async (id: string) => {
     try {
@@ -2184,21 +2279,31 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
   // recomputed by Object.values(...).some(Boolean) once per order, and
   // `billingOrderIds.includes` rescanned the array once per order and again in
   // `every` - both quadratic in the order count.
-  const anyClientSelected = useMemo(() => Object.values(clientFilter).some(Boolean), [clientFilter]);
   const selectedBillingIds = useMemo(() => new Set(billingOrderIds), [billingOrderIds]);
 
-  const filtered = useMemo(() => orders.filter(o => {
-    const clientOk = !anyClientSelected || clientFilter[o.client];
-    const dateOk = (!fromDate || !toDate) || (o.deliveryDate >= fromDate && o.deliveryDate <= toDate);
-    return clientOk && (statusFilter[o.progress] ?? o.progress === PROGRESS_CANCELLED) && dateOk;
-  }).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)), [orders, anyClientSelected, clientFilter, fromDate, toDate, statusFilter]);
   const listPageSize = 50;
-  const listPageCount = Math.max(1, Math.ceil(filtered.length / listPageSize));
-  const visibleFiltered = filtered.slice(listPage * listPageSize, (listPage + 1) * listPageSize);
+  const selectedClients = useMemo(() => Object.entries(clientFilter).filter(([, enabled]) => enabled).map(([name]) => name), [clientFilter]);
+  const selectedStatuses = useMemo(() => Object.entries(statusFilter).filter(([, enabled]) => enabled).map(([status]) => status), [statusFilter]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setOrderPageLoading(true);
+    void fetchOrdersPage({ page: listPage, pageSize: listPageSize, fromDate, toDate, clients: selectedClients, statuses: selectedStatuses, signal: controller.signal })
+      .then(({ rows, total }) => { setOrderPage({ rows, total }); setOrderPageLoading(false); })
+      .catch(error => { if (!controller.signal.aborted) { reportConnectivityError(error); setOrderPageLoading(false); } });
+    return () => controller.abort();
+  }, [listPage, fromDate, toDate, selectedClients, selectedStatuses]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchOrdersByIds(billingOrderIds).then(rows => { if (!controller.signal.aborted) setSelectedOrders(rows); });
+    return () => controller.abort();
+  }, [billingOrderIds]);
+  const filtered = orderPage.rows;
+  const listPageCount = Math.max(1, Math.ceil(orderPage.total / listPageSize));
+  const visibleFiltered = filtered;
   useEffect(() => setListPage(0), [fromDate, toDate, clientFilter, statusFilter]);
   useEffect(() => setListPage(current => Math.min(current, listPageCount - 1)), [listPageCount]);
 
-  const billableInView = useMemo(() => filtered.filter(isBillable), [filtered]);
+  const billableInView = useMemo(() => visibleFiltered.filter(isBillable), [visibleFiltered]);
   const allBillableSelected = useMemo(
     () => billableInView.length > 0 && billableInView.every(o => selectedBillingIds.has(o.id)),
     [billableInView, selectedBillingIds],
@@ -2210,10 +2315,7 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     });
   };
 
-  const selectedOrders = useMemo(
-    () => orders.filter(o => selectedBillingIds.has(o.id)).sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)),
-    [orders, selectedBillingIds],
-  );
+  const selectedOrders = useMemo(() => [...selectedOrdersData].sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)), [selectedOrdersData]);
 
   // Excel and CSV both treat a leading =, +, - or @ as a formula, so a product
   // named "=SUM(A1)" executes when the file is opened. Prefixing with an
@@ -2418,22 +2520,33 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
               ))}
             </div>
             <p className="text-sm text-slate-600 font-600 mt-3 pt-2 border-t border-slate-100">
-              <span className="text-lg font-700 text-[#1a3458]">{filtered.length}</span>{lang === "ja" ? "件" : "items"}
+              <span className="text-lg font-700 text-[#1a3458]">{orderPage.total}</span>{lang === "ja" ? "件" : " items"}
             </p>
           </div>
         </aside>
 
         <ResizeHandle label={t("resizeFilter", lang)} {...filterPanel.handleProps} />
 
-        <main className="page-enter responsive-main flex-1 overflow-y-auto">
+        <main aria-busy={orderPageLoading} className="responsive-main flex-1 overflow-y-auto">
           <div className="flex flex-col">
+            {orderPageLoading && orderPage.rows.length === 0 && Array.from({ length: 6 }, (_, index) => (
+              <div key={`loading-order-${index}`} aria-hidden="true" className="flex items-center gap-3 border-b border-slate-200 px-4 py-3">
+                <div className="skeleton-block h-4 w-4 shrink-0 rounded-sm" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex gap-3"><div className="skeleton-block h-5 w-20" /><div className="skeleton-block h-4 w-28" /></div>
+                  <div className="skeleton-block h-5 w-3/5" />
+                  <div className="skeleton-block h-3 w-2/5" />
+                </div>
+                <div className="hidden shrink-0 space-y-2 sm:block"><div className="skeleton-block h-3 w-24" /><div className="skeleton-block h-5 w-28" /><div className="skeleton-block h-3 w-32" /></div>
+              </div>
+            ))}
             {visibleFiltered.map(o => {
               const prod = productInfo(o);
               const partNo = prod ? prod.productNumber : "-";
               const unitPrice = prod ? prod.unitPrice : (o.quantity > 0 ? Math.round(o.orderAmount / o.quantity) : 0);
               return (
                 <div key={o.id} onClick={() => selectOrder(o)}
-                  className={`row-culled flex items-center gap-3 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
+                  className={`flex items-center gap-3 px-4 py-3 border-b border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer ${selectedId === o.id ? "bg-blue-50" : ""}`}>
                   <input
                     type="checkbox"
                     checked={selectedBillingIds.has(o.id)}
@@ -2470,10 +2583,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
                 </div>
               );
             })}
+            {!orderPageLoading && visibleFiltered.length === 0 && <p className="px-4 py-10 text-center text-sm text-slate-500">{lang === "ja" ? "条件に一致する受注がありません。" : "No matching orders."}</p>}
           </div>
-          {filtered.length > listPageSize && <nav aria-label={lang === "ja" ? "受注一覧のページ" : "Order list pages"} className="flex items-center justify-center gap-3 border-t border-slate-200 bg-white p-3 text-sm">
+          {orderPage.total > listPageSize && <nav aria-label={lang === "ja" ? "受注一覧のページ" : "Order list pages"} className="flex items-center justify-center gap-3 border-t border-slate-200 bg-white p-3 text-sm">
             <button type="button" disabled={listPage === 0} onClick={() => setListPage(current => Math.max(0, current - 1))} className="rounded border border-slate-300 px-3 py-2 disabled:opacity-40">{lang === "ja" ? "前へ" : "Previous"}</button>
-            <span className="tabular-nums text-slate-600">{listPage + 1} / {listPageCount} · {filtered.length} {lang === "ja" ? "件" : "orders"}</span>
+            <span className="tabular-nums text-slate-600">{listPage + 1} / {listPageCount} · {orderPage.total} {lang === "ja" ? "件" : "orders"}</span>
             <button type="button" disabled={listPage >= listPageCount - 1} onClick={() => setListPage(current => Math.min(listPageCount - 1, current + 1))} className="rounded border border-slate-300 px-3 py-2 disabled:opacity-40">{lang === "ja" ? "次へ" : "Next"}</button>
           </nav>}
         </main>
@@ -2855,10 +2969,22 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   const [isNew, setIsNew] = useDurableState("client-new", isScanRouted, isScanRouted);
   const [dirty, setDirty] = useDurableState("client-dirty", isScanRouted, isScanRouted);
   const [search, setSearch] = useState("");
+  const [listPage, setListPage] = useState(0);
+  const [clientPage, setClientPage] = useState({ rows: clients, total: clients.length });
   const [errors, setErrors] = useState<FormErrors>({});
   const listPanel = useResizablePanel({ initial: 240, min: 160, max: 460, storageKey: "kiyometa.clients.list" });
 
-  const filteredClients = clients.filter(c => !search.trim() || c.name.toLowerCase().includes(search.trim().toLowerCase()));
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchClientsPage({ page: listPage, pageSize: 50, search, signal: controller.signal })
+        .then(({ rows, total }) => setClientPage({ rows, total }))
+        .catch(error => { if (!controller.signal.aborted) reportConnectivityError(error); });
+    }, 200);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [listPage, search]);
+  useEffect(() => setListPage(0), [search]);
+  const filteredClients = clientPage.rows;
 
   const sf = (v: keyof Client) => (e: string) => {
     setForm(prev => ({ ...prev, [v]: e }));
@@ -2874,7 +3000,14 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
   const handleSave = async () => {
     const cleaned = cleanClient(form);
     setForm(cleaned);
-    const errs = validateClient(cleaned, clients, isNew, lang);
+    let validationClients = clients;
+    try {
+      validationClients = (await fetchClientsPage({ search: cleaned.name, pageSize: 100 })).rows;
+    } catch (error) {
+      dialog.alert(friendlyNetworkMessage(error, lang));
+      return;
+    }
+    const errs = validateClient(cleaned, validationClients, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const candidate = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: genUUID() } : cleaned;
     setForm(candidate);
@@ -2894,6 +3027,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
         ? prev.map(c => c.id === saved.id ? saved : c)
         : [...prev, saved];
     });
+    setClientPage(previous => ({ ...previous, rows: previous.rows.some(client => client.id === saved.id) ? previous.rows.map(client => client.id === saved.id ? saved : client) : [saved, ...previous.rows], total: previous.total + (previous.rows.some(client => client.id === saved.id) ? 0 : 1) }));
     setForm(saved);
     setSelectedId(saved.id);
     setIsNew(false);
@@ -2912,6 +3046,8 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
       }
     }
   };
+
+  useNavigationGuard({ dirty, save: async () => { await handleSave(); return true; }, discard: () => { setDirty(false); setErrors({}); } });
 
   const handlePostalSearch = () => {
     const e: FormErrors = {};
@@ -2936,6 +3072,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     }
     const rest = clients.filter(client => client.id !== deletedId);
     setClients(rest);
+    setClientPage(previous => ({ rows: previous.rows.filter(client => client.id !== deletedId), total: Math.max(0, previous.total - 1) }));
     setDirty(false);
     if (rest[0]) {
       setForm(rest[0]);
@@ -2971,6 +3108,11 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
               </button>
             ))}
           </div>
+          {clientPage.total > 50 && <div className="flex items-center justify-between border-t border-slate-200 p-2 text-xs">
+            <button type="button" disabled={listPage === 0} onClick={() => setListPage(page => page - 1)} className="rounded border px-2 py-1 disabled:opacity-40">{lang === "ja" ? "前へ" : "Previous"}</button>
+            <span>{listPage + 1} / {Math.ceil(clientPage.total / 50)}</span>
+            <button type="button" disabled={(listPage + 1) * 50 >= clientPage.total} onClick={() => setListPage(page => page + 1)} className="rounded border px-2 py-1 disabled:opacity-40">{lang === "ja" ? "次へ" : "Next"}</button>
+          </div>}
         </aside>
 
         <ResizeHandle label={t("resizeList", lang)} {...listPanel.handleProps} />
@@ -3070,6 +3212,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const [dirty, setDirty] = useDurableState("product-dirty", isScanRouted, isScanRouted);
   const [errors, setErrors] = useState<FormErrors>({});
   const [search, setSearch] = useState("");
+  const [listPage, setListPage] = useState(0);
+  const [productPage, setProductPage] = useState({ rows: products, total: products.length });
   const [drawingIndex, setDrawingIndex] = useState<number | null>(null);
   const [focusedRow, setFocusedRow] = useState<number | null>(null);
   const [showCalcInfo, setShowCalcInfo] = useState(false);
@@ -3139,11 +3283,17 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   }, []);
 
   const taskErrors = Object.entries(errors).filter(([k, v]) => k.startsWith("task_") && v);
-  const filtered = products.filter(p => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return p.productName.toLowerCase().includes(q) || p.productNumber.toLowerCase().includes(q) || (p.internalCompanyName ?? "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
-  });
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void fetchProductsPage({ page: listPage, pageSize: 50, search, signal: controller.signal })
+        .then(({ rows, total }) => setProductPage({ rows, total }))
+        .catch(error => { if (!controller.signal.aborted) reportConnectivityError(error); });
+    }, 200);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [listPage, search]);
+  useEffect(() => setListPage(0), [search]);
+  const filtered = productPage.rows;
   const totalTime = form.tasks.reduce((s, t) => s + (t.time === "" ? 0 : Number(t.time)), 0);
   // These three were rebuilt from scratch on every render: productMaterials
   // scanned the whole BOM table, inventoryById ran a linear .find() per call
@@ -3180,6 +3330,8 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
     });
     return () => controller.abort();
   }, []);
+
+  useNavigationGuard({ dirty, save: async () => { await handleSave(); return true; }, discard: () => { setDirty(false); setErrors({}); } });
 
   const addMaterial = async () => {
     if (isNew) {
@@ -3303,7 +3455,14 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   const handleSave = async () => {
     const cleaned = cleanProduct(form);
     setForm(cleaned);
-    const errs = validateProduct(cleaned, products, isNew, lang);
+    let validationProducts = products;
+    try {
+      validationProducts = (await fetchProductsPage({ search: cleaned.productNumber || cleaned.productName, pageSize: 100 })).rows;
+    } catch (error) {
+      dialog.alert(friendlyNetworkMessage(error, lang));
+      return;
+    }
+    const errs = validateProduct(cleaned, validationProducts, isNew, lang);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     const record = isNew && !/^[0-9a-f-]{36}$/i.test(cleaned.id) ? { ...cleaned, id: genUUID() } : cleaned;
     setForm(record);
@@ -3313,6 +3472,10 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setProducts(prev => prev.some(p => p.id === saved.id)
         ? prev.map(p => p.id === saved.id ? saved : p)
         : [...prev, saved]);
+      setProductPage(previous => {
+        const exists = previous.rows.some(product => product.id === saved.id);
+        return { rows: exists ? previous.rows.map(product => product.id === saved.id ? saved : product) : [saved, ...previous.rows].slice(0, 50), total: previous.total + (exists ? 0 : 1) };
+      });
       // productFromRow comes back with empty display strings because the stored
       // value is a key, not a URL, so the freshly saved drawings have to be
       // signed again or the slots would blank out under the user.
@@ -3348,8 +3511,9 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       dialog.alert(lang === "ja" ? `製品の削除に失敗しました: ${message}` : `Failed to delete product: ${message}`);
       return;
     }
-    const rest = products.filter(product => product.id !== deletedId);
-    setProducts(rest);
+    const rest = productPage.rows.filter(product => product.id !== deletedId);
+    setProducts(previous => previous.filter(product => product.id !== deletedId));
+    setProductPage(previous => ({ rows: previous.rows.filter(product => product.id !== deletedId), total: Math.max(0, previous.total - 1) }));
     setDirty(false);
     if (rest[0]) {
       void openProduct(rest[0]);
@@ -3386,6 +3550,11 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
                 <div className="text-sm text-[#0d7377] mt-0.5">{p.unitPrice === "" ? "-" : `¥${Number(p.unitPrice).toLocaleString()}`}</div>
               </button>
             ))}
+          </div>
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-slate-200 p-2 text-xs text-slate-500">
+            <button type="button" disabled={listPage === 0} onClick={() => setListPage(page => Math.max(0, page - 1))} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">{lang === "ja" ? "前へ" : "Previous"}</button>
+            <span>{listPage + 1} / {Math.max(1, Math.ceil(productPage.total / 50))}</span>
+            <button type="button" disabled={(listPage + 1) * 50 >= productPage.total} onClick={() => setListPage(page => page + 1)} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">{lang === "ja" ? "次へ" : "Next"}</button>
           </div>
         </aside>
 
@@ -3777,7 +3946,7 @@ function DeliverySlipPage({ mode, orders, clients, products, orderIds, lang, set
 // Stable empty result, so a day with no orders keeps its identity across renders.
 const NO_ORDERS: OrderRecord[] = [];
 
-function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }: {
+function SchedulePage({ orders: _orders, setOrders, products, onNavigate, lang, setLang }: {
   orders: OrderRecord[]; setOrders: React.Dispatch<React.SetStateAction<OrderRecord[]>>;
   products: Product[]; onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void; lang: Lang; setLang: (l: Lang) => void;
 }) {
@@ -3793,6 +3962,8 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
   const [panelForm, setPanelForm] = useDurableState<OrderRecord | null>("schedule-form", null);
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useDurableState("schedule-dirty", false);
+  const [calendarOrders, setCalendarOrders] = useState<OrderRecord[]>([]);
+const [calendarLoading, setCalendarLoading] = useState(true);
   const filterPanel = useResizablePanel({ initial: 192, min: 150, max: 360, storageKey: "kiyometa.schedule.filter" });
   const detailPanel = useResizablePanel({ initial: 320, min: 220, max: 560, storageKey: "kiyometa.schedule.detail" });
 
@@ -3802,18 +3973,36 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
     return m;
   }, [products]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const first = new Date(year, month, 1);
+    first.setDate(first.getDate() - first.getDay());
+    const days = viewMode === "1W" ? 7 : viewMode === "2W" ? 14 : viewMode === "3W" ? 21 : 42;
+    const last = new Date(first);
+    last.setDate(last.getDate() + days - 1);
+    const date = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+    const statuses = Object.entries(statusFilter).filter(([, enabled]) => enabled).map(([status]) => status);
+setCalendarLoading(true);
+    void fetchOrdersForRange({ fromDate: date(first), toDate: date(last), statuses, signal: controller.signal })
+.then(rows => { setCalendarOrders(rows); setCalendarLoading(false); })
+.catch(error => { if (!controller.signal.aborted) { reportConnectivityError(error); setCalendarLoading(false); } });
+    return () => controller.abort();
+  }, [currentDate, viewMode, statusFilter]);
+
   // Each of the 42 day cells used to run orders.filter(...) for itself, so a
   // single render scanned the order table 42 times. One grouped pass instead;
   // insertion order keeps each cell's orders in their original sequence.
   const ordersByDay = useMemo(() => {
     const m = new Map<string, OrderRecord[]>();
-    for (const o of orders) {
+    for (const o of calendarOrders) {
       if (!statusFilter[o.progress]) continue;
       const list = m.get(o.deliveryDate);
       if (list) list.push(o); else m.set(o.deliveryDate, [o]);
     }
     return m;
-  }, [orders, statusFilter]);
+  }, [calendarOrders, statusFilter]);
 
   const clearSelection = () => { setSelectedId(null); setPanelForm(null); setSaved(false); setDirty(false); };
 
@@ -3951,6 +4140,7 @@ function SchedulePage({ orders, setOrders, products, onNavigate, lang, setLang }
                     {calDay.day}
                   </span>
                   <div className="flex flex-col gap-1">
+                    {calendarLoading && calendarOrders.length === 0 && i % 4 === 0 && <div aria-hidden="true" className="space-y-1"><div className="skeleton-block h-5 w-full" /><div className="skeleton-block h-5 w-4/5" /></div>}
                     {dayOrders.map(o => {
                       const bg = SCHEDULE_STATUS_COLORS[o.progress] || "bg-slate-200 text-slate-800 border-slate-300";
                       const isSelected = selectedId === o.id;
@@ -4197,7 +4387,9 @@ function sameRows<T extends object>(previous: T[], next: T[]): boolean {
 
 export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lang) => void }) {
   const { profile, signOut } = useAuth();
+  const dialog = useDialog();
   const [page, setPage] = useDurableState<Page>("page", "home");
+  const [managementInitialTab, setManagementInitialTab] = useState<"users" | "audit">("users");
   // Screens the operator has left, newest last. Back walks this so returning
   // from a submenu lands on the menu they actually came from, not always Home.
   const [navHistory, setNavHistory] = useState<Page[]>([]);
@@ -4219,6 +4411,11 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   // search page, and they need to know exactly which rows were selected.
   const [billingOrderIds, setBillingOrderIds] = useDurableState<string[]>("billing-selection", []);
   const [isPending, startTransition] = useTransition();
+  const [routePreparing, setRoutePreparing] = useState(false);
+  const [routeDirection, setRouteDirection] = useState<"forward" | "back">("forward");
+  const navigationGuardRef = useRef<NavigationGuard | null>(null);
+  const navigationChoiceRef = useRef<"stay" | "discard">("stay");
+  const navigationRequest = useRef(0);
   const [moduleAttempt, setModuleAttempt] = useState(0);
   // React.lazy retains a rejected import. An explicit retry needs a fresh lazy
   // instance; successful module imports still use the browser's module cache.
@@ -4230,7 +4427,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   }), [moduleAttempt]);
   // While a route transition is in flight (chunk still downloading), drive the
   // shared global popup so the user sees progress over the page they stay on.
-  useLoadingScope(isPending);
+  useLoadingScope(isPending || routePreparing);
 
   // Warm the lazy module chunks once the app is idle. After the first visit the
   // chunks are cached, so navigation no longer suspends and feels instant.
@@ -4264,7 +4461,8 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       try {
         do {
           refreshQueued = false;
-          const data = await fetchAll(controller.signal);
+          const pages = await fetchMasterPage({ pageSize: 100, signal: controller.signal });
+          const data = { clients: pages.clients.rows, products: pages.products.rows, orders: pages.orders.rows };
           if (cancelled) return;
           // A realtime event arrived during this read. Discard this snapshot and
           // read again so a slower response cannot replace newer data.
@@ -4275,6 +4473,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
           setOrders(previous => sameRows(previous, data.orders) ? previous : data.orders);
           setDataState("ready");
           setDataError("");
+          reportConnectivityRestored();
           initialLoadComplete = true;
         } while (refreshQueued && !cancelled);
       } catch (err) {
@@ -4346,36 +4545,107 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
     return () => window.removeEventListener("kiyometa-order-saved", saved);
   }, [profile.id]);
 
-  const navigate = (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
+  const navigate = async (p: Page, mode?: DeliverySlipMode, orderId?: string) => {
+    const guard = navigationGuardRef.current;
+    if (guard?.dirty) {
+      navigationChoiceRef.current = "stay";
+      const save = await dialog.confirm(
+        lang === "ja" ? "保存されていない変更があります。移動する前にどうしますか？" : "You have unsaved changes. What would you like to do before leaving?",
+        {
+          title: lang === "ja" ? "未保存の変更" : "Unsaved changes",
+          headerTone: "navy",
+          confirmLabel: lang === "ja" ? "変更を保存" : "Save changes",
+          cancelLabel: lang === "ja" ? "ここに留まる" : "Stay",
+          secondaryActionLabel: lang === "ja" ? "変更を破棄" : "Discard changes",
+          secondaryActionTone: "danger",
+          secondaryActionPosition: "actions",
+          onSecondaryAction: () => { navigationChoiceRef.current = "discard"; guard.discard(); },
+          actionsAlign: "start",
+        },
+      );
+      if (save) {
+        const saved = await guard.save();
+        if (!saved) return;
+      } else if (String(navigationChoiceRef.current) !== "discard") {
+        return;
+      }
+    }
+    const request = ++navigationRequest.current;
     if (p !== "production-progress") setProgressProductId(null);
     if (mode) setDeliveryMode(mode);
     if (orderId) setChecklistOrderId(orderId);
-    // Record the page being left, capped so a long session cannot grow forever.
-    if (p !== pageRef.current) setNavHistory(history => [...history.slice(-19), pageRef.current]);
-    // Route changes are a transition: if the target module's chunk is still
-    // downloading, React keeps the current page on screen (and the global popup
-    // shows) instead of swapping to a blank one, then commits once it's ready.
-    startTransition(() => setPage(p));
+    const commit = () => {
+      if (request !== navigationRequest.current) return;
+      setRoutePreparing(false);
+      if (p !== pageRef.current) setNavHistory(history => [...history.slice(-19), pageRef.current]);
+      setRouteDirection("forward");
+      startTransition(() => {
+        if (p !== "management") setManagementInitialTab("users");
+        setPage(p);
+      });
+    };
+    const preparation = preparePage(p);
+    if (!preparation) {
+      commit();
+      return;
+    }
+    setRoutePreparing(true);
+    // Keep the current page intact while the target chunk and its first data
+    // snapshot load. The upper limit still lets an offline user open the page.
+    void waitAtMost(preparation, 8000).then(commit);
   };
+
+  useEffect(() => {
+    const openActivityAudit = () => {
+      setManagementInitialTab("audit");
+      navigate("management");
+    };
+    window.addEventListener("kiyometa-open-activity-audit", openActivityAudit);
+    return () => window.removeEventListener("kiyometa-open-activity-audit", openActivityAudit);
+  }, [navigate]);
 
   // Back returns to the last screen opened; with nothing on the stack it falls
   // back to Home, which is what the arrow used to do unconditionally.
   const goBack = () => {
     const target = navHistory.length ? navHistory[navHistory.length - 1] : "home";
+    const request = ++navigationRequest.current;
     setNavHistory(history => history.slice(0, -1));
-    startTransition(() => setPage(target));
+    const commit = () => {
+      if (request !== navigationRequest.current) return;
+      setRoutePreparing(false);
+      setRouteDirection("back");
+      startTransition(() => setPage(target));
+    };
+    const preparation = preparePage(target);
+    if (!preparation) { commit(); return; }
+    setRoutePreparing(true);
+    void waitAtMost(preparation, 8000).then(commit);
   };
 
   const openScan = () => setScanOpen(true);
 
-  const handleScanApply = (data: ScanFillData, clientExists: boolean, productExists: boolean) => {
+  const handleScanApply = async (data: ScanFillData, _clientExists: boolean, _productExists: boolean) => {
+    let matchedClients: Client[];
+    let matchedProducts: Product[];
+    try {
+      [matchedClients, matchedProducts] = await Promise.all([
+        fetchClientsPage({ search: data.client, pageSize: 100 }).then(result => result.rows),
+        fetchProductsPage({ search: data.productNumber || data.productName, pageSize: 100 }).then(result => result.rows),
+      ]);
+    } catch (error) {
+      reportConnectivityError(error);
+      return;
+    }
     setScanOpen(false);
     // Use the exact master names so the order always links to existing records
     // when corporate abbreviations or department suffixes differ.
-    const client = findClientMatch(clients, data.client)?.name ?? data.client;
+    const matchedClient = findClientMatch(matchedClients, data.client);
+    const client = matchedClient?.name ?? data.client;
+    const clientExists = Boolean(matchedClient);
+    const masterProduct = findProductMatch(matchedProducts, client, data.productName, data.productNumber);
+    const productExists = Boolean(masterProduct);
     if (!clientExists) { setScanRouting({ stage: "need-client", data: { ...data, client } }); navigate("client-master"); return; }
     if (!productExists) { setScanRouting({ stage: "need-product", data: { ...data, client } }); navigate("product-master"); return; }
-    const masterProduct = findProductMatch(products, client, data.productName, data.productNumber);
     setScanRouting({ stage: "filling", data: { ...data, client, productName: masterProduct?.productName ?? data.productName } });
     navigate("order-entry");
   };
@@ -4388,7 +4658,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
   }, [orders]);
 
   if (dataState === "loading") {
-    return <PageLoading />;
+    return <PageLoading page={page} lang={lang} />;
   }
 
   if (dataState === "error") {
@@ -4419,6 +4689,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
           a transition into a still-downloading module keeps the previous page
           visible instead of revealing the fallback; the fallback only appears
           if there is genuinely no page to preserve. */}
+      <NavigationGuardContext.Provider value={guard => { navigationGuardRef.current = guard; }}>
       <BackNavContext.Provider value={goBack}>
       <ModuleErrorBoundary resetKey={page} onRetry={() => setModuleAttempt(attempt => attempt + 1)}
         fallback={(_error, retry) => (
@@ -4435,8 +4706,8 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
             </div>
           </AppShell>
         )}>
-      <Suspense fallback={<PageLoading />}>
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <Suspense fallback={<PageLoading page={page} lang={lang} />}>
+      <div key={page} className={`route-stage flex-1 min-h-0 overflow-hidden ${routeDirection === "back" ? "route-back" : "route-forward"}`}>
         {page === "home"           && <HomePage orders={dedupedOrders} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} />}
         {page === "order-entry"    && <OrderEntryPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} onOpenScan={openScan} lang={lang} setLang={setLang} {...sharedScan} />}
         {page === "search-billing" && <SearchBillingPage orders={dedupedOrders} setOrders={setOrders} clients={clients} products={products} onNavigate={navigate} billingOrderIds={billingOrderIds} setBillingOrderIds={setBillingOrderIds} lang={lang} setLang={setLang} />}
@@ -4448,13 +4719,14 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
         {page === "production-progress" && <ProgressBoard orders={dedupedOrders} products={products} onNavigate={navigate} lang={lang} setLang={setLang} focusOrderId={checklistOrderId ?? undefined} focusProductId={progressProductId ?? undefined} />}
         {page === "checklist"      && <ChecklistPage key={checklistOrderId} orderId={checklistOrderId} onNavigate={navigate} orders={dedupedOrders} products={products} lang={lang} setOrders={setOrders} />}
         {page === "inventory"       && <InventoryPage products={products} onNavigate={navigate} lang={lang} setLang={setLang} />}
-        {page === "management" && profile.role === "administrator" && <ManagementPage onNavigate={navigate} lang={lang} setLang={setLang} />}
+        {page === "management" && profile.role === "administrator" && <ManagementPage key={managementInitialTab} initialTab={managementInitialTab} onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "management" && profile.role !== "administrator" && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
         {page === "profile"        && <ProfilePage onNavigate={navigate} lang={lang} setLang={setLang} />}
       </div>
       </Suspense>
       </ModuleErrorBoundary>
       </BackNavContext.Provider>
+      </NavigationGuardContext.Provider>
 
       {scanOpen && <ScanModal clients={clients} products={products} onClose={() => setScanOpen(false)} onApply={handleScanApply} lang={lang} />}
     </div>

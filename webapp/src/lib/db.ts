@@ -184,6 +184,104 @@ const PRODUCT_LIST_COLUMNS =
 // instead of being forced through ProductRow.
 type ProductListRow = Omit<ProductRow, "tasks" | "drawings">;
 
+export type MasterPage<T> = { rows: T[]; total: number; page: number; pageSize: number };
+export type MasterPageOptions = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  signal?: AbortSignal;
+};
+
+export type OrderPageOptions = MasterPageOptions & {
+  fromDate?: string;
+  toDate?: string;
+  clients?: string[];
+  statuses?: string[];
+  sortBy?: "delivery_date" | "order_date";
+  ascending?: boolean;
+};
+
+const boundedPageSize = (value: number | undefined) => Math.min(100, Math.max(1, Math.floor(value ?? 50)));
+const pageRange = (options: MasterPageOptions) => {
+  const pageSize = boundedPageSize(options.pageSize);
+  const page = Math.max(0, Math.floor(options.page ?? 0));
+  return { page, pageSize, from: page * pageSize, to: page * pageSize + pageSize - 1 };
+};
+
+const searchPattern = (value: string) => `%${value.replace(/[\\%_]/g, match => `\\${match}`)}%`;
+
+export async function fetchClientsPage(options: MasterPageOptions = {}): Promise<MasterPage<Client>> {
+  const processId = startProcess("client.page");
+  const { page, pageSize, from, to } = pageRange(options);
+  const search = options.search?.trim();
+  let query = supabase.from("clients").select("*", { count: "exact" }).order("name").order("id").range(from, to);
+  if (search) query = query.or(["name", "phone", "email", "address"].map(field => `${field}.ilike.${searchPattern(search)}`).join(","));
+  const traced = traceQuery(query, processId, "client.page");
+  const { data, error, count } = await (options.signal ? traced.abortSignal(options.signal) : traced);
+  if (error) throw error;
+  return { rows: (data as ClientRow[]).map(clientFromRow), total: count ?? 0, page, pageSize };
+}
+
+export async function fetchProductsPage(options: MasterPageOptions & { client?: string } = {}): Promise<MasterPage<Product>> {
+  const processId = startProcess("product.page");
+  const { page, pageSize, from, to } = pageRange(options);
+  const search = options.search?.trim();
+  let query = supabase.from("products").select(PRODUCT_LIST_COLUMNS, { count: "exact" }).order("product_name").order("id").range(from, to);
+  if (options.client) query = query.eq("client_name", options.client);
+  if (search) query = query.or(["client_name", "product_name", "product_number", "internal_company_name"].map(field => `${field}.ilike.${searchPattern(search)}`).join(","));
+  const traced = traceQuery(query, processId, "product.page");
+  const { data, error, count } = await (options.signal ? traced.abortSignal(options.signal) : traced);
+  if (error) throw error;
+  return { rows: (data as ProductListRow[]).map(productListFromRow), total: count ?? 0, page, pageSize };
+}
+
+export async function fetchOrdersPage(options: OrderPageOptions = {}): Promise<MasterPage<OrderRecord>> {
+  const processId = startProcess("order.page");
+  const { page, pageSize, from, to } = pageRange(options);
+  const search = options.search?.trim();
+  let query = supabase.from("orders").select("*", { count: "exact" })
+    .order(options.sortBy ?? "delivery_date", { ascending: options.ascending ?? true }).order("id").range(from, to);
+  if (options.fromDate) query = query.gte("delivery_date", options.fromDate);
+  if (options.toDate) query = query.lte("delivery_date", options.toDate);
+  if (options.clients?.length) query = query.in("client", options.clients);
+  if (options.statuses) query = options.statuses.length ? query.in("progress", options.statuses) : query.eq("progress", "__none__");
+  if (search) query = query.or(["client", "order_number", "product_name"].map(field => `${field}.ilike.${searchPattern(search)}`).join(","));
+  const traced = traceQuery(query, processId, "order.page");
+  const { data, error, count } = await (options.signal ? traced.abortSignal(options.signal) : traced);
+  if (error) throw error;
+  return { rows: (data as OrderRow[]).map(orderFromRow), total: count ?? 0, page, pageSize };
+}
+
+/** Fetches a bounded date/filter result for calendar and explicit document actions. */
+export async function fetchOrdersForRange(options: Omit<OrderPageOptions, "page" | "pageSize">): Promise<OrderRecord[]> {
+  const rows: OrderRecord[] = [];
+  for (let page = 0; ; page += 1) {
+    const result = await fetchOrdersPage({ ...options, page, pageSize: 100 });
+    rows.push(...result.rows);
+    if (rows.length >= result.total || result.rows.length === 0) return rows;
+  }
+}
+
+export async function fetchOrderStatusCounts(signal?: AbortSignal): Promise<{ inProduction: number; shipped: number }> {
+  const processId = startProcess("order.status_counts");
+  const count = async (progress: string) => {
+    const traced = traceQuery(supabase.from("orders").select("id", { count: "exact", head: true }).eq("progress", progress), processId, "order.status_counts");
+    const result = await (signal ? traced.abortSignal(signal) : traced);
+    if (result.error) throw result.error;
+    return result.count ?? 0;
+  };
+  const [inProduction, shipped] = await Promise.all([count("In production"), count("Shipped")]);
+  return { inProduction, shipped };
+}
+
+/** A small startup snapshot. Full snapshots remain available only for export and offline workflows. */
+export async function fetchMasterPage(options: MasterPageOptions = {}) {
+  const [clients, products, orders] = await Promise.all([
+    fetchClientsPage(options), fetchProductsPage(options), fetchOrdersPage(options),
+  ]);
+  return { clients, products, orders };
+}
+
 export async function fetchAll(signal?: AbortSignal) {
   const processId = startProcess("master.initial_load");
   const [clients, products, orders] = await Promise.all([

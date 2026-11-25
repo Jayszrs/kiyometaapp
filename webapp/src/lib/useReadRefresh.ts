@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { createReadRefresh } from "./readRefresh";
-import { reportConnectivityError } from "./networkStatus";
+import { reportConnectivityError, reportConnectivityRestored } from "./networkStatus";
 
 export function useReadRefresh<T>(
   read: (signal: AbortSignal) => Promise<T>,
@@ -17,10 +17,15 @@ export function useReadRefresh<T>(
       callbacks.current.busy(true);
       try {
         const data = await callbacks.current.read(signal);
-        if (!signal.aborted) callbacks.current.apply(data);
+        if (!signal.aborted) {
+          callbacks.current.apply(data);
+          reportConnectivityRestored();
+        }
       } catch (error) {
-        reportConnectivityError(error);
-        if (!signal.aborted) callbacks.current.fail(error);
+        if (!signal.aborted) {
+          reportConnectivityError(error);
+          callbacks.current.fail(error);
+        }
       } finally {
         if (!signal.aborted) callbacks.current.busy(false);
       }

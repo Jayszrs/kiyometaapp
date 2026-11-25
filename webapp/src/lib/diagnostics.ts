@@ -4,6 +4,8 @@ import { resultCode } from "./resultCodes";
 const key = "kiyometa-diagnostics";
 const startedProcesses = new Set<string>();
 let flushing = false;
+let flushRetryAt = 0;
+let flushRetryDelay = 15_000;
 const deviceKey = "kiyometa-diagnostic-device";
 const currentProcessByOperation = new Map<string, string>();
 const parentProcessById = new Map<string, string>();
@@ -196,6 +198,7 @@ export async function recordFrontendFailure(operation: string, error: unknown, c
 }
 export async function flushDiagnostics(sourceFilter?: "web" | "supabase") {
   if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  if (Date.now() < flushRetryAt) return;
   if (flushing) return;
   flushing = true;
   try {
@@ -212,12 +215,18 @@ export async function flushDiagnostics(sourceFilter?: "web" | "supabase") {
     const batch = recent.filter(event => event.actor_id === data.session!.user.id && (!sourceFilter || event.source === sourceFilter)).slice(0, 50);
     if (!batch.length) return;
     const response = await fetch("/ocr/diagnostics", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ events: batch }) });
-    if (response.ok) {
-      const sent = new Set(batch.map(event => event.event_id));
-      const current = JSON.parse(localStorage.getItem(key) ?? "[]") as { event_id: string }[];
-      localStorage.setItem(key, JSON.stringify(current.filter(event => !sent.has(event.event_id))));
-    }
-  } catch { /* Retain bounded events until the next connection. */ }
+    if (!response.ok) throw new Error("Diagnostics endpoint is unavailable.");
+    const sent = new Set(batch.map(event => event.event_id));
+    const current = JSON.parse(localStorage.getItem(key) ?? "[]") as { event_id: string }[];
+    localStorage.setItem(key, JSON.stringify(current.filter(event => !sent.has(event.event_id))));
+    flushRetryAt = 0;
+    flushRetryDelay = 15_000;
+  } catch {
+    // Keep local events and back off when the OCR/log service is absent (common
+    // when running only Vite locally) instead of hammering its proxy every event.
+    flushRetryAt = Date.now() + flushRetryDelay;
+    flushRetryDelay = Math.min(flushRetryDelay * 2, 5 * 60_000);
+  }
   finally { flushing = false; }
 }
 export function flushOcrDiagnostics(): Promise<void> { return flushDiagnostics("web"); }

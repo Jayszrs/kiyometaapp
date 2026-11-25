@@ -9,7 +9,6 @@ import { useReadRefresh } from "./lib/useReadRefresh";
 import { friendlyNetworkMessage, isConnectivityError } from "./lib/networkStatus";
 import { useDurableState } from "./lib/useDurableState";
 import HelpDialog from "./components/HelpDialog";
-import WorkflowHint from "./components/WorkflowHint";
 import {
   createManufacturingOperation,
   fetchManufacturingProgress,
@@ -65,16 +64,31 @@ const draftFromTask = (task?: ProductionTaskProgress): ProductionTaskDraft => ({
   requestId: "",
 });
 
+type ProgressSnapshot = Awaited<ReturnType<typeof fetchManufacturingProgress>>;
+let progressSnapshot: ProgressSnapshot | null = null;
+let progressSnapshotRequest: Promise<ProgressSnapshot> | null = null;
+
+export function preloadProductionProgress(): Promise<ProgressSnapshot> {
+  if (progressSnapshot) return Promise.resolve(progressSnapshot);
+  if (!progressSnapshotRequest) {
+    progressSnapshotRequest = fetchManufacturingProgress().then(data => {
+      progressSnapshot = data;
+      return data;
+    }).finally(() => { progressSnapshotRequest = null; });
+  }
+  return progressSnapshotRequest;
+}
+
 export default function ProgressBoard({ orders, products, onNavigate, lang, setLang, focusOrderId, focusProductId }: Props) {
   const { profile } = useAuth();
   const dialog = useDialog();
   const text = (en: string, ja: string) => lang === "ja" ? ja : en;
-  const [operations, setOperations] = useState<ManufacturingOperation[]>([]);
-  const [tasks, setTasks] = useState<ProductionTaskProgress[]>([]);
-  const [routes, setRoutes] = useState<{ productId: string; operationId: string; standardMinutes: number | null }[]>([]);
+  const [operations, setOperations] = useState<ManufacturingOperation[]>(() => progressSnapshot?.operations ?? []);
+  const [tasks, setTasks] = useState<ProductionTaskProgress[]>(() => progressSnapshot?.tasks ?? []);
+  const [routes, setRoutes] = useState<{ productId: string; operationId: string; standardMinutes: number | null }[]>(() => progressSnapshot?.routes ?? []);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(() => !progressSnapshot);
+  const [loaded, setLoaded] = useState(() => !!progressSnapshot);
   const [search, setSearch] = useState("");
   const [orderStatus, setOrderStatus] = useState("all");
   const [saving, setSaving] = useState<Set<string>>(new Set());
@@ -89,9 +103,19 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
   const [catalogExpanded, setCatalogExpanded] = useState(false);
   const pendingWrites = useRef(new Set<string>());
 
+  const scopedOrderIds = useMemo(() => orders.map(order => order.id), [orders]);
+  const scopedProductIds = useMemo(() => {
+    const ids = new Set<string>();
+    const productsByKey = new Map(products.map(product => [`${product.clientName}\u0000${product.productName}`, product.id]));
+    for (const order of orders) {
+      const productId = order.productId ?? productsByKey.get(`${order.client}\u0000${order.productName}`);
+      if (productId) ids.add(productId);
+    }
+    return [...ids];
+  }, [orders, products]);
   const load = useReadRefresh(
-    signal => fetchManufacturingProgress(signal),
-    data => { setOperations(data.operations); setTasks(data.tasks); setRoutes(data.routes); setError(""); setLoaded(true); },
+    signal => fetchManufacturingProgress(signal, { orderIds: scopedOrderIds, productIds: scopedProductIds }),
+    data => { progressSnapshot = data; setOperations(data.operations); setTasks(data.tasks); setRoutes(data.routes); setError(""); setLoaded(true); },
     failure => setError(isConnectivityError(failure) ? "" : friendlyNetworkMessage(failure, lang)),
     setLoading,
   );
@@ -395,23 +419,16 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
                 </label>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs font-700">
-              <span className="ml-auto self-center text-slate-500">{loading ? text("Refreshing…", "更新中…") : `${filteredOrders.length} ${text("orders", "件")} · ${visibleRealOperations.length} ${text("processes", "工程")}`}</span>
-            </div>
-            <WorkflowHint steps={[
-              { number: "1", title: text("Order", "注文"), detail: text("Quantity sets the plan.", "数量が予定を決めます。") },
-              { number: "2", title: text("Record work", "作業を記録"), detail: text("Enter actual values in a stage cell.", "工程欄に実績を入力します。") },
-              { number: "3", title: text("WIP", "WIP"), detail: text("Inventory uses those records.", "在庫画面が記録を使います。") },
-            ]} />
           </section>
 
-          <section aria-label={text("Production summary", "製造進捗の概要")} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <section aria-label={text("Production summary", "製造進捗の概要")} className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {[
+              [text("Orders shown", "表示中の受注"), filteredOrders.length, "text-[#1a3458]"],
               [text("Tracked production orders", "追跡中の製造受注"), productionTaskSummary.orders, "text-[#1a3458]"],
               [text("Completed stages", "完了工程"), productionTaskSummary.completed, "text-emerald-700"],
               [text("Active stages", "作業中の工程"), productionTaskSummary.active, "text-amber-700"],
               [text("Issues", "問題"), productionTaskSummary.issues, productionTaskSummary.issues ? "text-red-700" : "text-slate-700"],
-            ].map(([label, value, color]) => <div key={String(label)} className="rounded-sm border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-600 text-slate-500">{label}</p><p className={`mt-1 text-2xl font-700 ${color}`}>{value}</p></div>)}
+            ].map(([label, value, color]) => <div key={String(label)} className="rounded-sm border border-slate-200 bg-white px-4 py-3"><p className="text-xs font-600 text-slate-500">{label}</p><p className={`mt-1 min-h-8 text-2xl font-700 ${color}`}>{!loaded && loading ? <span className="skeleton-block inline-block h-7 w-12 align-middle" /> : value}</p></div>)}
           </section>
 
           {profile.role === "administrator" && (
@@ -447,7 +464,8 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {visibleOrders.map(order => {
+                  {loading && !loaded && Array.from({ length: 4 }, (_, row) => <tr key={`loading-production-${row}`} aria-hidden="true"><td colSpan={visibleRealOperations.length + 1} className="p-0"><div className="grid items-center gap-3 border-b border-slate-100 px-4 py-3" style={{ gridTemplateColumns: `minmax(16rem, 1.1fr) repeat(${Math.max(1, visibleRealOperations.length)}, minmax(10rem, 1fr))` }}><div className="space-y-2"><div className="skeleton-block h-3 w-2/5" /><div className="skeleton-block h-4 w-3/4" /><div className="skeleton-block h-3 w-1/2" /></div>{visibleRealOperations.length ? visibleRealOperations.map(operation => <div key={operation.id} className="space-y-2"><div className="skeleton-block h-3 w-4/5" /><div className="skeleton-block h-9 w-full" /><div className="skeleton-block h-8 w-full" /></div>) : <div className="skeleton-block h-8 w-full" />}</div></td></tr>)}
+                  {(loading && !loaded ? [] : visibleOrders).map(order => {
                     const product = (order.productId ? productById.get(order.productId) : productByKey.get(`${order.client}\u0000${order.productName}`));
                     const route = operationsByOrder.get(order.id);
                     return <tr key={order.id}>
@@ -496,7 +514,7 @@ export default function ProgressBoard({ orders, products, onNavigate, lang, setL
                       })}
                     </tr>;
                   })}
-                  {filteredOrders.length === 0 && <tr><td colSpan={visibleRealOperations.length + 1} className="px-6 py-12 text-center text-slate-500">{text("No matching orders.", "該当する受注がありません。")}</td></tr>}
+                  {loaded && filteredOrders.length === 0 && <tr><td colSpan={visibleRealOperations.length + 1} className="px-6 py-12 text-center text-slate-500">{text("No matching orders.", "該当する受注がありません。")}</td></tr>}
                 </tbody>
               </table>
             </div>

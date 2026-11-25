@@ -16,6 +16,9 @@ import {
   deletePurchase,
   deleteStockMovement,
   fetchInventoryData,
+  fetchInventoryPage,
+  fetchInventorySummary,
+  fetchProductMaterialData,
   fetchWipValuationSettings,
   calculateWipValuation,
   saveWipValuationSettings,
@@ -31,6 +34,7 @@ import {
   type Purchase,
   type StockMovement,
   type WipValuationSettings,
+  type InventorySummary,
 } from "./lib/operations";
 import { genUUID } from "./lib/uuid";
 import { isAndroidWebView, printBillingDocument, useBillingAction } from "./lib/billingActions";
@@ -66,6 +70,31 @@ const money = (value: number) => `¥${Math.round(value).toLocaleString()}`;
 // number input holding "" has to map onto a numeric state field.
 const number = (value: unknown) => parseNumberStrict(value as string | number | null | undefined) ?? 0;
 const text = (value: unknown) => String(value ?? "").trim();
+function useAnimatedNumber(value: number, duration = 420): number {
+  const [display, setDisplay] = useState(value);
+  const previous = useRef(value);
+  useEffect(() => {
+    const start = previous.current;
+    previous.current = value;
+    if (start === value) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setDisplay(value);
+      return;
+    }
+    let frame = 0;
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(start + (value - start) * eased);
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [value, duration]);
+  return display;
+}
+
 const autoNumber = (value: unknown) => {
   const normalized = text(value);
   return /^(auto|generated automatically)$/i.test(normalized) ? "" : normalized;
@@ -283,6 +312,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputClass = "w-full rounded border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#1a3458] focus:ring-2 focus:ring-blue-100";
 const outlineButton = "rounded border border-slate-300 bg-white px-3 py-2 text-sm font-700 text-slate-700 hover:bg-slate-50 disabled:opacity-40";
 
+let wipSettingsSnapshot: WipValuationSettings | null = null;
+let wipSettingsRequest: Promise<WipValuationSettings> | null = null;
+
+function preloadWipSettings(): Promise<WipValuationSettings> {
+  if (wipSettingsSnapshot) return Promise.resolve(wipSettingsSnapshot);
+  if (!wipSettingsRequest) {
+    wipSettingsRequest = fetchWipValuationSettings().then(data => {
+      wipSettingsSnapshot = data;
+      return data;
+    }).finally(() => { wipSettingsRequest = null; });
+  }
+  return wipSettingsRequest;
+}
+
+export async function preloadInventoryPage(): Promise<void> {
+  await preloadWipSettings();
+}
+
 function categoryFromExcel(value: unknown): InventoryCategory {
   const normalized = text(value).toLowerCase();
   const match = (Object.entries(CATEGORY_LABELS) as [InventoryCategory, string][])
@@ -356,6 +403,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [bom, setBom] = useState<BomItem[]>([]);
+  const [lookupItems, setLookupItems] = useState<InventoryItem[]>([]);
+  const [lookupBom, setLookupBom] = useState<BomItem[]>([]);
   const [itemForm, setItemForm] = useDurableState<InventoryItem | null>("inventory-item", null);
   const [purchaseForm, setPurchaseForm] = useDurableState<Purchase | null>("inventory-purchase", null);
   const [purchaseEditorLabel, setPurchaseEditorLabel] = useState<string | null>(null);
@@ -385,15 +434,25 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
   const [bomView, setBomView] = useDurableState<"structure" | "summary">("bom-view", "structure");
   const [printPurchase, setPrintPurchase] = useState<Purchase | null>(null);
   const [printValuation, setPrintValuation] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [printItems, setPrintItems] = useState<InventoryItem[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [wipSettings, setWipSettings] = useState<WipValuationSettings | null>(null);
+  const [wipSettings, setWipSettings] = useState<WipValuationSettings | null>(() => wipSettingsSnapshot);
   const [wipResult, setWipResult] = useState<{ configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>> } | null>(null);
   const [wipAsOf, setWipAsOf] = useState(today());
   const [wipBusy, setWipBusy] = useState(false);
   const [transferDialog, setTransferDialog] = useState<TransferDialogState | null>(null);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<InventorySummary>({ itemCount: 0, stockValue: 0, reorderCount: 0, outOfStock: 0 });
+  const animatedItemCount = useAnimatedNumber(summary.itemCount);
+  const animatedStockValue = useAnimatedNumber(summary.stockValue);
+  const animatedOutOfStock = useAnimatedNumber(summary.outOfStock);
+  const animatedReorderCount = useAnimatedNumber(summary.reorderCount);
+  const initialLoading = busy && !loaded;
   const isWide = useIsTabletOrWider();
   const printAction = useBillingAction(() => { void dialog.alert(lang === "ja" ? "印刷を開始できませんでした。再試行してください。" : "Could not start printing. Please retry."); });
   const [movementDirection, setMovementDirection] = useState<"all" | "outgoing" | "incoming">("all");
@@ -422,16 +481,26 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       forceProbeRef.current = false;
       const available = await probeOperationsBackend(force);
       if (!available || signal.aborted) return null;
-      return fetchInventoryData(signal);
+      const [result, aggregate, lookups] = await Promise.all([
+        fetchInventoryPage(tab, { page, pageSize: 50, search, movementDirection, productId: tab === "bom" ? bomProduct : undefined, signal }),
+        fetchInventorySummary(signal),
+        lookupItems.length ? Promise.resolve(null) : fetchProductMaterialData(),
+      ]);
+      return { result, aggregate, lookups };
     }, data => {
       if (!data) {
         setError(langRef.current === "ja" ? "在庫機能に必要なデータベース更新が適用されていません。管理者にお問い合わせください。" : MIGRATION_REQUIRED_MESSAGE);
         return;
       }
-      setItems(data.items);
-      setPurchases(data.purchases);
-      setMovements(data.movements);
-      setBom(data.bom);
+      const rows = data.result.rows;
+      if (tab === "inventory") setItems(rows as InventoryItem[]);
+      if (tab === "purchases") setPurchases(rows as Purchase[]);
+      if (tab === "movements") setMovements(rows as StockMovement[]);
+      if (tab === "bom") setBom(rows as BomItem[]);
+      setTotal(data.result.total);
+      setSummary(data.aggregate);
+      if (data.lookups) { setLookupItems(data.lookups.items); setLookupBom(data.lookups.bom); }
+      setLoaded(true);
     }, err => {
       setError(errorMessage(err, langRef.current));
     }, active => { setBusy(active); if (active) setError(""); });
@@ -440,7 +509,20 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     return refresh();
   }, [refresh]);
 
-  useEffect(() => { void fetchWipValuationSettings().then(setWipSettings).catch(error => { setWipSettings(null); setError(errorMessage(error, langRef.current)); }); }, []);
+  useEffect(() => { setPage(0); }, [tab, search, movementDirection, bomProduct]);
+  useEffect(() => {
+    if (tab !== "inventory" && lookupItems.length) setItems(lookupItems);
+  }, [tab, lookupItems]);
+
+  useEffect(() => {
+    void fetchWipValuationSettings().then(settings => {
+      wipSettingsSnapshot = settings;
+      setWipSettings(settings);
+    }).catch(error => {
+      if (!wipSettingsSnapshot) setWipSettings(null);
+      setError(errorMessage(error, langRef.current));
+    });
+  }, []);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -474,40 +556,26 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     }
   };
 
-  const summary = useMemo(() => ({
-    itemCount: items.length,
-    stockValue: items.reduce((sum, item) => sum + item.stockValue, 0),
-    reorderCount: items.filter(item => item.needsReorder).length,
-    outOfStock: items.filter(item => item.availableQty <= 0).length,
-    outgoing: movements.filter(movement => movement.delta < 0).reduce((sum, movement) => sum + Math.abs(movement.delta), 0),
-  }), [items, movements]);
-
-  const filteredItems = useMemo(() => {
-    const keyword = search.toLowerCase().trim();
-    return keyword ? items.filter(item => `${item.itemCode} ${item.itemName} ${item.supplierName}`.toLowerCase().includes(keyword)) : items;
-  }, [items, search]);
-
-  const filteredMovements = useMemo(() => movements.filter(movement => {
-    if (movementDirection === "outgoing") return movement.delta < 0;
-    if (movementDirection === "incoming") return movement.delta > 0;
-    return true;
-  }), [movementDirection, movements]);
+  const filteredItems = items;
+  const filteredMovements = movements;
 
   // These were plain .find() calls made once per rendered row, so every list
   // here re-scanned the item and product tables. Indexed lookups, built once.
-  const itemNameById = useMemo(() => new Map(items.map(item => [item.id, item.itemName])), [items]);
+  const allItems = lookupItems.length ? lookupItems : items;
+  const allBom = lookupBom.length ? lookupBom : bom;
+  const itemNameById = useMemo(() => new Map(allItems.map(item => [item.id, item.itemName])), [allItems]);
   const productNameById = useMemo(() => new Map(products.map(product => [product.id, product.productName])), [products]);
   const itemById = useMemo(() => {
-    const byId = new Map(items.map(item => [item.id, item]));
+    const byId = new Map(allItems.map(item => [item.id, item]));
     return (id: string) => byId.get(id);
-  }, [items]);
+  }, [allItems]);
   const itemName = (id: string) => itemNameById.get(id) ?? "Unknown item";
   const productName = (id: string) => productNameById.get(id) ?? "Unknown product";
   const linkedSubassemblyOptions = useMemo(
-    () => compatibleSubassemblyProducts(bom, products, items, bomProduct, bomInventoryItem),
-    [bom, products, items, bomProduct, bomInventoryItem],
+    () => compatibleSubassemblyProducts(allBom, products, allItems, bomProduct, bomInventoryItem),
+    [allBom, products, allItems, bomProduct, bomInventoryItem],
   );
-  const selectedBomInventoryItem = items.find(item => item.id === bomInventoryItem);
+  const selectedBomInventoryItem = allItems.find(item => item.id === bomInventoryItem);
   const bomQuantityValue = number(bomQty);
   const canLinkSelectedItem = !!selectedBomInventoryItem
     && ["component", "finished_good"].includes(selectedBomInventoryItem.category)
@@ -578,26 +646,26 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     void dialog.confirm(message, { tone: "danger" }).then(ok => { if (ok) void run(task, success); });
   };
 
-  const rowsForExport = (selectedTab: Tab): Record<string, unknown>[] => {
-    if (selectedTab === "inventory") return items.map(item => ({
+  const rowsForExport = (selectedTab: Tab, data = { items, purchases, movements, bom }): Record<string, unknown>[] => {
+    if (selectedTab === "inventory") return data.items.map(item => ({
       itemNo: item.itemCode, itemName: item.itemName, category: categoryLabel(item.category),
       procurement: procurementLabel(item.procurementType), unit: item.unit,
       openingQty: item.openingQty, minimumQty: item.minimumQty, targetQty: item.targetQty,
       supplier: item.supplierName, unitCost: item.unitCost, active: item.active ? "Yes" : "No",
     }));
-    if (selectedTab === "purchases") return purchases.map(purchase => ({
+    if (selectedTab === "purchases") return data.purchases.map(purchase => ({
       purchaseNo: purchase.purchaseNo, purchaseDate: purchase.purchaseDate, supplier: purchase.supplierName,
       itemNo: itemById(purchase.itemId)?.itemCode ?? "", orderedQty: purchase.orderedQty,
       receivedQty: purchase.receivedQty, unitPrice: purchase.unitPrice, dueDate: purchase.dueDate,
       status: purchase.status[0].toUpperCase() + purchase.status.slice(1), pic: purchase.pic, notes: purchase.notes,
     }));
-    if (selectedTab === "movements") return movements.map(movement => ({
+    if (selectedTab === "movements") return data.movements.map(movement => ({
       movementNo: movement.movementNo, movementDate: movement.movementDate,
       movementType: movementLabel(movement.movementType),
       itemNo: itemById(movement.itemId)?.itemCode ?? "", quantity: movement.delta,
       pic: movement.pic, notes: movement.notes,
     }));
-    return bom.map(row => ({
+    return data.bom.map(row => ({
       bomNo: row.bomNo, parentBomNo: row.parentBomNo, productNo: products.find(product => product.id === row.productId)?.productNumber ?? "",
       itemNo: itemById(row.inventoryItemId)?.itemCode ?? "", componentProductNo: products.find(product => product.id === row.componentProductId)?.productNumber ?? "", quantity: row.quantityPerUnit, notes: row.notes,
     }));
@@ -607,13 +675,14 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     setError("");
     const config = TAB_EXCEL[tab];
     try {
+      const exportData = template ? null : await fetchInventoryData();
       await createExcelWorkbook({
         title: `${config.title}${template ? " · Import Template" : ""}`,
         subtitle: config.subtitle,
         fileName: `${config.file}-${template ? "template" : today()}.xlsx`,
         sheetName: config.title,
         columns: config.columns,
-        rows: template ? [] : rowsForExport(tab),
+        rows: template ? [] : rowsForExport(tab, exportData!),
         template,
       });
       setNotice(template ? text("Excel template downloaded.", "Excelテンプレートをダウンロードしました。") : text("Excel export downloaded.", "Excelデータをダウンロードしました。"));
@@ -843,46 +912,73 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
     });
   };
 
+  const emptyList = (count: number, columns?: number) => {
+    if (count > 0 || busy || error) return null;
+    const message = search.trim()
+      ? text("No matching records. Try another search.", "該当するデータがありません。検索条件を変更してください。")
+      : tab === "inventory"
+        ? text("No inventory items yet. Add an item to get started.", "在庫品目がありません。「品目」から登録してください。")
+        : tab === "purchases"
+          ? text("No purchases yet. Add a purchase to get started.", "仕入データがありません。「仕入」から登録してください。")
+          : tab === "movements"
+            ? text("No stock movements for this filter.", "この条件に該当する在庫移動はありません。")
+            : text("No components registered for this product.", "この製品には部品が登録されていません。");
+    return columns
+      ? <tr><td colSpan={columns} className="px-4 py-10 text-center text-sm text-slate-500">{message}</td></tr>
+      : <p className="px-4 py-10 text-center text-sm text-slate-500">{message}</p>;
+  };
+  const loadingCards = () => Array.from({ length: 3 }, (_, row) => <article key={`loading-card-${row}`} aria-hidden="true" className="space-y-3 border-b border-slate-100 p-4"><div className="flex justify-between gap-3"><div className="skeleton-block h-4 w-2/5" /><div className="skeleton-block h-6 w-20" /></div><div className="skeleton-block h-4 w-3/4" /><div className="grid grid-cols-2 gap-3"><div className="skeleton-block h-8" /><div className="skeleton-block h-8" /></div><div className="flex gap-2"><div className="skeleton-block h-9 flex-1" /><div className="skeleton-block h-9 flex-1" /></div></article>);
+  const loadingRows = (columns: number) => Array.from({ length: 3 }, (_, row) => <tr key={`loading-row-${row}`} aria-hidden="true"><td colSpan={columns} className="p-0"><div className="grid items-center gap-4 border-b border-slate-100 px-4 py-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>{Array.from({ length: columns }, (_, column) => <div key={column} className={`skeleton-block h-4 ${column === 0 ? "w-4/5" : "w-full"}`} />)}</div></td></tr>);
+
   return (
     <AppShell onNavigate={onNavigate} title={text("Inventory & Purchasing", "在庫・仕入管理")} activePage="inventory" showBack backTarget="home" backLabel={text("Home", "ホーム")} lang={lang} setLang={setLang} noPrint>
       <div className="border-b border-slate-200 bg-white px-4 sm:px-8 print:hidden">
-        <PageContainer className="py-2"><nav aria-label={text("Inventory sections", "在庫管理の画面")} className="flex gap-1 overflow-x-auto">
+        <PageContainer className="flex flex-col gap-2 py-2 sm:flex-row sm:items-center"><nav aria-label={text("Inventory sections", "在庫管理の画面")} className="flex flex-1 gap-1 overflow-x-auto">
           {(["inventory", "purchases", "movements", "bom"] as Tab[]).map(value => <button key={value} aria-current={tab === value ? "page" : undefined} onClick={() => setTab(value)} className={`shrink-0 rounded px-3 py-2 text-sm font-600 ${tab === value ? "bg-[#1a3458] text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}>{value === "bom" ? text("Product materials (BOM)", "製品材料（BOM）") : ({ inventory: text("Inventory", "在庫"), purchases: text("Purchases", "仕入"), movements: text("Movements", "在庫移動") } as const)[value]}</button>)}
-        </nav></PageContainer>
+        </nav><input value={search} onChange={event => setSearch(event.target.value)} placeholder={text("Search current tab...", "現在のタブを検索…")} aria-label={text("Search current tab", "現在のタブを検索")} className="rounded border border-slate-300 px-3 py-2 text-sm sm:w-64" /></PageContainer>
       </div>
 
-      <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6 print:hidden">
+      <main className="flex-1 overflow-y-auto p-3 sm:p-6 print:hidden" style={{ scrollbarGutter: "stable" }}>
         <PageContainer className="space-y-5">
-          {profile.role === "administrator" && wipSettings && <WipPolicyForm settings={wipSettings} lang={lang} onSave={async draft => { const saved = await saveWipValuationSettings(draft); setWipSettings(saved); setWipResult(null); }} />}
-          <section className="rounded-lg bg-white p-4 ring-1 ring-slate-200"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h2 className="font-700 text-[#1a3458]">{text("WIP total", "WIP合計")}</h2><p className="text-xs text-slate-500">{text("This uses the actual work recorded in Production Stage Progress.", "製作工程進捗に入力した実績を使います。")}</p></div><button type="button" onClick={() => onNavigate("production-progress")} className="rounded border border-slate-300 px-3 py-2 text-sm font-700 text-[#1a3458]">{text("Open progress", "進捗を開く")}</button><label className="text-xs font-700">{text("Date", "日付")}<input type="date" value={wipAsOf} onChange={event => setWipAsOf(event.target.value)} className="mt-1 block rounded border px-2 py-2" /></label><button type="button" disabled={wipBusy} onClick={() => { setWipBusy(true); void calculateWipValuation(wipAsOf).then(setWipResult).catch(error => setError(errorMessage(error, langRef.current))).finally(() => setWipBusy(false)); }} className="rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40">{wipBusy ? text("Calculating…", "計算中…") : text("Calculate", "計算")}</button></div>{wipResult && (wipResult.configured ? <><p className="mt-4 text-right text-xl font-700 text-[#1a3458]">{text("Total WIP", "WIP合計")}: {money(Number(wipResult.total ?? 0))}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b text-left text-xs text-slate-500"><tr><th className="py-2">{text("Order", "受注")}</th><th className="py-2 text-right">{text("WIP value", "仕掛品金額")}</th></tr></thead><tbody>{(wipResult.rows ?? []).map(row => <tr key={String(row.order_id)} className="border-b border-slate-100"><td className="py-2">{String(row.order_number ?? row.order_id)}</td><td className="py-2 text-right font-mono">{money(Number(row.wip_value ?? 0))}</td></tr>)}</tbody></table></div></> : <p className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-800">{text("WIP valuation is not configured yet. Ask an administrator to complete the valuation settings.", "仕掛品評価の設定が未完了です。管理者に評価設定を依頼してください。")}</p>)}</section>
-          <WorkflowHint steps={[{ number: "1", title: text("Order", "注文"), detail: text("Order quantity sets the plan.", "注文数量が予定を決めます。") }, { number: "2", title: text("Progress", "進捗"), detail: text("Enter actual minutes and quantities.", "実績分数と数量を入力します。") }, { number: "3", title: text("WIP total", "WIP合計"), detail: text("Calculate the current unfinished cost.", "未完了分の原価を計算します。") }]} />
-          <div className="flex flex-wrap items-stretch gap-3">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-4">
-            {[{ label: text("Master items", "登録品目数"), value: summary.itemCount.toLocaleString(), danger: false }, { label: text("Stock value", "在庫金額"), value: money(summary.stockValue), danger: false }, { label: text("Out of stock", "在庫切れ"), value: summary.outOfStock.toLocaleString(), danger: summary.outOfStock > 0 }, { label: text("Need purchase", "要発注"), value: summary.reorderCount.toLocaleString(), danger: false }].map(card => <div key={card.label} className={`rounded-lg p-4 shadow-sm ring-1 ${card.danger ? "bg-red-50 ring-red-200" : "bg-white ring-slate-200"}`}><p className={`text-xs font-600 ${card.danger ? "text-red-600" : "text-slate-500"}`}>{card.label}</p><p className={`mt-2 text-xl font-700 sm:text-2xl ${card.danger ? "text-red-700" : "text-[#1a3458]"}`}>{card.value}</p></div>)}
-          </div><button type="button" onClick={() => void printAction.run(async () => { setPrintValuation(true); await printBillingDocument(lang, message => dialog.alert(message)); })} disabled={printAction.busy || !items.length} className="self-start rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40 sm:self-end">{text("Print stock valuation", "在庫評価を印刷")}</button></div>
-          {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load(true)} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? text("Checking...", "確認中…") : text("Check again", "再確認")}</button></div>}
-          {notice && <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
-
-          <section className="flex flex-col gap-3 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
-            <div><p className="text-xs font-700 text-[#0d7377]">{text("Excel tools", "Excel入出力")}</p><h2 className="font-700 text-[#1a3458]">{lang === "ja" ? ({ inventory: "在庫マスタ", purchases: "仕入台帳", movements: "在庫移動台帳", bom: "製品材料（BOM）" } as const)[tab] : TAB_EXCEL[tab].title}</h2><p className="text-xs text-slate-500">{text("Import validates every row. Automatic numbers may be left blank.", "インポート時に全行を検証します。自動採番の項目は空欄にできます。")}</p></div>
-            <div className="flex flex-wrap gap-2">
+          <section aria-label={text("Inventory overview", "在庫概要")} className="grid grid-cols-2 gap-x-6 gap-y-3 border-b border-slate-200 pb-4 sm:grid-cols-4">
+             {[{ label: text("Master items", "登録品目数"), value: Math.round(animatedItemCount).toLocaleString(), danger: false }, { label: text("Stock value", "在庫金額"), value: money(animatedStockValue), danger: false }, { label: text("Out of stock", "在庫切れ"), value: Math.round(animatedOutOfStock).toLocaleString(), danger: summary.outOfStock > 0 }, { label: text("Need purchase", "要発注"), value: Math.round(animatedReorderCount).toLocaleString(), danger: false }].map(card => <div key={card.label} className="min-w-0"><p className={`text-xs font-600 ${card.danger ? "text-red-600" : "text-slate-500"}`}>{card.label}</p><p className={`mt-1 text-xl font-700 tabular-nums sm:text-2xl ${card.danger ? "text-red-700" : "text-[#1a3458]"}`}>{initialLoading ? <span className="skeleton-block inline-block h-7 w-14 align-middle" /> : card.value}</p></div>)}
+          </section>
+          <div className="flex flex-wrap items-start gap-3">
+            <details className="min-w-0 flex-1 basis-64 rounded border border-slate-200 bg-white">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-600 text-[#1a3458]">{text("Excel import / export", "Excel入出力")}</summary>
+              <div className="space-y-3 border-t border-slate-100 p-4">
+                <p className="text-xs text-slate-500">{text("Use the template for this tab. Imported rows are checked before saving.", "このタブのテンプレートを使用してください。保存前に各行を検証します。")}</p>
+                <div className="flex flex-wrap gap-2">
               <button disabled={busy} onClick={() => openExportDialog(true)} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Template", "テンプレート")}</button>
               <button disabled={busy} onClick={openImportDialog} className={`${outlineButton} flex-1 whitespace-nowrap sm:flex-none`}>{text("Import Excel", "Excelをインポート")}</button>
               <button disabled={busy} onClick={() => openExportDialog(false)} className="flex-1 whitespace-nowrap rounded bg-[#0d7377] px-3 py-2 text-sm font-700 text-white hover:bg-[#0a6063] disabled:opacity-40 sm:flex-none">{text("Export Excel", "Excelをエクスポート")}</button>
-              <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleExcelFile} className="hidden" />
-            </div>
-          </section>
+                </div>
+              </div>
+            </details>
+            <details className="min-w-0 flex-1 basis-64 rounded border border-slate-200 bg-white">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-600 text-[#1a3458]">{text("Stock valuation & WIP", "在庫評価・仕掛品（WIP）")}</summary>
+              <div className="space-y-4 border-t border-slate-100 p-4">
+                <button type="button" onClick={() => void printAction.run(async () => { const data = await fetchInventoryData(); setPrintItems(data.items); setPrintValuation(true); await new Promise<void>(resolve => setTimeout(resolve, 0)); await printBillingDocument(lang, message => dialog.alert(message)); })} disabled={printAction.busy || summary.itemCount === 0} className={outlineButton}>{text("Print stock valuation", "在庫評価を印刷")}</button>
+          <section className="bg-white"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h2 className="font-700 text-[#1a3458]">{text("WIP total", "WIP合計")}</h2><p className="text-xs text-slate-500">{text("This uses the actual work recorded in Production Stage Progress.", "製作工程進捗に入力した実績を使います。")}</p></div><button type="button" onClick={() => onNavigate("production-progress")} className="rounded border border-slate-300 px-3 py-2 text-sm font-700 text-[#1a3458]">{text("Open progress", "進捗を開く")}</button><label className="text-xs font-700">{text("Date", "日付")}<input type="date" value={wipAsOf} onChange={event => setWipAsOf(event.target.value)} className="mt-1 block rounded border px-2 py-2" /></label><button type="button" disabled={wipBusy} onClick={() => { setWipBusy(true); void calculateWipValuation(wipAsOf).then(setWipResult).catch(error => setError(errorMessage(error, langRef.current))).finally(() => setWipBusy(false)); }} className="rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40">{wipBusy ? text("Calculating…", "計算中…") : text("Calculate", "計算")}</button></div>{wipResult && (wipResult.configured ? <><p className="mt-4 text-right text-xl font-700 text-[#1a3458]">{text("Total WIP", "WIP合計")}: {money(Number(wipResult.total ?? 0))}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b text-left text-xs text-slate-500"><tr><th className="py-2">{text("Order", "受注")}</th><th className="py-2 text-right">{text("WIP value", "仕掛品金額")}</th></tr></thead><tbody>{(wipResult.rows ?? []).map(row => <tr key={String(row.order_id)} className="border-b border-slate-100"><td className="py-2">{String(row.order_number ?? row.order_id)}</td><td className="py-2 text-right font-mono">{money(Number(row.wip_value ?? 0))}</td></tr>)}</tbody></table></div></> : <p className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-800">{text("WIP valuation is not configured yet. Ask an administrator to complete the valuation settings.", "仕掛品評価の設定が未完了です。管理者に評価設定を依頼してください。")}</p>)}</section>
+                {profile.role === "administrator" && <details><summary className="cursor-pointer text-sm font-600 text-slate-600">{text("Valuation settings", "評価設定")}</summary><div className="mt-3">{profile.role === "administrator" && wipSettings && <WipPolicyForm settings={wipSettings} lang={lang} onSave={async draft => { const saved = await saveWipValuationSettings(draft); wipSettingsSnapshot = saved; setWipSettings(saved); setWipResult(null); }} />}</div></details>}
+                <details><summary className="cursor-pointer text-sm font-600 text-slate-600">{text("How WIP works", "WIPの流れ")}</summary><div className="mt-3"><WorkflowHint steps={[{ number: "1", title: text("Order", "注文"), detail: text("Order quantity sets the plan.", "注文数量が予定を決めます。") }, { number: "2", title: text("Progress", "進捗"), detail: text("Enter actual minutes and quantities.", "実績分数と数量を入力します。") }, { number: "3", title: text("WIP total", "WIP合計"), detail: text("Calculate the current unfinished cost.", "未完了分の原価を計算します。") }]} /></div></details>
+              </div>
+            </details>
+          </div>
+          <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleExcelFile} className="hidden" />
+          {error && <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span>{error}</span><button type="button" disabled={busy} onClick={() => void load(true)} className="rounded border border-red-300 bg-white px-3 py-1.5 font-700 text-red-700 hover:bg-red-100 disabled:opacity-50">{busy ? text("Checking...", "確認中…") : text("Check again", "再確認")}</button></div>}
+          {notice && <div className="motion-notice rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
           {tab === "inventory" && (
-            <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+            <section className="min-h-[320px] overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
               <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div><h2 className="text-lg font-700 text-[#1a3458]">{text("Inventory master", "在庫マスタ")}</h2><p className="text-sm text-slate-500">{text("Item numbers are generated automatically and cannot be edited.", "品目番号は自動採番され、編集できません。")}</p></div>
-                <div className="flex gap-2"><input value={search} onChange={event => setSearch(event.target.value)} placeholder={text("Search item...", "品目を検索…")} className="min-w-0 flex-1 rounded border border-slate-300 px-3 py-2 text-sm sm:w-56" /><button onClick={() => setItemForm(blankItem())} className="whitespace-nowrap rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">＋ {text("Item", "品目")}</button></div>
+                <button onClick={() => setItemForm(blankItem())} className="whitespace-nowrap rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">＋ {text("Item", "品目")}</button>
               </div>
-              {!isWide && <div className="divide-y divide-slate-100">{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? text("Out of stock", "在庫切れ") : categoryLabel(item.category)}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Available", "在庫数")}</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Suggested purchase", "推奨発注数")}</p><p className={`font-mono font-700 ${item.needsReorder ? "text-amber-700" : "text-slate-500"}`}>{item.needsReorder ? `+${item.suggestedPurchaseQty.toLocaleString()} ${unitLabel(item.unit)}` : "-"}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Stock value", "在庫金額")}</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Min / target", "下限 / 目標")}</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Supplier", "仕入先")}</p><p className="break-words">{item.supplierName || "-"}</p></div></div><div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={text("Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.", "在庫品目の削除は管理者のみ行えます。残高を修正するには在庫調整を使用してください。")} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></article>; })}</div>}
+              {!isWide && <div className="divide-y divide-slate-100">{initialLoading && [0, 1, 2].map(row => <article key={`loading-item-${row}`} aria-hidden="true" className="space-y-3 p-4"><div className="flex items-center justify-between"><div className="skeleton-block h-4 w-2/5" /><div className="skeleton-block h-6 w-20" /></div><div className="grid grid-cols-2 gap-3"><div className="skeleton-block h-8" /><div className="skeleton-block h-8" /><div className="skeleton-block h-8" /><div className="skeleton-block h-8" /></div><div className="flex gap-2"><div className="skeleton-block h-9 flex-1" /><div className="skeleton-block h-9 flex-1" /></div></article>)}{emptyList(filteredItems.length)}{filteredItems.map(item => { const empty = item.availableQty <= 0; return <article key={item.id} className={empty ? "space-y-3 bg-red-50 p-4" : item.needsReorder ? "space-y-3 bg-amber-50/60 p-4" : "space-y-3 p-4"}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></div><span className={`shrink-0 rounded px-2 py-1 text-xs font-700 ${empty ? "bg-red-200 text-red-800" : "bg-slate-100"}`}>{empty ? text("Out of stock", "在庫切れ") : categoryLabel(item.category)}</span></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Available", "在庫数")}</p><p className={`font-mono font-700 ${empty ? "text-red-700" : item.needsReorder ? "text-amber-700" : ""}`}>{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Suggested purchase", "推奨発注数")}</p><p className={`font-mono font-700 ${item.needsReorder ? "text-amber-700" : "text-slate-500"}`}>{item.needsReorder ? `+${item.suggestedPurchaseQty.toLocaleString()} ${unitLabel(item.unit)}` : "-"}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Stock value", "在庫金額")}</p><p className="font-mono font-700">{money(item.stockValue)}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Min / target", "下限 / 目標")}</p><p className="font-mono">{item.minimumQty.toLocaleString()} / {item.targetQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Supplier", "仕入先")}</p><p className="break-words">{item.supplierName || "-"}</p></div></div><div className="flex gap-2"><button onClick={() => setItemForm(item)} className={`${outlineButton} flex-1`}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete ${item.itemCode} · ${item.itemName}?`, `品目 ${item.itemCode}・${item.itemName} を削除しますか？`), () => deleteInventoryItem(item.id), text("Inventory item deleted.", "在庫品目を削除しました。"))} disabled={!canDelete} title={text("Only an administrator can delete an inventory item. Use a stock adjustment to correct the balance instead.", "在庫品目の削除は管理者のみ行えます。残高を修正するには在庫調整を使用してください。")} className="flex-1 rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600 disabled:cursor-not-allowed disabled:opacity-40">{text("Delete", "削除")}</button></div></article>; })}</div>}
               {isWide && <div className="overflow-x-auto"><table className="w-full min-w-[1040px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("No / item", "番号 / 品目")}</th><th className="px-4 py-3">{text("Category", "分類")}</th><th className="px-4 py-3 text-right">{text("Available", "在庫数")}</th><th className="px-4 py-3 text-right">{text("Suggested purchase", "推奨発注数")}</th><th className="px-4 py-3 text-right">{text("Min / target", "下限 / 目標")}</th><th className="px-4 py-3">{text("Supplier", "仕入先")}</th><th className="px-4 py-3 text-right">{text("Stock value", "在庫金額")}</th><th className="px-4 py-3 text-right">{text("Actions", "操作")}</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{filteredItems.map(item => <tr key={item.id} className={item.availableQty <= 0 ? "bg-red-50" : item.needsReorder ? "bg-amber-50/60" : "hover:bg-slate-50"}>
+                <tbody className="divide-y divide-slate-100">{initialLoading && <tr aria-hidden="true"><td colSpan={8} className="p-0"><div>{[0, 1, 2].map(row => <div key={`loading-item-row-${row}`} className="grid grid-cols-8 items-center gap-4 border-b border-slate-100 px-4 py-4"><div className="skeleton-block col-span-2 h-4" /><div className="skeleton-block h-4" /><div className="skeleton-block h-4" /><div className="skeleton-block h-4" /><div className="skeleton-block h-4" /><div className="skeleton-block h-4" /><div className="skeleton-block h-8" /></div>)}</div></td></tr>}{emptyList(filteredItems.length, 8)}{filteredItems.map(item => <tr key={item.id} className={item.availableQty <= 0 ? "bg-red-50" : item.needsReorder ? "bg-amber-50/60" : "hover:bg-slate-50"}>
                   <td className="px-4 py-3"><p className="font-700">{item.itemName}</p><p className="font-mono text-xs text-slate-500">{item.itemCode}</p></td>
                   <td className="px-4 py-3"><p>{categoryLabel(item.category)}</p><p className="text-xs capitalize text-slate-500">{procurementLabel(item.procurementType)}</p></td>
                   <td className="px-4 py-3 text-right"><span className={`font-mono font-700 ${item.availableQty <= 0 ? "text-red-700" : item.needsReorder ? "text-amber-700" : "text-slate-800"}`}>{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</span>{item.availableQty <= 0 && <p className="text-xs font-700 text-red-700">{text("Out of stock", "在庫切れ")}</p>}</td>
@@ -895,29 +991,29 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
           )}
 
           {tab === "purchases" && (
-            <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+            <section className="min-h-[320px] overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
               <div className="flex items-center justify-between border-b border-slate-200 p-4"><div><h2 className="text-lg font-700 text-[#1a3458]">{text("Purchasing register", "仕入台帳")}</h2><p className="text-sm text-slate-500">{text("Purchase numbers are automatic; received quantities create related stock movements.", "仕入番号は自動採番です。入荷数量は在庫移動に反映されます。")}</p></div><button onClick={() => setPurchaseForm(blankPurchase())} className="rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">＋ {text("Purchase", "仕入")}</button></div>
-              {!isWide && <div className="divide-y divide-slate-100">{purchases.map(purchase => <article key={purchase.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-700">{purchase.purchaseNo}</p><p className="text-xs text-slate-500">{purchase.purchaseDate}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-700">{purchaseStatusLabel(purchase.status)}</span></div><div><p className="font-700">{itemName(purchase.itemId)}</p><p className="text-sm text-slate-500">{purchase.supplierName}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Ordered / received", "発注数 / 入荷数")}</p><p className="font-mono">{purchase.orderedQty.toLocaleString()} / {purchase.receivedQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Amount", "金額")}</p><p className="font-mono font-700">{money(purchase.orderedQty * purchase.unitPrice)}</p></div></div><div className="grid grid-cols-3 gap-2"><button onClick={() => printReceipt(purchase)} className={outlineButton}>{text("Print", "印刷")}</button><button onClick={() => setPurchaseForm(purchase)} className={outlineButton}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete purchase ${purchase.purchaseNo}? Its automatic stock receipt will be reversed.`, `仕入 ${purchase.purchaseNo} を削除しますか？自動入荷分の在庫も戻されます。`), () => deletePurchase(purchase.id), text("Purchase deleted and stock reconciled.", "仕入を削除し、在庫を修正しました。"))} className="rounded border border-red-200 px-2 py-2 text-sm font-700 text-red-600">{text("Delete", "削除")}</button></div></article>)}</div>}
+              {!isWide && <div className="divide-y divide-slate-100">{busy && purchases.length === 0 && loadingCards()}{emptyList(purchases.length)}{purchases.map(purchase => <article key={purchase.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-700">{purchase.purchaseNo}</p><p className="text-xs text-slate-500">{purchase.purchaseDate}</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-700">{purchaseStatusLabel(purchase.status)}</span></div><div><p className="font-700">{itemName(purchase.itemId)}</p><p className="text-sm text-slate-500">{purchase.supplierName}</p></div><div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-xs font-600 text-slate-400">{text("Ordered / received", "発注数 / 入荷数")}</p><p className="font-mono">{purchase.orderedQty.toLocaleString()} / {purchase.receivedQty.toLocaleString()}</p></div><div><p className="text-xs font-600 text-slate-400">{text("Amount", "金額")}</p><p className="font-mono font-700">{money(purchase.orderedQty * purchase.unitPrice)}</p></div></div><div className="grid grid-cols-3 gap-2"><button onClick={() => printReceipt(purchase)} className={outlineButton}>{text("Print", "印刷")}</button><button onClick={() => setPurchaseForm(purchase)} className={outlineButton}>{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete purchase ${purchase.purchaseNo}? Its automatic stock receipt will be reversed.`, `仕入 ${purchase.purchaseNo} を削除しますか？自動入荷分の在庫も戻されます。`), () => deletePurchase(purchase.id), text("Purchase deleted and stock reconciled.", "仕入を削除し、在庫を修正しました。"))} className="rounded border border-red-200 px-2 py-2 text-sm font-700 text-red-600">{text("Delete", "削除")}</button></div></article>)}</div>}
               {isWide && <div className="overflow-x-auto"><table className="w-full min-w-[1020px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Purchase no / date", "仕入番号 / 日付")}</th><th className="px-4 py-3">{text("Supplier", "仕入先")}</th><th className="px-4 py-3">{text("Item", "品目")}</th><th className="px-4 py-3 text-right">{text("Ordered / received", "発注数 / 入荷数")}</th><th className="px-4 py-3 text-right">{text("Amount", "金額")}</th><th className="px-4 py-3">{text("Status", "状態")}</th><th className="px-4 py-3 text-right">{text("Actions", "操作")}</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{purchases.map(purchase => <tr key={purchase.id} className="hover:bg-slate-50"><td className="px-4 py-3"><p className="font-700">{purchase.purchaseNo}</p><p className="text-xs text-slate-500">{purchase.purchaseDate}</p></td><td className="px-4 py-3">{purchase.supplierName}</td><td className="px-4 py-3">{itemName(purchase.itemId)}</td><td className="px-4 py-3 text-right font-mono">{purchase.orderedQty.toLocaleString()} / {purchase.receivedQty.toLocaleString()}</td><td className="px-4 py-3 text-right font-mono">{money(purchase.orderedQty * purchase.unitPrice)}</td><td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-700">{purchaseStatusLabel(purchase.status)}</span></td><td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => printReceipt(purchase)} className="rounded border border-slate-300 px-3 py-1.5 font-600">{text("Print", "印刷")}</button><button onClick={() => setPurchaseForm(purchase)} className="rounded border border-slate-300 px-3 py-1.5 font-600">{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete purchase ${purchase.purchaseNo}? Its automatic stock receipt will be reversed.`, `仕入 ${purchase.purchaseNo} を削除しますか？自動入荷分の在庫も戻されます。`), () => deletePurchase(purchase.id), text("Purchase deleted and stock reconciled.", "仕入を削除し、在庫を修正しました。"))} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600">{text("Delete", "削除")}</button></div></td></tr>)}</tbody>
+                <tbody className="divide-y divide-slate-100">{busy && purchases.length === 0 && loadingRows(7)}{emptyList(purchases.length, 7)}{purchases.map(purchase => <tr key={purchase.id} className="hover:bg-slate-50"><td className="px-4 py-3"><p className="font-700">{purchase.purchaseNo}</p><p className="text-xs text-slate-500">{purchase.purchaseDate}</p></td><td className="px-4 py-3">{purchase.supplierName}</td><td className="px-4 py-3">{itemName(purchase.itemId)}</td><td className="px-4 py-3 text-right font-mono">{purchase.orderedQty.toLocaleString()} / {purchase.receivedQty.toLocaleString()}</td><td className="px-4 py-3 text-right font-mono">{money(purchase.orderedQty * purchase.unitPrice)}</td><td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-700">{purchaseStatusLabel(purchase.status)}</span></td><td className="px-4 py-3"><div className="flex justify-end gap-2"><button onClick={() => printReceipt(purchase)} className="rounded border border-slate-300 px-3 py-1.5 font-600">{text("Print", "印刷")}</button><button onClick={() => setPurchaseForm(purchase)} className="rounded border border-slate-300 px-3 py-1.5 font-600">{text("Edit", "編集")}</button><button onClick={() => askDelete(text(`Delete purchase ${purchase.purchaseNo}? Its automatic stock receipt will be reversed.`, `仕入 ${purchase.purchaseNo} を削除しますか？自動入荷分の在庫も戻されます。`), () => deletePurchase(purchase.id), text("Purchase deleted and stock reconciled.", "仕入を削除し、在庫を修正しました。"))} className="rounded border border-red-200 px-3 py-1.5 font-600 text-red-600">{text("Delete", "削除")}</button></div></td></tr>)}</tbody>
               </table></div>}
             </section>
           )}
 
           {tab === "movements" && (
-            <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
+            <section className="min-h-[320px] overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
               <div className="flex flex-col gap-3 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-700 text-[#1a3458]">{text("Stock movement journal", "在庫移動台帳")}</h2><p className="text-sm text-slate-500">{text("Every movement receives an immutable automatic journal number.", "各在庫移動に変更できない自動番号が付与されます。")}</p></div><div className="flex gap-2"><select value={movementDirection} onChange={event => setMovementDirection(event.target.value as typeof movementDirection)} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm"><option value="all">{text("All movements", "すべて")}</option><option value="outgoing">{text("Outgoing materials", "出庫")}</option><option value="incoming">{text("Incoming stock", "入庫")}</option></select><button onClick={() => setMovementOpen(true)} className="whitespace-nowrap rounded bg-[#1a3458] px-4 py-2 text-sm font-700 text-white">＋ {text("Manual movement", "手動在庫移動")}</button></div></div>
-              {!isWide && <div className="divide-y divide-slate-100">{filteredMovements.map(movement => <article key={movement.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-700">{movement.movementNo}</p><p className="text-xs text-slate-500">{movement.movementDate}</p></div><p className={`font-mono font-700 ${movement.delta < 0 ? "text-red-600" : "text-emerald-700"}`}>{movement.delta > 0 ? "+" : ""}{movement.delta.toLocaleString()}</p></div><div><p className="font-700">{itemName(movement.itemId)}</p><p className="text-sm text-slate-500">{movementLabel(movement.movementType)}</p></div><div className="text-sm"><p>{movement.pic || "-"} · <span className="font-mono text-xs text-slate-500">{text(movement.referenceType, movement.referenceType === "manual" ? "手動" : "自動")}</span></p><p className="mt-1 break-words text-slate-500">{movement.notes || "-"}</p></div>{movement.referenceType === "manual" && <button onClick={() => askDelete(text(`Delete manual movement ${movement.movementNo}?`, `手動在庫移動 ${movement.movementNo} を削除しますか？`), () => deleteStockMovement(movement), text("Manual stock movement deleted.", "手動在庫移動を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Delete manual movement", "手動在庫移動を削除")}</button>}</article>)}</div>}
+              {!isWide && <div className="divide-y divide-slate-100">{busy && movements.length === 0 && loadingCards()}{emptyList(filteredMovements.length)}{filteredMovements.map(movement => <article key={movement.id} className="space-y-3 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-mono font-700">{movement.movementNo}</p><p className="text-xs text-slate-500">{movement.movementDate}</p></div><p className={`font-mono font-700 ${movement.delta < 0 ? "text-red-600" : "text-emerald-700"}`}>{movement.delta > 0 ? "+" : ""}{movement.delta.toLocaleString()}</p></div><div><p className="font-700">{itemName(movement.itemId)}</p><p className="text-sm text-slate-500">{movementLabel(movement.movementType)}</p></div><div className="text-sm"><p>{movement.pic || "-"} · <span className="font-mono text-xs text-slate-500">{text(movement.referenceType, movement.referenceType === "manual" ? "手動" : "自動")}</span></p><p className="mt-1 break-words text-slate-500">{movement.notes || "-"}</p></div>{movement.referenceType === "manual" && <button onClick={() => askDelete(text(`Delete manual movement ${movement.movementNo}?`, `手動在庫移動 ${movement.movementNo} を削除しますか？`), () => deleteStockMovement(movement), text("Manual stock movement deleted.", "手動在庫移動を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Delete manual movement", "手動在庫移動を削除")}</button>}</article>)}</div>}
               {isWide && <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Movement no / date", "在庫移動番号 / 日付")}</th><th className="px-4 py-3">{text("Movement", "在庫移動")}</th><th className="px-4 py-3">{text("Item", "品目")}</th><th className="px-4 py-3 text-right">{text("Delta", "増減数")}</th><th className="px-4 py-3">{text("PIC / reference", "担当者 / 参照")}</th><th className="px-4 py-3">{text("Notes", "備考")}</th><th className="px-4 py-3 text-right">{text("Action", "操作")}</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{filteredMovements.map(movement => <tr key={movement.id} className="hover:bg-slate-50"><td className="whitespace-nowrap px-4 py-3"><p className="font-mono font-700">{movement.movementNo}</p><p className="text-xs text-slate-500">{movement.movementDate}</p></td><td className="px-4 py-3 font-600">{movementLabel(movement.movementType)}</td><td className="px-4 py-3">{itemName(movement.itemId)}</td><td className={`px-4 py-3 text-right font-mono font-700 ${movement.delta < 0 ? "text-red-600" : "text-emerald-700"}`}>{movement.delta > 0 ? "+" : ""}{movement.delta.toLocaleString()}</td><td className="px-4 py-3"><p>{movement.pic || "-"}</p><p className="font-mono text-xs text-slate-500">{text(movement.referenceType, movement.referenceType === "manual" ? "手動" : "自動")}{movement.referenceId ? ` · ${movement.referenceId.slice(0, 8)}` : ""}</p></td><td className="max-w-sm px-4 py-3 text-slate-500">{movement.notes || "-"}</td><td className="px-4 py-3 text-right">{movement.referenceType === "manual" ? <button onClick={() => askDelete(text(`Delete manual movement ${movement.movementNo}?`, `手動在庫移動 ${movement.movementNo} を削除しますか？`), () => deleteStockMovement(movement), text("Manual stock movement deleted.", "手動在庫移動を削除しました。"))} className="font-700 text-red-600">{text("Delete", "削除")}</button> : <span className="text-xs text-slate-400">{text("Automatic", "自動")}</span>}</td></tr>)}</tbody>
+                <tbody className="divide-y divide-slate-100">{busy && movements.length === 0 && loadingRows(7)}{emptyList(filteredMovements.length, 7)}{filteredMovements.map(movement => <tr key={movement.id} className="hover:bg-slate-50"><td className="whitespace-nowrap px-4 py-3"><p className="font-mono font-700">{movement.movementNo}</p><p className="text-xs text-slate-500">{movement.movementDate}</p></td><td className="px-4 py-3 font-600">{movementLabel(movement.movementType)}</td><td className="px-4 py-3">{itemName(movement.itemId)}</td><td className={`px-4 py-3 text-right font-mono font-700 ${movement.delta < 0 ? "text-red-600" : "text-emerald-700"}`}>{movement.delta > 0 ? "+" : ""}{movement.delta.toLocaleString()}</td><td className="px-4 py-3"><p>{movement.pic || "-"}</p><p className="font-mono text-xs text-slate-500">{text(movement.referenceType, movement.referenceType === "manual" ? "手動" : "自動")}{movement.referenceId ? ` · ${movement.referenceId.slice(0, 8)}` : ""}</p></td><td className="max-w-sm px-4 py-3 text-slate-500">{movement.notes || "-"}</td><td className="px-4 py-3 text-right">{movement.referenceType === "manual" ? <button onClick={() => askDelete(text(`Delete manual movement ${movement.movementNo}?`, `手動在庫移動 ${movement.movementNo} を削除しますか？`), () => deleteStockMovement(movement), text("Manual stock movement deleted.", "手動在庫移動を削除しました。"))} className="font-700 text-red-600">{text("Delete", "削除")}</button> : <span className="text-xs text-slate-400">{text("Automatic", "自動")}</span>}</td></tr>)}</tbody>
               </table></div>}
             </section>
           )}
 
           {tab === "bom" && (
-            <section className="rounded-lg bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <section className="min-h-[320px] rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200">
               <div className="mb-5"><h2 className="text-lg font-700 text-[#1a3458]">{text("Product material requirements (BOM)", "製品ごとの材料所要量（BOM）")}</h2><p className="text-sm text-slate-500">{text("Build a parent–child product structure. Production uses the product’s direct components. Produce subassemblies separately using their own BOM.", "親子構造でBOMを登録します。製作開始時は製品直下の部品を使用します。中間部品は、その部品のBOMで別途製作してください。")}</p></div>
               <div className="mb-4 flex w-fit rounded border border-slate-300 bg-white p-1">
                 <button onClick={() => setBomView("structure")} className={`rounded px-4 py-2 text-sm font-700 ${bomView === "structure" ? "bg-[#1a3458] text-white" : "text-slate-600"}`}>{text("Component structure", "構成部品（構造）")}</button>
@@ -935,11 +1031,15 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
                 <button disabled={busy || !bomProduct || !bomInventoryItem || bomQuantityValue <= 0 || (!!bomComponentProduct && !linkedSubassemblyOptions.some(product => product.id === bomComponentProduct))} onClick={() => void run(async () => { await saveBomItem({ id: genUUID(), bomNo: "", productId: bomProduct, inventoryItemId: bomInventoryItem, componentProductId: bomComponentProduct, parentBomNo: bomParent, quantityPerUnit: bomQuantityValue, notes: "" }); setBomInventoryItem(""); setBomComponentProduct(""); setBomParent(""); setBomQty(""); }, text("BOM component added.", "BOM部品を追加しました。"))} className="self-end rounded bg-[#1a3458] px-4 py-2.5 font-700 text-white disabled:opacity-40">{text("Add", "追加")}</button>
               </div>
               {!bomProduct && <p className="mt-5 rounded border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{text("Select a product to review its BOM.", "BOMを確認する製品を選択してください。")}</p>}
-              {bomProduct && bomView === "summary" && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Material / consumable", "材料・消耗品")}</th><th className="px-4 py-3">{text("Item no", "品目番号")}</th><th className="px-4 py-3 text-right">{text("Total per finished product", "完成品1個あたり合計")}</th></tr></thead><tbody className="divide-y divide-slate-100">{summarizedBom.map(row => { const item = itemById(row.inventoryItemId); return <tr key={row.inventoryItemId}><td className="px-4 py-3 font-700">{item?.itemName ?? text("Unknown item", "不明な品目")}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item?.itemCode ?? "-"}</td><td className="px-4 py-3 text-right font-mono font-700">{row.requiredQuantity.toLocaleString()} {item?.unit ?? ""}</td></tr>; })}{summarizedBom.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">{text("No material requirements registered.", "材料所要量が登録されていません。")}</td></tr>}</tbody></table></div>}
-              {bomProduct && bomView === "structure" && !isWide && <div className="mt-5 divide-y divide-slate-100">{orderedBom.map(({ row, depth, requiredQuantity }) => <article key={`${row.id}-${depth}`} className="space-y-2 py-4" style={{ paddingInlineStart: `${depth * 20}px` }}><div className="flex items-start justify-between gap-3"><div><p className="font-700">{itemName(row.inventoryItemId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo} · {productName(row.productId)}{row.componentProductId ? ` → ${productName(row.componentProductId)}` : ""}</p></div><p className="font-mono font-700">× {requiredQuantity.toLocaleString()}</p></div><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
-              {bomProduct && bomView === "structure" && isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product level", "製品階層")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Required qty", "必要数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{orderedBom.map(({ row, depth, requiredQuantity }) => <tr key={`${row.id}-${depth}`}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.componentProductId && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">→ {productName(row.componentProductId)}</span>}</div></td><td className="px-3 py-3 text-right font-mono">{requiredQuantity.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
+              {bomProduct && bomView === "summary" && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[620px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-4 py-3">{text("Material / consumable", "材料・消耗品")}</th><th className="px-4 py-3">{text("Item no", "品目番号")}</th><th className="px-4 py-3 text-right">{text("Total per finished product", "完成品1個あたり合計")}</th></tr></thead><tbody className="divide-y divide-slate-100">{busy && bom.length === 0 && loadingRows(3)}{summarizedBom.map(row => { const item = itemById(row.inventoryItemId); return <tr key={row.inventoryItemId}><td className="px-4 py-3 font-700">{item?.itemName ?? text("Unknown item", "不明な品目")}</td><td className="px-4 py-3 font-mono text-xs text-slate-500">{item?.itemCode ?? "-"}</td><td className="px-4 py-3 text-right font-mono font-700">{row.requiredQuantity.toLocaleString()} {item?.unit ?? ""}</td></tr>; })}{summarizedBom.length === 0 && !busy && <tr><td colSpan={3} className="px-4 py-8 text-center text-slate-500">{text("No material requirements registered.", "材料所要量が登録されていません。")}</td></tr>}</tbody></table></div>}
+              {bomProduct && bomView === "structure" && !isWide && <div className="mt-5 divide-y divide-slate-100">{busy && bom.length === 0 && loadingCards()}{emptyList(orderedBom.length)}{orderedBom.map(({ row, depth, requiredQuantity }) => <article key={`${row.id}-${depth}`} className="space-y-2 py-4" style={{ paddingInlineStart: `${depth * 20}px` }}><div className="flex items-start justify-between gap-3"><div><p className="font-700">{itemName(row.inventoryItemId)}</p><p className="font-mono text-xs text-slate-500">{row.bomNo} · {productName(row.productId)}{row.componentProductId ? ` → ${productName(row.componentProductId)}` : ""}</p></div><p className="font-mono font-700">× {requiredQuantity.toLocaleString()}</p></div><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="w-full rounded border border-red-200 px-3 py-2 text-sm font-700 text-red-600">{text("Remove", "削除")}</button></article>)}</div>}
+              {bomProduct && bomView === "structure" && isWide && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-600 text-slate-500"><tr><th className="px-3 py-3">{text("BOM no", "BOM番号")}</th><th className="px-3 py-3">{text("Product level", "製品階層")}</th><th className="px-3 py-3">{text("Parent → component", "親 → 部品")}</th><th className="px-3 py-3 text-right">{text("Required qty", "必要数量")}</th><th className="px-3 py-3"></th></tr></thead><tbody className="divide-y divide-slate-100">{busy && bom.length === 0 && loadingRows(5)}{emptyList(orderedBom.length, 5)}{orderedBom.map(({ row, depth, requiredQuantity }) => <tr key={`${row.id}-${depth}`}><td className="px-3 py-3 font-mono text-xs text-slate-500">{row.bomNo}</td><td className="px-3 py-3 font-600">{productName(row.productId)}</td><td className="px-3 py-3"><div style={{ paddingInlineStart: `${depth * 22}px` }}><span className="text-slate-400">{depth ? "↳ " : ""}</span>{itemName(row.inventoryItemId)}{row.componentProductId && <span className="ml-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">→ {productName(row.componentProductId)}</span>}</div></td><td className="px-3 py-3 text-right font-mono">{requiredQuantity.toLocaleString()}</td><td className="px-3 py-3 text-right"><button onClick={() => askDelete(text(`Remove ${row.bomNo} from this product?`, `この製品から ${row.bomNo} を削除しますか？`), () => deleteBomItem(row.id), text("BOM component removed.", "BOM部品を削除しました。"))} className="text-sm font-700 text-red-600">{text("Remove", "削除")}</button></td></tr>)}</tbody></table></div>}
             </section>
           )}
+          <nav aria-label={text("Pagination", "ページ移動")} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200">
+            <span>{total === 0 ? text("No results", "該当なし") : text(`${page * 50 + 1}–${Math.min((page + 1) * 50, total)} of ${total}`, `${page * 50 + 1}～${Math.min((page + 1) * 50, total)} / ${total}件`)}</span>
+            <div className="flex items-center gap-2"><button type="button" disabled={busy || page === 0} onClick={() => setPage(value => Math.max(0, value - 1))} className={outlineButton}>{text("Previous", "前へ")}</button><span>{text(`Page ${page + 1} of ${Math.max(1, Math.ceil(total / 50))}`, `${page + 1} / ${Math.max(1, Math.ceil(total / 50))}ページ`)}</span><button type="button" disabled={busy || (page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)} className={outlineButton}>{text("Next", "次へ")}</button></div>
+          </nav>
         </PageContainer>
       </main>
 
@@ -979,7 +1079,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       </div>}
 
       {printPurchase && <article id="purchase-receipt" className="hidden print:block"><div className="mx-auto max-w-3xl p-10 text-black"><div className="flex items-start justify-between border-b-2 border-black pb-5"><div className="flex items-center gap-4"><img src="/app-logo.png" alt="Kiyometa" className="h-14 w-14 rounded object-cover" /><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="mt-1 text-3xl font-700">{text("Purchase receipt", "仕入伝票")}</h1></div></div><div className="text-right"><p className="font-mono text-lg font-700">{printPurchase.purchaseNo}</p><p>{printPurchase.purchaseDate}</p></div></div><div className="mt-8 grid grid-cols-2 gap-8"><div><p className="text-xs font-700 text-slate-500">{text("Supplier", "仕入先")}</p><p className="mt-1 text-lg font-700">{printPurchase.supplierName}</p></div><div><p className="text-xs font-700 text-slate-500">{text("PIC", "担当者")}</p><p className="mt-1 text-lg">{printPurchase.pic || "-"}</p></div></div><table className="mt-8 w-full border-collapse"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3 text-right">{text("Qty", "数量")}</th><th className="py-3 text-right">{text("Unit price", "単価")}</th><th className="py-3 text-right">{text("Total", "合計")}</th></tr></thead><tbody><tr><td className="py-4">{itemName(printPurchase.itemId)}</td><td className="py-4 text-right">{printPurchase.orderedQty.toLocaleString()}</td><td className="py-4 text-right">{money(printPurchase.unitPrice)}</td><td className="py-4 text-right font-700">{money(printPurchase.orderedQty * printPurchase.unitPrice)}</td></tr></tbody></table><div className="mt-10 border-t border-black pt-4 text-sm"><p>{text("Received quantity:", "入荷数：")} <strong>{printPurchase.receivedQty.toLocaleString()}</strong></p><p>{text("Status:", "状態：")} <strong>{purchaseStatusLabel(printPurchase.status)}</strong></p><p className="mt-3">{text("Notes:", "備考：")} {printPurchase.notes || "-"}</p></div></div></article>}
-      {printValuation && <article className="hidden print:block"><div className="mx-auto max-w-5xl p-10 text-black"><div className="flex items-end justify-between border-b-2 border-black pb-4"><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="text-3xl font-700">{text("Stock valuation report", "在庫評価報告書")}</h1></div><p>{new Date().toISOString().slice(0, 10)}</p></div><table className="mt-8 w-full border-collapse text-sm"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3">{text("Category", "分類")}</th><th className="py-3 text-right">{text("Quantity", "数量")}</th><th className="py-3 text-right">{text("Unit cost", "単価")}</th><th className="py-3 text-right">{text("Stock value", "在庫金額")}</th></tr></thead><tbody>{items.map(item => <tr key={item.id} className="border-b border-slate-300"><td className="py-3">{item.itemCode} · {item.itemName}</td><td className="py-3">{categoryLabel(item.category)}</td><td className="py-3 text-right">{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</td><td className="py-3 text-right">{money(item.unitCost)}</td><td className="py-3 text-right font-700">{money(item.stockValue)}</td></tr>)}</tbody><tfoot><tr className="border-t-2 border-black"><td colSpan={4} className="py-4 text-right font-700">{text("Total", "合計")}</td><td className="py-4 text-right font-700">{money(summary.stockValue)}</td></tr></tfoot></table><p className="mt-6 text-xs">{text("Basis: current available balance multiplied by the stored unit cost. This report does not apply an unapproved WIP valuation formula.", "基準：現在の在庫数に登録単価を乗算しています。未承認のWIP評価式は適用していません。")}</p></div></article>}
+      {printValuation && <article className="hidden print:block"><div className="mx-auto max-w-5xl p-10 text-black"><div className="flex items-end justify-between border-b-2 border-black pb-4"><div><p className="text-xs font-700">Kiyometa Manufacturing</p><h1 className="text-3xl font-700">{text("Stock valuation report", "在庫評価報告書")}</h1></div><p>{new Date().toISOString().slice(0, 10)}</p></div><table className="mt-8 w-full border-collapse text-sm"><thead><tr className="border-y border-black text-left"><th className="py-3">{text("Item", "品目")}</th><th className="py-3">{text("Category", "分類")}</th><th className="py-3 text-right">{text("Quantity", "数量")}</th><th className="py-3 text-right">{text("Unit cost", "単価")}</th><th className="py-3 text-right">{text("Stock value", "在庫金額")}</th></tr></thead><tbody>{printItems.map(item => <tr key={item.id} className="border-b border-slate-300"><td className="py-3">{item.itemCode} · {item.itemName}</td><td className="py-3">{categoryLabel(item.category)}</td><td className="py-3 text-right">{item.availableQty.toLocaleString()} {unitLabel(item.unit)}</td><td className="py-3 text-right">{money(item.unitCost)}</td><td className="py-3 text-right font-700">{money(item.stockValue)}</td></tr>)}</tbody><tfoot><tr className="border-t-2 border-black"><td colSpan={4} className="py-4 text-right font-700">{text("Total", "合計")}</td><td className="py-4 text-right font-700">{money(summary.stockValue)}</td></tr></tfoot></table><p className="mt-6 text-xs">{text("Basis: current available balance multiplied by the stored unit cost. This report does not apply an unapproved WIP valuation formula.", "基準：現在の在庫数に登録単価を乗算しています。未承認のWIP評価式は適用していません。")}</p></div></article>}
     </AppShell>
   );
 }

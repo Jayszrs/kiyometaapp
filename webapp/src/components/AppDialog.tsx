@@ -6,6 +6,12 @@ export interface DialogOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: "default" | "danger";
+  headerTone?: "default" | "navy";
+  actionsAlign?: "start" | "end";
+  secondaryActionPosition?: "footer" | "actions";
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
+  secondaryActionTone?: "default" | "danger";
 }
 
 interface DialogApi {
@@ -52,6 +58,10 @@ export function DialogProvider({ lang = "ja", children }: { lang?: Lang; childre
 
   const isJa = lang === "ja";
   const tone = pending?.options.tone ?? "default";
+  const headerTone = pending?.options.headerTone ?? "default";
+  const actionsAlign = pending?.options.actionsAlign ?? "end";
+  const secondaryActionPosition = pending?.options.secondaryActionPosition ?? "footer";
+  const secondaryActionTone = pending?.options.secondaryActionTone ?? "default";
   const confirmLabel = pending?.options.confirmLabel ?? "OK";
   const cancelLabel = pending?.options.cancelLabel ?? (isJa ? "キャンセル" : "Cancel");
 
@@ -66,32 +76,48 @@ export function DialogProvider({ lang = "ja", children }: { lang?: Lang; childre
           aria-labelledby={pending.options.title ? "app-dialog-title" : undefined}
           onMouseDown={event => { if (event.target === event.currentTarget) settle(false); }}
         >
-          <div className="popup-panel w-full max-w-md rounded-sm border border-slate-200 bg-white p-5 shadow-2xl">
+          <div className="popup-panel w-full max-w-md overflow-hidden rounded-sm bg-white shadow-2xl">
             {pending.options.title && (
-              <h2 id="app-dialog-title" className="text-base font-700 text-[#1a3458]">{pending.options.title}</h2>
+              headerTone === "navy"
+                ? <header className="bg-[#1a3458] px-5 py-4 text-white"><h2 id="app-dialog-title" className="text-base font-700">{pending.options.title}</h2></header>
+                : <h2 id="app-dialog-title" className="px-5 pt-5 text-base font-700 text-[#1a3458]">{pending.options.title}</h2>
             )}
-            <div className={`text-sm leading-6 text-slate-600 whitespace-pre-line ${pending.options.title ? "mt-2" : ""}`}>
-              {pending.message}
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              {pending.kind === "confirm" && (
+            <div className="p-5">
+              <div className="text-sm leading-6 text-slate-600 whitespace-pre-line">
+                {pending.message}
+              </div>
+              <div className={`mt-5 flex flex-wrap gap-2 ${actionsAlign === "start" ? "justify-start" : "justify-end"}`}>
+                {pending.kind === "confirm" && (
+                  <button
+                    ref={cancelRef}
+                    type="button"
+                    onClick={() => settle(false)}
+                    className="rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-600 text-slate-700 hover:bg-slate-50"
+                  >
+                    {cancelLabel}
+                  </button>
+                )}
                 <button
-                  ref={cancelRef}
+                  ref={confirmRef}
                   type="button"
-                  onClick={() => settle(false)}
-                  className="rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-600 text-slate-700 hover:bg-slate-50"
+                  onClick={() => settle(true)}
+                  className={`rounded-sm px-4 py-2 text-sm font-700 text-white ${tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1a3458] hover:bg-[#112240]"}`}
                 >
-                  {cancelLabel}
+                  {confirmLabel}
                 </button>
+                {pending.kind === "confirm" && secondaryActionPosition === "actions" && pending.options.secondaryActionLabel && pending.options.onSecondaryAction && (
+                  <button type="button" onClick={() => { const action = pending.options.onSecondaryAction; settle(false); action?.(); }} className={`rounded-sm px-4 py-2 text-sm font-700 text-white ${secondaryActionTone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1a3458] hover:bg-[#112240]"}`}>
+                    {pending.options.secondaryActionLabel}
+                  </button>
+                )}
+              </div>
+              {pending.kind === "confirm" && secondaryActionPosition === "footer" && pending.options.secondaryActionLabel && pending.options.onSecondaryAction && (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <button type="button" onClick={() => { const action = pending.options.onSecondaryAction; settle(false); action?.(); }} className="text-sm font-600 text-[#1a3458] underline decoration-slate-300 underline-offset-4 hover:text-[#0d7377]">
+                    {pending.options.secondaryActionLabel} →
+                  </button>
+                </div>
               )}
-              <button
-                ref={confirmRef}
-                type="button"
-                onClick={() => settle(true)}
-                className={`rounded-sm px-4 py-2 text-sm font-700 text-white ${tone === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-[#1a3458] hover:bg-[#112240]"}`}
-              >
-                {confirmLabel}
-              </button>
             </div>
           </div>
         </div>
