@@ -145,14 +145,7 @@ export async function flushDiagnostics(sourceFilter?: "web" | "supabase") {
     const { supabase } = await import("./supabaseClient");
     const { data } = await supabase.auth.getSession();
     if (!data.session) return;
-    const sessionClaims = JSON.parse(atob(data.session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
     const queued = queueSnapshot();
-    for (const event of queued) {
-      if (!event.actor_id && event.source === "web") {
-        event.actor_id = data.session.user.id;
-        event.session_id = typeof sessionClaims.session_id === "string" ? sessionClaims.session_id : undefined;
-      }
-    }
     localStorage.setItem(key, JSON.stringify(queued));
     const queue = queued;
     if (!queue.length) return;
