@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event, Lock
+from diagnostics import write_event
 
 
 class JobStopped(Exception):
@@ -28,6 +29,7 @@ class Job:
     cancelled: Event = field(default_factory=Event)
     result: object = None
     error: str = ""
+    trace: dict = field(default_factory=dict)
 
 
 class OcrJobs:
@@ -39,7 +41,7 @@ class OcrJobs:
         self.records = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr-job")
 
-    def submit(self, owner, raw, name, dpi):
+    def submit(self, owner, raw, name, dpi, trace=None):
         fingerprint = hashlib.sha256(raw + str(dpi).encode() + (b"pdf" if name.lower().endswith(".pdf") else b"image")).hexdigest()
         now = time.monotonic()
         with self.lock:
@@ -47,6 +49,10 @@ class OcrJobs:
                             if job.status in ("queued", "running", "cancelling") or now-job.created < self.retention}
             for job in self.records.values():
                 if job.owner == owner and job.fingerprint == fingerprint and job.status in ("queued", "running", "done"):
+                    try:
+                        write_event("ocr", {**(trace or {}), "actor_id": owner, "job_id": job.id, "operation": "recognize", "stage": "deduplicated", "rc": "00"})
+                    except Exception:
+                        logging.getLogger("kiyometa-ocr").error("Pencatatan diagnostik OCR gagal")
                     return job.id
             if sum(job.status in ("queued", "running", "cancelling") for job in self.records.values()) >= 2:
                 raise JobsBusy()
@@ -55,6 +61,8 @@ class OcrJobs:
             for job in sorted(finished,key=lambda job: job.created)[:max(0,len(self.records)-31)]:
                 del self.records[job.id]
             job = Job(secrets.token_urlsafe(24),owner,fingerprint,now)
+            job.trace = dict(trace or {})
+            job.trace["actor_id"] = owner
             self.records[job.id] = job
         self.executor.submit(self._run,job,raw,name,dpi)
         return job.id
@@ -65,6 +73,10 @@ class OcrJobs:
             if time.monotonic()-job.created > self.timeout: raise JobStopped("timeout")
             if stage is not None:
                 with self.lock: job.stage = stage
+                try:
+                    write_event("ocr", {**job.trace, "job_id": job.id, "operation": "recognize", "stage": stage, "rc": "00"})
+                except Exception:
+                    logging.getLogger("kiyometa-ocr").error("Pencatatan tahap diagnostik gagal")
         try:
             check()
             with self.lock: job.status = "running"
@@ -78,12 +90,19 @@ class OcrJobs:
                 job.status = "cancelled" if error.kind == "cancelled" else "error"
                 job.error = error.kind
         except Exception as error:
-            logging.getLogger("kiyometa-ocr").exception("OCR job failed: %s",job.id)
+            fingerprint = hashlib.sha256((type(error).__name__ + ":" + str(error)).encode("utf-8", "replace")).hexdigest()[:16]
             status = getattr(error,"status_code",503)
             with self.lock:
                 job.status = "error"
                 job.error = "unreadable" if status in (400,422) else "size" if status == 413 else "service"
+            job.trace["error_class"] = type(error).__name__
+            job.trace["error_fingerprint"] = fingerprint
         finally:
+            rc = "00" if job.status == "done" else "CANCEL-001" if job.status == "cancelled" else "NET-003" if job.error == "timeout" else "OCR-001" if job.error == "unreadable" else "FILE-002" if job.error == "size" else "SVC-001"
+            try:
+                write_event("ocr", {**job.trace, "job_id": job.id, "operation": "recognize", "stage": job.status, "rc": rc, "duration_ms": round((time.monotonic()-job.created)*1000)})
+            except Exception:
+                logging.getLogger("kiyometa-ocr").error("Pencatatan diagnostik gagal")
             logging.getLogger("kiyometa-ocr").info("OCR job %s: %s (%.3fs)",job.id,job.status,time.monotonic()-job.created)
 
     def read(self, owner, job_id):

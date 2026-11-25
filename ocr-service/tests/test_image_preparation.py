@@ -20,7 +20,7 @@ class ImagePreparationTests(unittest.TestCase):
             return [([[0, 0], [30, 0], [30, 20], [0, 20]], '数量', .99)], 0
         with patch.object(main, 'decode_image', side_effect=decode), patch.object(main, 'recognize_page', side_effect=recognize), patch.object(main, 'get_ocr'), patch.object(main, 'get_japanese_ocr'), patch.object(main, 'get_preview_ocr'):
             result = main.run_ocr(UploadFile(filename='photo.jpg', file=io.BytesIO(b'pixels')), 300, lambda stage=None: stages.append(stage) if stage else None)
-        self.assertEqual(stages, ['preparing', 'queued', 'recognizing'])
+        self.assertEqual(stages, ['preparing', 'queued', 'recognizing', 'cleaning'])
         self.assertEqual(result.lines[0].text, '数量')
 
     def test_conversion_preserves_dimensions_without_inference(self):

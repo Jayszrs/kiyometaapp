@@ -9,7 +9,7 @@ import { saveOrderDurably, QueuedOrderError } from "./lib/orderOutbox";
 import { genUUID } from "./lib/uuid";
 import { addDaysJST, dateFromISO, endOfMonthJST, todayJST } from "./lib/date";
 import { allowedTransitions, PROGRESS_CANCELLED, transitionRejection } from "./lib/orderStatus";
-import { runOcr, OcrError, sendOcrLog, getOcrRecovery, clearOcrRecovery, type OcrLine, type OcrProgress } from "./lib/ocrClient";
+import { runOcr, OcrError, getOcrRecovery, clearOcrRecovery, type OcrLine, type OcrProgress } from "./lib/ocrClient";
 import { parseQuotation, type ScanFillData } from "./lib/parseQuotation";
 import { findClientMatch, findProductMatch } from "./lib/scanMatching";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
@@ -23,6 +23,7 @@ import { supabase } from "./lib/supabaseClient";
 import { useLoadingScope } from "./lib/loading";
 import { useBillingAction, isAndroidWebView, printBillingDocument } from "./lib/billingActions";
 import { NETWORK_STATUS_EVENT, friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { userError } from "./lib/resultCodes";
 import { hasNativeBridge, printNative, saveFileNative } from "./lib/nativeBridge";
 import {
   deleteBomItem,
@@ -486,9 +487,21 @@ function ScanBanner({ message }: { message: string }) {
 function NetworkStatusBanner({ lang }: { lang: Lang }) {
   const [offline, setOffline] = useState(() => !navigator.onLine);
   const [checking, setChecking] = useState(false);
+  const verifyConnection = async () => {
+    setChecking(true);
+    try {
+      const response = await fetch("/ocr/health", { cache: "no-store", signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error("unavailable");
+      setOffline(false);
+      window.dispatchEvent(new Event("kiyometa-retry-reads"));
+    } catch { setOffline(true); }
+    finally { setChecking(false); }
+  };
   useEffect(() => {
     const markOffline = () => { setOffline(true); setChecking(false); };
-    const markOnline = () => { setOffline(false); setChecking(false); };
+    // `navigator.onLine` only means a network interface is up. Keep the banner
+    // until a real application endpoint responds successfully.
+    const markOnline = () => { void verifyConnection(); };
     const onNetworkStatus = (event: Event) => {
       if ((event as CustomEvent<{ online?: boolean }>).detail?.online === false) markOffline();
     };
@@ -508,7 +521,7 @@ function NetworkStatusBanner({ lang }: { lang: Lang }) {
   return (
     <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
       <div className="flex min-w-0 items-center gap-2"><Icon name="wifi-off" size={16} className="shrink-0" /><span>{text}</span></div>
-      <button type="button" disabled={checking} onClick={() => { setChecking(true); window.dispatchEvent(new Event("kiyometa-retry-reads")); window.setTimeout(() => setChecking(false), 1200); }} className="shrink-0 rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-700 hover:bg-amber-100 disabled:opacity-50">
+      <button type="button" disabled={checking} onClick={() => void verifyConnection()} className="shrink-0 rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-700 hover:bg-amber-100 disabled:opacity-50">
         {checking ? (lang === "ja" ? "確認中…" : "Checking…") : (lang === "ja" ? "再確認" : "Try again")}
       </button>
     </div>
@@ -563,7 +576,7 @@ function AppShell({ children, onNavigate, showBack = false, backTarget = "home" 
               />
             </div>
           )}
-          <UndoButton />
+          <UndoButton lang={lang ?? "ja"} />
           <UserMenuButton onNavigate={onNavigate} lang={lang ?? "ja"} />
         </div>
       </header>
@@ -683,7 +696,7 @@ const SCAN_FIELD_LABEL: Record<string, keyof typeof LABELS> = {
 function saveErrorMessage(error: unknown, lang: Lang): string {
   if (error instanceof QueuedOrderError && lang === "ja") return "端末に送信を保存しました。再接続またはアプリ再起動後に同期します。";
   if (isConnectivityError(error)) return friendlyNetworkMessage(error, lang);
-  return error instanceof Error ? error.message : (error as {message?: string})?.message ?? String(error);
+  return friendlyNetworkMessage(error, lang);
 }
 
 function ScanModal({ clients, products, onClose, onApply, lang }: {
@@ -745,7 +758,6 @@ function ScanModal({ clients, products, onClose, onApply, lang }: {
       if (controller.signal.aborted) return;
       setLoadingStep(4);
       const parsed = parseQuotation(lines, lang);
-      void sendOcrLog(`--- quotation: ${file?.name ?? "resumed document"} (${lines.length} OCR lines, ${parsed.template}) ---\n${parsed.debug}`);
       if (!parsed.fields.some(f => f.status !== "missing" &&
         (!["productName", "processName"].includes(f.key) || f.confidence >= 0.75))) {
         setError(t("scanErrNoFields", lang));
@@ -2300,11 +2312,11 @@ function SearchBillingPage({ orders, setOrders, clients, products, onNavigate, b
     setOrders(previous => previous.map(order => saved.find(next => next.id === order.id) ?? order));
     const failures = results.flatMap((result, index) => result.status === "rejected" ? [{ order: pendingPrintOrders[index], error: result.reason }] : []);
     if (failures.length) {
-      const details = failures.map(({order, error}) => error instanceof StaleOrderError
+        const details = failures.map(({order, error}) => error instanceof StaleOrderError
         ? `${order.orderNumber || order.id}: ${error.latestEditor
           ? (lang === "ja" ? `最終更新者: ${error.latestEditor}` : `Last changed by ${error.latestEditor}`)
           : (lang === "ja" ? "最終更新者の情報がありません" : "Latest editor username unavailable")}`
-        : `${order.orderNumber || order.id}: ${error?.code === "42501" ? (lang === "ja" ? "データベースの権限により保存できません" : "Database permission denied while saving") : error instanceof Error ? error.message : typeof error?.message === "string" ? error.message : (lang === "ja" ? "保存できませんでした" : "Could not save print status")}`).join("\n");
+        : `${order.orderNumber || order.id}: ${userError(error, lang)}`).join("\n");
       if (!failures.some(({error}) => error instanceof StaleOrderError)) {
         if (failures.some(({error}) => error?.code === "42501")) {
           void dialog.alert((lang === "ja" ? "印刷記録の保存がデータベースの権限で拒否されました。他のユーザーによる変更ではありません。管理者に権限の確認を依頼してください。再読み込みでは解決しません。\n\n" : "Saving print status was denied by database permissions. This is not another user editing the order. Ask an administrator to check access; reloading will not fix it.\n\n") + details);
@@ -2870,7 +2882,7 @@ function ClientMasterPage({ clients, setClients, products, scanRouting, setScanR
     try {
       saved = await upsertClient(candidate);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyNetworkMessage(err, lang);
       dialog.alert(lang === "ja" ? `取引先の保存に失敗しました: ${message}` : `Failed to save client: ${message}`);
       return;
     }
@@ -3093,7 +3105,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       if (fetched) full = fetched;
     } catch (err) {
       if (token !== signToken.current) return;
-      setDrawingSignError(err instanceof Error ? err.message : String(err));
+      setDrawingSignError(friendlyNetworkMessage(err, lang));
     }
     setForm(full);
     if (!full.drawingPaths.some(Boolean)) return;
@@ -3109,7 +3121,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       if (token !== signToken.current) return;
       // The keys are intact, so the next open retries. Losing the rows here
       // would be worse than showing an empty slot.
-      setDrawingSignError(err instanceof Error ? err.message : String(err));
+      setDrawingSignError(friendlyNetworkMessage(err, lang));
     }
   };
 
@@ -3153,7 +3165,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
   };
 
   useEffect(() => {
-    void reloadMaterials().catch(error => { if (isConnectivityError(error)) reportConnectivityError(error); else setMaterialError(error instanceof Error ? error.message : "Failed to load product materials."); });
+    void reloadMaterials().catch(error => { if (isConnectivityError(error)) reportConnectivityError(error); else setMaterialError(friendlyNetworkMessage(error, lang)); });
   }, []); // Product/inventory data is refreshed again after every BOM write.
 
   useEffect(() => {
@@ -3162,7 +3174,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       if (!controller.signal.aborted) {
         if (isConnectivityError(error)) { reportConnectivityError(error); return; }
         if (isConnectivityError(error)) reportConnectivityError(error);
-        else setMaterialError(error instanceof Error ? error.message : "Failed to load manufacturing processes.");
+        else setMaterialError(friendlyNetworkMessage(error, lang));
       }
     });
     return () => controller.abort();
@@ -3185,7 +3197,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       setMaterialItemId("");
       setMaterialQty(1);
     } catch (error) {
-      setMaterialError(error instanceof Error ? error.message : "Failed to add material.");
+      setMaterialError(friendlyNetworkMessage(error, lang));
     } finally {
       setMaterialBusy(false);
     }
@@ -3199,7 +3211,7 @@ function ProductMasterPage({ products, setProducts, clients, scanRouting, setSca
       await deleteBomItem(row.id);
       await reloadMaterials();
     } catch (error) {
-      setMaterialError(error instanceof Error ? error.message : "Failed to remove material.");
+      setMaterialError(friendlyNetworkMessage(error, lang));
     } finally {
       setMaterialBusy(false);
     }
@@ -4267,7 +4279,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
       } catch (err) {
         if (!cancelled) {
           reportConnectivityError(err);
-          setDataError(err instanceof Error ? err.message : "Failed to load data from Supabase.");
+          setDataError(friendlyNetworkMessage(err, lang));
           if (!initialLoadComplete) setDataState("error");
         }
       } finally {
@@ -4386,9 +4398,7 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
             <Icon name="alert-triangle" size={20} className="mt-0.5 shrink-0 text-red-600" />
             <div>
               <h1 className="font-700 text-slate-800">{lang === "ja" ? "データを読み込めませんでした" : "Data could not be loaded"}</h1>
-              <p className="mt-1 text-sm leading-6 text-red-700">{lang === "ja" ? "通信状態とデータベース設定を確認して、再試行してください。" : dataError}</p>
-              {lang === "ja" && <details className="mt-2 text-xs leading-5 text-slate-500"><summary className="cursor-pointer">エラー詳細</summary><pre className="mt-1 whitespace-pre-wrap">{dataError}</pre></details>}
-              <p className="mt-2 text-xs leading-5 text-slate-500">{lang === "ja" ? "401エラーの場合は再ログインしてください。profilesまたはinventoryの404エラーの場合は、バックエンドのmigration 002を適用してください。" : "If the console shows 401, sign out and log in again. If it shows 404 for profiles or inventory tables, deploy backend migration 002 first."}</p>
+              <p className="mt-1 text-sm leading-6 text-red-700">{dataError || (lang === "ja" ? "データを読み込めません。接続を確認して再試行してください。" : "The data could not be loaded. Check your connection and try again.")}</p>
             </div>
           </div>
           <div className="mt-5 flex flex-wrap justify-end gap-2">
@@ -4410,13 +4420,12 @@ export default function App({ lang, setLang }: { lang: Lang; setLang: (lang: Lan
           if there is genuinely no page to preserve. */}
       <BackNavContext.Provider value={goBack}>
       <ModuleErrorBoundary resetKey={page} onRetry={() => setModuleAttempt(attempt => attempt + 1)}
-        fallback={(error, retry) => (
+        fallback={(_error, retry) => (
           <AppShell onNavigate={navigate} title={t("appTitle", lang)} activePage={page} lang={lang} setLang={setLang}>
             <div className="flex flex-1 items-center justify-center overflow-y-auto p-5">
               <section role="alert" className="w-full max-w-lg rounded-sm border border-red-200 bg-white p-6">
                 <h1 className="text-lg font-700 text-slate-800">{lang === "ja" ? "画面を表示できませんでした" : "This module could not be displayed"}</h1>
                 <p className="mt-2 text-sm text-slate-600">{lang === "ja" ? "通信状態を確認して再試行するか、メニューから別の画面を開いてください。" : "Check your connection and retry, or open another module from the menu."}</p>
-                <details className="mt-3 text-xs text-slate-600"><summary>{lang === "ja" ? "エラー詳細" : "Error details"}</summary><pre className="mt-2 whitespace-pre-wrap break-words">{error.message}</pre></details>
                 <div className="mt-5 flex flex-wrap gap-2">
                   <Btn variant="primary" onClick={retry}>{lang === "ja" ? "再試行" : "Retry module"}</Btn>
                   <Btn variant="outline" onClick={() => navigate("home")}>{lang === "ja" ? "ホーム" : "Home"}</Btn>

@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
+import { AppError, resultCode } from "./resultCodes";
+import { newProcessId, recordFrontendFailure, startProcess, traceQuery } from "./diagnostics";
 import type { UserRole } from "./auth";
-import { EDGE_FUNCTION_REQUIRED_MESSAGE } from "./backendStatus";
 
 export interface ManagedUser {
   id: string;
@@ -166,12 +167,13 @@ function wipSettingsFromRow(row: Record<string, unknown>): WipValuationSettings 
 }
 
 export async function fetchWipValuationSettings(): Promise<WipValuationSettings> {
-  const { data, error } = await supabase.from("wip_valuation_settings").select("*").eq("id", true).maybeSingle();
+  const { data, error } = await traceQuery(supabase.from("wip_valuation_settings").select("*").eq("id", true).maybeSingle(), startProcess("inventory.wip_policy.fetch"), "inventory.wip_policy.fetch");
   if (error) throw error;
   return wipSettingsFromRow(data ?? {});
 }
 
 export async function saveWipValuationSettings(settings: WipValuationSettings): Promise<WipValuationSettings> {
+  const processId = startProcess("inventory.wip_policy.save");
   const row = {
     id: true,
     client_decisions: settings.clientDecisions,
@@ -187,27 +189,23 @@ export async function saveWipValuationSettings(settings: WipValuationSettings): 
     configured_at: new Date().toISOString(),
     configured_by: (await supabase.auth.getUser()).data.user?.id ?? null,
   };
-  const { data, error } = await supabase.from("wip_valuation_settings").update({ ...row, version: settings.version + 1 }).eq("id", true).eq("version", settings.version).select().maybeSingle();
+  const { data, error } = await traceQuery(supabase.from("wip_valuation_settings").update({ ...row, version: settings.version + 1 }).eq("id", true).eq("version", settings.version).select().maybeSingle(), processId, "inventory.wip_policy.save");
   if (error) throw error;
   if (!data) throw new Error("The policy changed on another device. Reload before saving again.");
   return wipSettingsFromRow(data);
 }
 
 export async function calculateWipValuation(asOf?: string): Promise<{ configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>>; policy?: WipValuationSettings }> {
-  const { data, error } = await supabase.rpc("calculate_wip_valuation", { p_as_of: asOf ?? new Date().toISOString().slice(0, 10) });
+  const { data, error } = await traceQuery(supabase.rpc("calculate_wip_valuation", { p_as_of: asOf ?? new Date().toISOString().slice(0, 10) }), startProcess("inventory.wip_value.calculate"), "inventory.wip_value.calculate");
   if (error) throw error;
   return data as { configured: boolean; reason?: string; total?: number; rows?: Array<Record<string, unknown>>; policy?: WipValuationSettings };
 }
 
-function functionError(data: unknown, fallback: string): Error {
-  if (data && typeof data === "object" && "error" in data) {
-    return new Error(String((data as { error: unknown }).error));
-  }
-  return new Error(fallback);
-}
-
 async function invokeUsers(body: Record<string, unknown>, signal?: AbortSignal) {
-  let result = await supabase.functions.invoke("manage-users", { body, signal });
+  const operation = `user_management.${String(body.action ?? "request")}`;
+  const processId = startProcess(operation);
+  const headers = { "x-process-id": processId, "x-parent-process-id": processId, "x-process-operation": operation };
+  let result = await supabase.functions.invoke("manage-users", { body, signal, headers });
   let { data, error } = result;
   let candidate = error as (Error & { context?: Response }) | null;
   let status = candidate?.context instanceof Response ? candidate.context.status : 0;
@@ -218,7 +216,7 @@ async function invokeUsers(body: Record<string, unknown>, signal?: AbortSignal) 
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
     const refreshed = await supabase.auth.refreshSession();
     if (!refreshed.error && refreshed.data.session) {
-      result = await supabase.functions.invoke("manage-users", { body, signal });
+      result = await supabase.functions.invoke("manage-users", { body, signal, headers });
       data = result.data;
       error = result.error;
       candidate = error as (Error & { context?: Response }) | null;
@@ -226,27 +224,27 @@ async function invokeUsers(body: Record<string, unknown>, signal?: AbortSignal) 
     }
   }
   if (error) {
-    let serverMessage = "";
-    if (candidate?.context instanceof Response) {
-      try {
-        const payload = await candidate.context.clone().json() as { error?: unknown };
-        serverMessage = typeof payload.error === "string" ? payload.error : "";
-      } catch {
-        // The fallback below is still more useful than failing while parsing.
-      }
-    }
     if (status === 401) {
       await supabase.auth.signOut({ scope: "local" });
-      throw new Error("Your session has expired. Please sign in again.");
+      throw new AppError("AUTH-001");
     }
-    if (status === 403) throw new Error(serverMessage || "This account is not allowed to perform that action.");
-    const text = `${candidate?.name ?? ""} ${candidate?.message ?? ""}`.toLowerCase();
-    if (status === 404 || /fetch|cors|failed to send|relay/.test(text)) {
-      throw new Error(EDGE_FUNCTION_REQUIRED_MESSAGE);
+    if (status === 403) throw new AppError("AUTH-002");
+    if (status === 429) throw new AppError("SVC-002");
+    if (status >= 500 || status === 404) throw new AppError("SVC-001");
+    if (status === 400 || status === 422) {
+      const response = candidate?.context;
+      const payload = response ? await response.clone().json().catch(() => null) : null;
+      const code = typeof payload?.error === "string" && /^[A-Z]+-\d{3}$/.test(payload.error) ? payload.error : "VAL-002";
+      throw new AppError(code);
     }
-    throw new Error(serverMessage || candidate?.message || "User management request failed");
+    if (status === 0 && candidate?.name === "FunctionsFetchError") throw new AppError("NET-002");
+    const fallback = status ? new AppError(status >= 500 ? "SVC-001" : "SYS-001") : (error as Error);
+    throw new AppError(resultCode(fallback));
   }
-  if (data?.error) throw functionError(data, "User management failed");
+  if (data?.error) {
+    const code = typeof data.error === "string" && /^[A-Z]+-\d{3}$/.test(data.error) ? data.error : "SYS-001";
+    throw new AppError(code);
+  }
   return data;
 }
 
@@ -291,7 +289,7 @@ export async function fetchAuditLogs(limit = 200, signal?: AbortSignal): Promise
     .order("created_at", { ascending: false })
     .limit(limit);
   if (signal) query.abortSignal(signal);
-  const { data, error } = await query;
+  const { data, error } = await traceQuery(query, startProcess("audit.fetch"), "audit.fetch");
   if (error) throw error;
   return (data ?? []).map(row => ({
     id: row.id,
@@ -308,8 +306,14 @@ export async function fetchAuditLogs(limit = 200, signal?: AbortSignal): Promise
 }
 
 export async function undoAuditLog(id: string): Promise<void> {
-  const { error } = await supabase.rpc("undo_audit_entry", { p_audit_id: id });
-  if (error) throw error;
+  const processId = startProcess("audit.undo");
+  const { error } = await traceQuery(supabase.rpc("undo_audit_entry", { p_audit_id: id }), processId, "audit.undo");
+  if (error) {
+    const code = (error as { code?: string }).code;
+    const rc = resultCode(error);
+    void recordFrontendFailure("audit.undo", error);
+    throw new AppError(code === "42501" ? "AUTH-002" : rc.startsWith("NET-") ? "TXN-001" : "UNDO-001");
+  }
 }
 
 const UNDOABLE_ENTITIES = new Set([
@@ -381,23 +385,24 @@ function purchaseFromRow(row: Record<string, unknown>): Purchase {
 }
 
 export async function fetchInventoryData(signal?: AbortSignal) {
+  const processId = startProcess("inventory.fetch_all");
   const [items, purchases, movements, bom] = await Promise.all([
     fetchAllPages((from, to) => {
-      const query = supabase.from("inventory_balances").select("*").order("item_code").range(from, to);
+      const query = traceQuery(supabase.from("inventory_balances").select("*").order("item_code").range(from, to), processId, "inventory.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
     fetchAllPages((from, to) => {
-      const query = supabase.from("purchases").select("*").order("purchase_date", { ascending: false }).order("id").range(from, to);
+      const query = traceQuery(supabase.from("purchases").select("*").order("purchase_date", { ascending: false }).order("id").range(from, to), processId, "inventory.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
     (async () => {
-      const query = supabase.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(500);
+      const query = traceQuery(supabase.from("stock_movements").select("*").order("created_at", { ascending: false }).limit(500), processId, "inventory.fetch_all");
       const result = await (signal ? query.abortSignal(signal) : query);
       if (result.error) throw result.error;
       return result.data ?? [];
     })(),
     fetchAllPages((from, to) => {
-      const query = supabase.from("product_materials").select("*").order("product_id").order("id").range(from, to);
+      const query = traceQuery(supabase.from("product_materials").select("*").order("product_id").order("id").range(from, to), processId, "inventory.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
   ]);
@@ -434,9 +439,10 @@ export async function fetchInventoryData(signal?: AbortSignal) {
 }
 
 export async function fetchProductMaterialData(): Promise<{ items: InventoryItem[]; bom: BomItem[] }> {
+  const processId = newProcessId();
   const [items, bom] = await Promise.all([
-    fetchAllPages((from, to) => supabase.from("inventory_balances").select("*").order("item_code").range(from, to)),
-    fetchAllPages((from, to) => supabase.from("product_materials").select("*").order("product_id").order("id").range(from, to)),
+    fetchAllPages((from, to) => traceQuery(supabase.from("inventory_balances").select("*").order("item_code").range(from, to), processId, "product_materials.fetch")),
+    fetchAllPages((from, to) => traceQuery(supabase.from("product_materials").select("*").order("product_id").order("id").range(from, to), processId, "product_materials.fetch")),
   ]);
   return {
     items: items.map(inventoryFromRow),
@@ -467,6 +473,7 @@ async function fetchAllPages<T>(makeQuery: (from: number, to: number) => Promise
 }
 
 export async function saveInventoryItem(item: Omit<InventoryItem, "availableQty" | "suggestedPurchaseQty" | "needsReorder" | "stockValue">) {
+  const processId = startProcess("inventory.item.save");
   const row = {
     id: item.id,
     item_name: item.itemName.trim(),
@@ -483,18 +490,18 @@ export async function saveInventoryItem(item: Omit<InventoryItem, "availableQty"
   };
   if (item.itemCode) {
     const version = item.version ?? 1;
-    const { data, error } = await supabase.from("inventory_items").update({ ...row, version: version + 1 })
-      .eq("id", item.id).eq("version", version).select("id").maybeSingle();
+    const { data, error } = await traceQuery(supabase.from("inventory_items").update({ ...row, version: version + 1 })
+      .eq("id", item.id).eq("version", version).select("id").maybeSingle(), processId, "inventory.item.save");
     if (error) throw error;
     if (!data) throw new Error("This inventory item changed on another device. Reload it and reapply your edit.");
     return;
   }
-  const { error } = await supabase.from("inventory_items").insert({ ...row, version: 1 });
+  const { error } = await traceQuery(supabase.from("inventory_items").insert({ ...row, version: 1 }), processId, "inventory.item.save");
   if (error) throw error;
 }
 
 export async function deleteInventoryItem(id: string): Promise<void> {
-  const { error } = await supabase.from("inventory_items").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("inventory_items").delete().eq("id", id), startProcess("inventory.item.delete"), "inventory.item.delete");
   if (!error) return;
   if (error.code === "23503") {
     throw new Error("Item cannot be deleted because it is already used by a purchase, movement, or BOM. Remove those references first.");
@@ -516,6 +523,7 @@ export class StalePurchaseError extends Error {
 }
 
 export async function savePurchase(purchase: Purchase) {
+  const processId = startProcess("inventory.purchase.save");
   const row = {
     id: purchase.id,
     purchase_date: purchase.purchaseDate,
@@ -532,23 +540,23 @@ export async function savePurchase(purchase: Purchase) {
   };
   if (purchase.purchaseNo) {
     const expectedVersion = purchase.version ?? 1;
-    const { data, error } = await supabase
+    const { data, error } = await traceQuery(supabase
       .from("purchases")
       .update({ ...row, version: expectedVersion + 1 })
       .eq("id", purchase.id)
       .eq("version", expectedVersion)
       .select("id")
-      .maybeSingle();
+      .maybeSingle(), processId, "inventory.purchase.save");
     if (error) throw error;
     if (!data) throw new StalePurchaseError(purchase.id);
     return;
   }
-  const { error } = await supabase.from("purchases").insert({ ...row, version: 1 });
+  const { error } = await traceQuery(supabase.from("purchases").insert({ ...row, version: 1 }), processId, "inventory.purchase.save");
   if (error) throw error;
 }
 
 export async function deletePurchase(id: string): Promise<void> {
-  const { error } = await supabase.from("purchases").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("purchases").delete().eq("id", id), startProcess("inventory.purchase.delete"), "inventory.purchase.delete");
   if (error) throw error;
 }
 
@@ -558,7 +566,8 @@ export async function addStockMovement(
   // PostgREST insert is revoked on stock_movements; the only client path is
   // record_stock_movement, which rejects a reference_type that would imply a
   // purchase or an order exists behind the movement.
-  const { data, error } = await supabase.rpc("record_stock_movement", {
+  const processId = startProcess("inventory.movement.record", input.idempotencyKey);
+  const { data, error } = await traceQuery(supabase.rpc("record_stock_movement", {
     p_movement_date: input.movementDate,
     p_movement_type: input.movementType,
     p_reference_id: input.referenceId || null,
@@ -568,7 +577,7 @@ export async function addStockMovement(
     p_pic: input.pic.trim(),
     p_notes: input.notes.trim(),
     p_idempotency_key: input.idempotencyKey,
-  });
+  }), processId, "inventory.movement.record");
   if (error) throw error;
   return (data ?? null) as StockMovement | null;
 }
@@ -577,17 +586,18 @@ export async function deleteStockMovement(movement: StockMovement): Promise<void
   if (movement.referenceType !== "manual") {
     throw new Error("Automatic movements must be removed through their related purchase or order.");
   }
-  const { error } = await supabase.from("stock_movements").delete().eq("id", movement.id);
+  const { error } = await traceQuery(supabase.from("stock_movements").delete().eq("id", movement.id), startProcess("inventory.movement.delete"), "inventory.movement.delete");
   if (error) throw error;
 }
 
 export async function importInventoryRows(rows: readonly unknown[]): Promise<number> {
-  const { data, error } = await supabase.rpc("import_manufacturing_rows", { p_rows: rows });
+  const { data, error } = await traceQuery(supabase.rpc("import_manufacturing_rows", { p_rows: rows }), startProcess("inventory.import"), "inventory.import");
   if (error) throw error;
   return Number(data ?? 0);
 }
 
 export async function saveBomItem(item: BomItem) {
+  const processId = startProcess("product_materials.save");
   const row = {
     id: item.id,
     product_id: item.productId,
@@ -599,18 +609,18 @@ export async function saveBomItem(item: BomItem) {
   };
   if (item.bomNo) {
     const version = item.version ?? 1;
-    const { data, error } = await supabase.from("product_materials").update({ ...row, version: version + 1 })
-      .eq("id", item.id).eq("version", version).select("id").maybeSingle();
+    const { data, error } = await traceQuery(supabase.from("product_materials").update({ ...row, version: version + 1 })
+      .eq("id", item.id).eq("version", version).select("id").maybeSingle(), processId, "product_materials.save");
     if (error) throw error;
     if (!data) throw new Error("This BOM row changed on another device. Reload it and reapply your edit.");
     return;
   }
-  const { error } = await supabase.from("product_materials").insert({ ...row, version: 1 });
+  const { error } = await traceQuery(supabase.from("product_materials").insert({ ...row, version: 1 }), processId, "product_materials.save");
   if (error) throw error;
 }
 
 export async function deleteBomItem(id: string) {
-  const { error } = await supabase.from("product_materials").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("product_materials").delete().eq("id", id), startProcess("product_materials.delete"), "product_materials.delete");
   if (error) throw error;
 }
 
@@ -649,13 +659,14 @@ export async function fetchManufacturingProgress(signal?: AbortSignal): Promise<
   tasks: ProductionTaskProgress[];
   routes: ProductRouteLink[];
 }> {
-  const operationQuery = supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name");
+  const processId = startProcess("production.progress.fetch");
+  const operationQuery = traceQuery(supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name"), processId, "production.progress.fetch");
   const taskResult = fetchAllPages((from, to) => {
-    const query = supabase.from("production_tasks").select("*").order("updated_at").order("id").range(from, to);
+    const query = traceQuery(supabase.from("production_tasks").select("*").order("updated_at").order("id").range(from, to), processId, "production.progress.fetch");
     return signal ? query.abortSignal(signal) : query;
   });
   const routeQuery = fetchAllPages((from, to) => {
-    const query = supabase.from("products").select("id,tasks").range(from, to);
+    const query = traceQuery(supabase.from("products").select("id,tasks").range(from, to), processId, "production.progress.fetch");
     return signal ? query.abortSignal(signal) : query;
   });
   if (signal) operationQuery.abortSignal(signal);
@@ -683,7 +694,7 @@ export async function fetchManufacturingProgress(signal?: AbortSignal): Promise<
 }
 
 export async function fetchManufacturingOperations(signal?: AbortSignal): Promise<ManufacturingOperation[]> {
-  const query = supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name");
+  const query = traceQuery(supabase.from("manufacturing_operations").select("*").eq("is_active", true).order("sequence").order("operation_name"), startProcess("production.operations.fetch"), "production.operations.fetch");
   if (signal) query.abortSignal(signal);
   const { data, error } = await query;
   if (error) throw error;
@@ -697,15 +708,16 @@ export async function createManufacturingOperation(input: {
   baseTimeChargeJpy: number;
   sequence: number;
 }): Promise<ManufacturingOperation> {
+  const processId = startProcess("production.operation.create");
   const operationCode = `${input.operationName.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "") || "PROCESS"}_${Date.now().toString(36).toUpperCase()}`;
-  const { data, error } = await supabase.from("manufacturing_operations").insert({
+  const { data, error } = await traceQuery(supabase.from("manufacturing_operations").insert({
     operation_code: operationCode,
     operation_name: input.operationName.trim(),
     operation_name_ja: input.operationNameJa.trim(),
     default_minutes: input.defaultMinutes,
     base_time_charge_jpy: input.baseTimeChargeJpy,
     sequence: input.sequence,
-  }).select().single();
+  }).select().single(), processId, "production.operation.create");
   if (error) throw error;
   return operationFromRow(data);
 }
@@ -716,25 +728,28 @@ export async function updateManufacturingOperationName(
   operationName: string,
   operationNameJa: string,
 ): Promise<void> {
-  const { data, error } = await supabase.from("manufacturing_operations")
+  const processId = startProcess("production.operation.update");
+  const { data, error } = await traceQuery(supabase.from("manufacturing_operations")
     .update({ operation_name: operationName.trim(), operation_name_ja: operationNameJa.trim(), version: expectedVersion + 1 })
-    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
+    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle(), processId, "production.operation.update");
   if (error) throw error;
   if (!data) throw new Error("This process changed on another device. Reload the process list before editing it again.");
 }
 
 export async function updateManufacturingOperationCharge(operationId: string, expectedVersion: number, baseTimeChargeJpy: number): Promise<void> {
-  const { data, error } = await supabase.from("manufacturing_operations")
+  const processId = startProcess("production.operation_rate.update");
+  const { data, error } = await traceQuery(supabase.from("manufacturing_operations")
     .update({ base_time_charge_jpy: baseTimeChargeJpy, version: expectedVersion + 1 })
-    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
+    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle(), processId, "production.operation_rate.update");
   if (error) throw error;
   if (!data) throw new Error("This process rate changed on another device. Reload the process list before editing it again.");
 }
 
 export async function updateManufacturingOperationDefaultMinutes(operationId: string, expectedVersion: number, defaultMinutes: number | null): Promise<void> {
-  const { data, error } = await supabase.from("manufacturing_operations")
+  const processId = startProcess("production.operation_time.update");
+  const { data, error } = await traceQuery(supabase.from("manufacturing_operations")
     .update({ default_minutes: defaultMinutes, version: expectedVersion + 1 })
-    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle();
+    .eq("id", operationId).eq("version", expectedVersion).select("id").maybeSingle(), processId, "production.operation_time.update");
   if (error) throw error;
   if (!data) throw new Error("This standard time changed on another device. Reload the process list before editing it again.");
 }
@@ -760,7 +775,8 @@ export async function saveProductionTask(input: {
   processedQuantity: number | null;
   completedQuantity: number | null;
 }): Promise<ProductionTaskProgress> {
-  const { data, error } = await supabase.rpc("save_production_task_once", {
+  const processId = startProcess("production.task.save", input.requestId);
+  const { data, error } = await traceQuery(supabase.rpc("save_production_task_once", {
     p_request_id: input.requestId,
     p_existing_id: input.existingId ?? null,
     p_expected_version: input.expectedVersion ?? null,
@@ -773,7 +789,7 @@ export async function saveProductionTask(input: {
     p_completed_quantity: input.completedQuantity,
     p_completed_at: input.completedAt ?? null,
     p_operator_id: input.operatorId,
-  });
+  }), processId, "production.task.save");
   if (error) throw error;
   const result = data as { ok?: boolean; conflict?: boolean; task?: Record<string, unknown>; latest?: Record<string, unknown> | null };
   if (result?.conflict) throw new StaleProductionTaskError(result.latest ? productionTaskFromRow(result.latest) : null);

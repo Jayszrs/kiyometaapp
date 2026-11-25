@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { userError } from "./lib/resultCodes";
 import { Icon, Btn, TextInput } from "./App";
 import { signIn } from "./lib/auth";
 import type { Lang } from "./App";
@@ -25,10 +26,9 @@ export default function LoginPage({ lang, setLang }: { lang: Lang; setLang: (lan
     try {
       await signIn(submittedIdentity, submittedPassword);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "";
       setError(lang === "ja"
-        ? /invalid login credentials/i.test(message) ? "ユーザー名またはパスワードが正しくありません。" : "ログインできませんでした。入力内容と通信状態を確認してください。"
-        : message || "Sign-in failed.");
+        ? "ログインできませんでした。ユーザー名とパスワード、通信状態を確認してください。"
+        : userError(err, lang));
     } finally {
       setBusy(false);
     }

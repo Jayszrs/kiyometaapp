@@ -209,10 +209,8 @@ class UploadLimitTests(unittest.TestCase):
         self.assertEqual(main.safe_name('   '), 'upload')
         self.assertTrue(main.safe_name('a'*500 + '.pdf').endswith('.pdf'))
 
-    def test_log_endpoint_is_off_unless_enabled(self):
-        with self.assertRaises(HTTPException) as error:
-            main.log_message(Request({'type': 'http', 'headers': []}), main.LogIn(message='forged log line'))
-        self.assertEqual(error.exception.status_code,404)
+    def test_unstructured_user_log_endpoint_is_removed(self):
+        self.assertFalse(hasattr(main, 'log_message'))
 
 
 

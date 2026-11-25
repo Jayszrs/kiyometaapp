@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { userError } from "../lib/resultCodes";
 import { useAuth } from "../lib/auth";
 import { useDialog } from "./AppDialog";
 import { pendingOrders, syncOrders, discardSubmission, retryReviewedSubmission, type PendingOrder } from "../lib/orderOutbox";
@@ -50,12 +51,12 @@ export default function RecoveryStatus({ lang, onOpenScan, scanOpen }: { lang: L
       const changes = (Object.keys(item.order) as (keyof OrderRecord)[])
         .filter(key => !ignored.has(key) && JSON.stringify(item.order[key]) !== JSON.stringify(latest[key]))
         .map(key => `${key}: ${JSON.stringify(latest[key])} → ${JSON.stringify(item.order[key])}`).join("\n");
-      const confirmed = await dialog.confirm(`${item.message ?? ""}\n\n${text("Server → your submitted values:", "サーバー → 送信する値:")}\n${changes || text("Fields match. Retry saving their status.", "値は一致しています。保存を再試行します。")}`, {
+      const confirmed = await dialog.confirm(`${userError(item.message, lang)}\n\n${text("Server → your submitted values:", "サーバー → 送信する値:")}\n${changes || text("Fields match. Retry saving their status.", "値は一致しています。保存を再試行します。")}`, {
         confirmLabel: text("Apply reviewed values", "確認した値を送信"), cancelLabel: text("Keep pending", "保留を維持"),
       });
       if (!confirmed) return;
       await retryReviewedSubmission(profile.id, item.requestId, { ...item.order, version: latest.version });
-    } catch (error) { await dialog.alert(error instanceof Error ? error.message : text("Could not retry. Your draft is retained.", "再試行できません。下書きは保持されています。")); }
+    } catch (error) { await dialog.alert(userError(error, lang)); }
     finally { setBusy(false); }
   };
   // The amber bar is for exceptional states only. It stays out of the way while
@@ -78,7 +79,7 @@ export default function RecoveryStatus({ lang, onOpenScan, scanOpen }: { lang: L
     </div>
     {expanded && <ul className="mt-2 max-h-44 space-y-2 overflow-y-auto">
       {items.map(item => <li key={item.requestId} className="flex flex-wrap items-center gap-2 border-t border-amber-200 pt-2">
-        <span className="min-w-0 flex-1 break-words">{item.order.orderNumber || item.order.productName} · {item.state === "blocked" ? item.message : text("Waiting to sync", "同期待ち")}</span>
+        <span className="min-w-0 flex-1 break-words">{item.order.orderNumber || item.order.productName} · {item.state === "blocked" ? userError(item.message, lang) : text("Waiting to sync", "同期待ち")}</span>
         {item.state === "blocked" ? <>
           <button disabled={busy || !online} onClick={() => void review(item)} className="rounded border border-amber-400 px-3 py-1 font-600 disabled:opacity-50">{text("Review and retry", "確認して再送信")}</button>
           <button disabled={busy} onClick={async () => { if (await dialog.confirm(text("Remove this pending submission? Draft fields will remain on this device.", "保留中の送信を削除しますか？下書きは端末に残ります。"))) discardSubmission(profile.id, item.requestId); }} className="rounded border border-amber-400 px-3 py-1 disabled:opacity-50">{text("Remove pending", "保留を削除")}</button>

@@ -1,6 +1,11 @@
+import { userError } from "./resultCodes";
 export const NETWORK_STATUS_EVENT = "kiyometa-network-status";
 
 export function isConnectivityError(error: unknown): boolean {
+  if (error && typeof error === "object" && "rc" in error) {
+    const rc = String((error as { rc?: unknown }).rc ?? "");
+    if (rc && !rc.startsWith("NET-")) return false;
+  }
   if (!navigator.onLine) return true;
   const message = error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error);
   return /failed to fetch|network ?error|network request failed|fetch failed|load failed|timeout|timed out|aborted|offline|err_internet|err_name_not_resolved|dns/i.test(message);
@@ -18,6 +23,6 @@ export function friendlyNetworkMessage(error: unknown, lang: "ja" | "en"): strin
       ? "ネットワークに接続できないため、この操作を完了できません。接続を確認して再試行してください。"
       : "This could not be completed because the network is unavailable. Check the connection and try again.";
   }
-  return error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error);
+  return userError(error, lang);
 }
 
