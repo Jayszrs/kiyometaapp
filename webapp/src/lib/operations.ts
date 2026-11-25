@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { AppError, resultCode } from "./resultCodes";
 import { newProcessId, recordFrontendFailure, startProcess, traceQuery } from "./diagnostics";
+import { invokeSecureOperation } from "./secureOperations";
 import type { UserRole } from "./auth";
 
 export interface ManagedUser {
@@ -347,12 +348,12 @@ export async function fetchAuditLogs(options: number | AuditLogQuery = 200, sign
 
 export async function undoAuditLog(id: string): Promise<void> {
   const processId = startProcess("audit.undo");
-  const { error } = await traceQuery(supabase.rpc("undo_audit_entry", { p_audit_id: id }), processId, "audit.undo");
-  if (error) {
-    const code = (error as { code?: string }).code;
+  try {
+    await invokeSecureOperation("undo-audit-entry", { auditId: id }, processId, "audit.undo");
+  } catch (error) {
     const rc = resultCode(error);
     void recordFrontendFailure("audit.undo", error);
-    throw new AppError(code === "42501" ? "AUTH-002" : rc.startsWith("NET-") ? "TXN-001" : "UNDO-001");
+    throw new AppError(rc === "AUTH-001" || rc === "AUTH-002" ? rc : rc.startsWith("NET-") ? "TXN-001" : "UNDO-001");
   }
 }
 
@@ -681,19 +682,17 @@ export async function addStockMovement(
   // record_stock_movement, which rejects a reference_type that would imply a
   // purchase or an order exists behind the movement.
   const processId = startProcess("inventory.movement.record", { idempotencyKey: input.idempotencyKey });
-  const { data, error } = await traceQuery(supabase.rpc("record_stock_movement", {
-    p_movement_date: input.movementDate,
-    p_movement_type: input.movementType,
-    p_reference_id: input.referenceId || null,
-    p_item_id: input.itemId,
-    p_quantity: input.quantity,
-    p_delta: input.delta,
-    p_pic: input.pic.trim(),
-    p_notes: input.notes.trim(),
-    p_idempotency_key: input.idempotencyKey,
-  }), processId, "inventory.movement.record");
-  if (error) throw error;
-  return (data ?? null) as StockMovement | null;
+  return invokeSecureOperation<StockMovement | null>("record-stock-movement", {
+    movementDate: input.movementDate,
+    movementType: input.movementType,
+    referenceId: input.referenceId || null,
+    itemId: input.itemId,
+    quantity: input.quantity,
+    delta: input.delta,
+    pic: input.pic.trim(),
+    notes: input.notes.trim(),
+    idempotencyKey: input.idempotencyKey,
+  }, processId, "inventory.movement.record");
 }
 
 export async function deleteStockMovement(movement: StockMovement): Promise<void> {
@@ -898,21 +897,20 @@ export async function saveProductionTask(input: {
   completedQuantity: number | null;
 }): Promise<ProductionTaskProgress> {
   const processId = startProcess("production.task.save", { idempotencyKey: input.requestId });
-  const { data, error } = await traceQuery(supabase.rpc("save_production_task_once", {
-    p_request_id: input.requestId,
-    p_existing_id: input.existingId ?? null,
-    p_expected_version: input.expectedVersion ?? null,
-    p_order_id: input.orderId,
-    p_operation_id: input.operationId,
-    p_status: input.status,
-    p_actual_minutes: input.actualMinutes,
-    p_actual_time_basis: input.actualTimeBasis,
-    p_processed_quantity: input.processedQuantity,
-    p_completed_quantity: input.completedQuantity,
-    p_completed_at: input.completedAt ?? null,
-    p_operator_id: input.operatorId,
-  }), processId, "production.task.save");
-  if (error) throw error;
+  const data = await invokeSecureOperation<unknown>("save-production-task", {
+    requestId: input.requestId,
+    existingId: input.existingId ?? null,
+    expectedVersion: input.expectedVersion ?? null,
+    orderId: input.orderId,
+    operationId: input.operationId,
+    status: input.status,
+    actualMinutes: input.actualMinutes,
+    actualTimeBasis: input.actualTimeBasis,
+    processedQuantity: input.processedQuantity,
+    completedQuantity: input.completedQuantity,
+    completedAt: input.completedAt ?? null,
+    operatorId: input.operatorId,
+  }, processId, "production.task.save");
   const result = data as { ok?: boolean; conflict?: boolean; task?: Record<string, unknown>; latest?: Record<string, unknown> | null };
   if (result?.conflict) throw new StaleProductionTaskError(result.latest ? productionTaskFromRow(result.latest) : null);
   if (!result?.ok || !result.task) throw new Error("The production update could not be confirmed. It will retry safely.");

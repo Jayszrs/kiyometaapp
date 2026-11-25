@@ -4,7 +4,8 @@ import { useAuth, type UserProfile } from "./lib/auth";
 import { supabase } from "./lib/supabaseClient";
 import { AppShell, PageContainer, type DeliverySlipMode, type Lang, type Page } from "./App";
 import { friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
-import { processHeaders, startProcess, traceQuery } from "./lib/diagnostics";
+import { processHeaders, startProcess } from "./lib/diagnostics";
+import { invokeSecureOperation } from "./lib/secureOperations";
 
 interface Props {
   onNavigate: (p: Page, mode?: DeliverySlipMode, orderId?: string) => void;
@@ -105,18 +106,17 @@ export default function ProfilePage({ onNavigate, lang, setLang }: Props) {
         nextAvatarPath = uploadedPath;
       }
 
-      const { data, error: saveError } = await traceQuery(supabase.rpc("update_own_profile", {
-        p_display_name: form.displayName.trim(),
-        p_avatar_path: nextAvatarPath,
-        p_employee_number: form.employeeNumber.trim(),
-        p_phone: form.phone.trim(),
-        p_department: form.department.trim(),
-        p_position: form.position.trim(),
-        p_birth_date: form.birthDate || null,
-        p_address: form.address.trim(),
-        p_bio: form.bio.trim(),
-      }), processId, "profile.save");
-      if (saveError) throw saveError;
+      const data = await invokeSecureOperation<Record<string, unknown>>("update-own-profile", {
+        displayName: form.displayName.trim(),
+        avatarPath: nextAvatarPath,
+        employeeNumber: form.employeeNumber.trim(),
+        phone: form.phone.trim(),
+        department: form.department.trim(),
+        position: form.position.trim(),
+        birthDate: form.birthDate || null,
+        address: form.address.trim(),
+        bio: form.bio.trim(),
+      }, processId, "profile.save");
       const row = data as Record<string, unknown>;
       const updated: UserProfile = {
         ...profile,
