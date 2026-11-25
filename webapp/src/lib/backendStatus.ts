@@ -58,7 +58,7 @@ export function isMissingOperationsSchema(error: unknown): boolean {
 }
 
 export const MIGRATION_REQUIRED_MESSAGE =
-  "Migration backend belum lengkap. Jalankan migration 001 sampai 027 di project Supabase yang dipakai aplikasi, kemudian klik Check again.";
+  "This feature is temporarily unavailable. Contact your administrator, then try again.";
 
 export const EDGE_FUNCTION_REQUIRED_MESSAGE =
-  "Database sudah siap, tetapi Edge Function manage-users belum dapat diakses. Deploy function tersebut ke project Supabase yang sama, lalu klik Check again.";
+  "Account management is temporarily unavailable. Try again shortly or contact your administrator.";

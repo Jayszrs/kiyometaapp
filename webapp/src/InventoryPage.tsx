@@ -41,6 +41,8 @@ import { Icon } from "./components/Icon";
 import WorkflowHint from "./components/WorkflowHint";
 import { buildBomTree, compatibleSubassemblyProducts, summarizeBom } from "./lib/bom";
 import { isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { userError } from "./lib/resultCodes";
+import { AppError } from "./lib/resultCodes";
 
 interface Props {
   products: Product[];
@@ -207,22 +209,53 @@ const blankPurchase = (): Purchase => ({
 });
 
 function errorMessage(error: unknown, lang: Lang = "en") {
+  if (error instanceof AppError) return userError(error, lang === "ja" ? "ja" : "en");
   if (isConnectivityError(error)) {
     reportConnectivityError(error);
     return "";
   }
   const details = error as { code?: string; message?: string } | null;
   const message = error instanceof Error ? error.message : details?.message ?? "";
+  if (/^(?:[A-Z]+-\d{3}|TypeError|PostgrestError|FunctionsHttpError|FunctionsFetchError|StorageError)(?::|$)/.test(message)) return userError(error, lang === "ja" ? "ja" : "en");
   const code = details?.code ?? "";
+  const requiredColumns = message.match(/^Missing required column: (.+)$/i);
+  if (requiredColumns) return lang === "ja"
+    ? `Excelテンプレートに必須列「${requiredColumns[1]}」がありません。テンプレートをダウンロードし、列名をそのまま使用してください。`
+    : `The required Excel column “${requiredColumns[1]}” is missing. Download the template and keep its column name unchanged.`;
+  const importRow = message.match(/^Row (\d+):\s*(.+)$/i);
+  if (importRow) {
+    const row = importRow[1];
+    const issue = importRow[2];
+    const labels = ["Opening Qty", "Minimum Qty", "Target Qty", "Unit Cost", "Item Name", "Item No", "Ordered Qty", "Received Qty", "Unit Price", "Purchase Date", "Due Date", "Movement Date", "Movement Type", "Quantity", "Category", "Procurement", "Status", "Product No", "Parent BOM No", "Qty per Product"];
+    const required = issue.match(/^(.+) is required\.$/i);
+    if (required) return lang === "ja"
+      ? `Excelの${row}行目で必須列「${required[1]}」が空欄です。値を入力して、もう一度読み込んでください。`
+      : `Required column(s) ${required[1]} are blank in Excel row ${row}. Enter the values and import again.`;
+    const field = labels.find(label => issue.toLowerCase().includes(label.toLowerCase())) ?? "Excel row";
+    return lang === "ja"
+      ? `Excelの${row}行目の「${field}」を確認してください。値を修正してから、もう一度読み込んでください。`
+      : `Check “${field}” in Excel row ${row}. Correct the value and import the file again.`;
+  }
+  if (/No data rows were found/i.test(message)) return lang === "ja"
+    ? "Excelに読み込めるデータ行がありません。見出しの下にデータを入力して、もう一度お試しください。"
+    : "No data rows were found. Add data below the headers and import the file again.";
+  if (/more than one row for/i.test(message)) return lang === "ja"
+    ? "同じレコードに該当する行が複数あります。内容を1行にまとめてから、もう一度読み込んでください。"
+    : "The file has multiple rows for the same record. Merge them into one row and import again.";
+  if (/Excel headers do not match|workbook does not contain a worksheet|Excel file could not be read/i.test(message)) {
+    return lang === "ja"
+      ? "Excelファイルを読み取れません。現在の一覧からテンプレートをダウンロードし、対応するシートにデータを入力してください。"
+      : "This Excel file could not be read. Download the template from this list and enter the data in its worksheet.";
+  }
   if (code === "42501" && /next_bom_no/i.test(message)) {
     return lang === "ja"
-      ? "BOM番号の採番権限がデータベースで不足しています。変更は保存されていません。管理者に最新のデータベース更新を適用してもらい、再度お試しください。"
-      : "Database permission for generating BOM numbers is missing. No BOM row was saved. Ask an administrator to apply the latest database migration, then retry.";
+      ? "BOM番号を発行できませんでした。管理者にBOM編集権限を確認してもらってください。変更は保存されていません。"
+      : "The BOM number could not be assigned. Ask an administrator to check your BOM editing access. No change was saved.";
   }
   if (code === "42501") {
     return lang === "ja"
-      ? "このアカウントにはデータベース操作権限がありません。変更は保存されていません。管理者にアカウント状態とBOM編集権限を確認してもらってください。"
-      : "Supabase denied this database action. No change was saved. Ask an administrator to verify that your account is active and has BOM editing access.";
+      ? "この操作を行う権限がありません。変更は保存されていません。管理者にアカウントとBOM編集権限を確認してもらってください。"
+      : "You do not have access to make this change. No change was saved. Ask an administrator to check your account and BOM editing access.";
   }
   if (code === "23503") {
     return lang === "ja"
@@ -239,7 +272,7 @@ function errorMessage(error: unknown, lang: Lang = "en") {
       ? "中間製品と在庫品目の対応が無効か、製品構成が循環します。製造区分の部品を選び、品目と一意に一致する製品をリンクしてください。問題が続く場合は既存BOMの循環を管理者に確認してもらってください。"
       : "The subassembly does not match this inventory item, or the link would create a circular BOM. Choose a make-type component whose item code or name uniquely matches one product. If it still fails, ask an administrator to review existing BOM links.";
   }
-  return message || (lang === "ja" ? "予期しないエラーです。通信状態を確認して再試行してください。" : "An unexpected error occurred. Check your connection and retry.");
+  return userError(error, lang);
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -737,7 +770,8 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       try {
         prepared.push(prepareRow(row));
       } catch (err) {
-        throw new Error(`Row ${row.rowNumber}: ${errorMessage(err, lang)}`);
+        const reason = err instanceof Error ? err.message : "Invalid value";
+        throw new Error(`Row ${row.rowNumber}: ${reason}`);
       }
     }
     const skipped = prepared.filter(row => row.kind === "skip").length;
@@ -818,7 +852,7 @@ export default function InventoryPage({ products, onNavigate, lang, setLang }: P
       <main className="page-enter flex-1 overflow-y-auto p-3 sm:p-6 print:hidden">
         <PageContainer className="space-y-5">
           {profile.role === "administrator" && wipSettings && <WipPolicyForm settings={wipSettings} lang={lang} onSave={async draft => { const saved = await saveWipValuationSettings(draft); setWipSettings(saved); setWipResult(null); }} />}
-          <section className="rounded-lg bg-white p-4 ring-1 ring-slate-200"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h2 className="font-700 text-[#1a3458]">{text("WIP total", "WIP合計")}</h2><p className="text-xs text-slate-500">{text("This uses the actual work recorded in Production Stage Progress.", "製作工程進捗に入力した実績を使います。")}</p></div><button type="button" onClick={() => onNavigate("production-progress")} className="rounded border border-slate-300 px-3 py-2 text-sm font-700 text-[#1a3458]">{text("Open progress", "進捗を開く")}</button><label className="text-xs font-700">{text("Date", "日付")}<input type="date" value={wipAsOf} onChange={event => setWipAsOf(event.target.value)} className="mt-1 block rounded border px-2 py-2" /></label><button type="button" disabled={wipBusy} onClick={() => { setWipBusy(true); void calculateWipValuation(wipAsOf).then(setWipResult).catch(error => setError(errorMessage(error, langRef.current))).finally(() => setWipBusy(false)); }} className="rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40">{wipBusy ? text("Calculating…", "計算中…") : text("Calculate", "計算")}</button></div>{wipResult && (wipResult.configured ? <><p className="mt-4 text-right text-xl font-700 text-[#1a3458]">{text("Total WIP", "WIP合計")}: {money(Number(wipResult.total ?? 0))}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b text-left text-xs text-slate-500"><tr><th className="py-2">{text("Order", "受注")}</th><th className="py-2 text-right">{text("WIP value", "WIP金額")}</th></tr></thead><tbody>{(wipResult.rows ?? []).map(row => <tr key={String(row.order_id)} className="border-b border-slate-100"><td className="py-2">{String(row.order_number ?? row.order_id)}</td><td className="py-2 text-right font-mono">{money(Number(row.wip_value ?? 0))}</td></tr>)}</tbody></table></div></> : <p className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-800">{wipResult.reason ?? text("WIP is not ready.", "WIPの準備ができていません。")}</p>)}</section>
+          <section className="rounded-lg bg-white p-4 ring-1 ring-slate-200"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h2 className="font-700 text-[#1a3458]">{text("WIP total", "WIP合計")}</h2><p className="text-xs text-slate-500">{text("This uses the actual work recorded in Production Stage Progress.", "製作工程進捗に入力した実績を使います。")}</p></div><button type="button" onClick={() => onNavigate("production-progress")} className="rounded border border-slate-300 px-3 py-2 text-sm font-700 text-[#1a3458]">{text("Open progress", "進捗を開く")}</button><label className="text-xs font-700">{text("Date", "日付")}<input type="date" value={wipAsOf} onChange={event => setWipAsOf(event.target.value)} className="mt-1 block rounded border px-2 py-2" /></label><button type="button" disabled={wipBusy} onClick={() => { setWipBusy(true); void calculateWipValuation(wipAsOf).then(setWipResult).catch(error => setError(errorMessage(error, langRef.current))).finally(() => setWipBusy(false)); }} className="rounded bg-[#1a3458] px-3 py-2 text-sm font-700 text-white disabled:opacity-40">{wipBusy ? text("Calculating…", "計算中…") : text("Calculate", "計算")}</button></div>{wipResult && (wipResult.configured ? <><p className="mt-4 text-right text-xl font-700 text-[#1a3458]">{text("Total WIP", "WIP合計")}: {money(Number(wipResult.total ?? 0))}</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b text-left text-xs text-slate-500"><tr><th className="py-2">{text("Order", "受注")}</th><th className="py-2 text-right">{text("WIP value", "仕掛品金額")}</th></tr></thead><tbody>{(wipResult.rows ?? []).map(row => <tr key={String(row.order_id)} className="border-b border-slate-100"><td className="py-2">{String(row.order_number ?? row.order_id)}</td><td className="py-2 text-right font-mono">{money(Number(row.wip_value ?? 0))}</td></tr>)}</tbody></table></div></> : <p className="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-800">{text("WIP valuation is not configured yet. Ask an administrator to complete the valuation settings.", "仕掛品評価の設定が未完了です。管理者に評価設定を依頼してください。")}</p>)}</section>
           <WorkflowHint steps={[{ number: "1", title: text("Order", "注文"), detail: text("Order quantity sets the plan.", "注文数量が予定を決めます。") }, { number: "2", title: text("Progress", "進捗"), detail: text("Enter actual minutes and quantities.", "実績分数と数量を入力します。") }, { number: "3", title: text("WIP total", "WIP合計"), detail: text("Calculate the current unfinished cost.", "未完了分の原価を計算します。") }]} />
           <div className="flex flex-wrap items-stretch gap-3">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-3 lg:grid-cols-4">

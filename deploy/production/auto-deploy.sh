@@ -10,10 +10,19 @@ set -eu
 APP_DIR=/srv/kiyometa/app
 DEPLOY_DIR=/srv/kiyometa/deploy
 STATE=/srv/kiyometa/deploy/.deployed-commit
-LOG=/var/log/kiyometa-autodeploy.log
+LOG=/srv/kiyometa/logs/deploy.log
 LOCK=/tmp/kiyometa-autodeploy.lock
 
 log() { echo "$(date -Is) $*" >> "$LOG"; }
+mkdir -p /srv/kiyometa/logs
+# Keep the host deploy log bounded as well as the container JSONL logs.
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -ge 10485760 ]; then
+  mv "$LOG" "$LOG.$(date -u +%Y%m%dT%H%M%S)"
+fi
+find /srv/kiyometa/logs -maxdepth 1 -type f -name 'deploy.log.*' -mtime +90 -delete
+for old_log in $(ls -1t /srv/kiyometa/logs/deploy.log.* 2>/dev/null | tail -n +11); do
+  rm -f -- "$old_log"
+done
 
 # Never run two deploys at once.
 exec 9>"$LOCK"
@@ -31,6 +40,7 @@ DEPLOYED=$(cat "$STATE" 2>/dev/null || true)
 [ "$DEPLOYED" = "$REMOTE" ] && exit 0
 
 log "deploying ${DEPLOYED:-none} -> $REMOTE"
+export APP_RELEASE="$REMOTE"
 git reset -q --hard origin/main >> "$LOG" 2>&1
 
 cd "$DEPLOY_DIR"

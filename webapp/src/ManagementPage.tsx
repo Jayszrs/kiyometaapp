@@ -6,7 +6,7 @@ import { MIGRATION_REQUIRED_MESSAGE, probeOperationsBackend } from "./lib/backen
 import { passwordBreachCount } from "./lib/pwnedPassword";
 import { useIsTabletOrWider } from "./lib/useMediaQuery";
 import { useDialog } from "./components/AppDialog";
-import { isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
+import { friendlyNetworkMessage, isConnectivityError, reportConnectivityError } from "./lib/networkStatus";
 import {
   createManagedUser,
   fetchAuditLogs,
@@ -48,9 +48,6 @@ const ENTITY_LABELS_JA: Record<string, string> = {
   production_tasks: "製造工程", manufacturing_operations: "工程マスター", production_costs: "製造原価",
 };
 
-function messageOf(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected error";
-}
 
 export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
   const { profile } = useAuth();
@@ -90,7 +87,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
       setLogs(nextLogs);
     }, err => {
       if (isConnectivityError(err)) { reportConnectivityError(err); return; }
-      setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : messageOf(err));
+      setError(langRef.current === "ja" ? "データを読み込めませんでした。通信状態を確認してください。" : friendlyNetworkMessage(err, langRef.current));
     }, active => { setBusy(active); if (active) setError(""); });
   const load = useCallback((forceProbe = false) => {
     forceProbeRef.current ||= forceProbe;
@@ -115,7 +112,7 @@ export default function ManagementPage({ onNavigate, lang, setLang }: Props) {
       await load();
     } catch (err) {
       if (isConnectivityError(err)) { reportConnectivityError(err); return; }
-      setError(lang === "ja" ? "処理に失敗しました。入力内容と通信状態を確認してください。" : messageOf(err));
+      setError(lang === "ja" ? "処理に失敗しました。入力内容と通信状態を確認してください。" : friendlyNetworkMessage(err, langRef.current));
     } finally {
       setBusy(false);
     }

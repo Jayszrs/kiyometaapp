@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { recordFrontendFailure } from "../lib/diagnostics";
 
 interface Props {
   resetKey: string;
@@ -21,7 +22,7 @@ export default class ModuleErrorBoundary extends Component<Props, { error: Error
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("Kiyometa module rendering failed", error, info.componentStack);
+    void recordFrontendFailure("module.render", error, info.componentStack ?? "");
   }
 
   private retry = () => {

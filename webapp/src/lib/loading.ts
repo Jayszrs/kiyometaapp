@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { diagnosticFetch } from "./diagnostics";
 
 // Every long-running operation funnels through this one counter, so the single
 // popup in components/LoadingDialog can stand in for all of them: network
@@ -33,7 +34,7 @@ export async function loadingFetch(input: RequestInfo | URL, init?: RequestInit)
   const timer = window.setTimeout(cancel, 20000);
   if (!background) beginLoading();
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await diagnosticFetch(input, { ...init, signal: controller.signal });
   } finally {
     window.clearTimeout(timer);
     callerSignal?.removeEventListener("abort", cancel);

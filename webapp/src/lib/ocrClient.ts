@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { diagnosticFetch, flushOcrDiagnostics } from "./diagnostics";
 import { readRecovery, writeRecovery, removeRecovery } from "./recoveryStorage";
 
 export interface OcrLine {
@@ -33,7 +34,6 @@ export class OcrError extends Error {
 }
 
 function responseError(status: number): OcrError {
-  console.error("OCR response", status);
   return new OcrError([408, 504, 524].includes(status) ? "timeout"
     : status === 422 || status === 400 ? "unreadable"
     : status === 401 || status === 403 ? "auth"
@@ -49,8 +49,10 @@ export async function preparePhoto(file: File, signal: AbortSignal): Promise<Blo
   if (!isHeicPhoto(file)) return file;
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch(`${OCR_URL}/prepare-image`, {
-    method: "POST", headers: await authHeaders(), body, signal,
+  const headers = await authHeaders();
+  headers["x-process-operation"] = "ocr.prepare_photo";
+  const response = await diagnosticFetch(`${OCR_URL}/prepare-image`, {
+    method: "POST", headers, body, signal,
   });
   if (!response.ok) throw responseError(response.status);
   return response.blob();
@@ -65,7 +67,7 @@ function pollDelay(signal: AbortSignal): Promise<void> {
   });
 }
 
-interface OcrRecovery { id?: string; name: string; lines?: OcrLine[] }
+interface OcrRecovery { id?: string; name: string; lines?: OcrLine[]; processId?: string }
 export const getOcrRecovery = (owner: string) => readRecovery<OcrRecovery>(owner, "ocr-job");
 
 async function sourceFile(owner: string, file?: File, remove = false): Promise<File | undefined> {
@@ -120,17 +122,21 @@ export async function runOcr(file?: File, signal?: AbortSignal, onProgress?: (st
     }
     if (!recovery) throw new OcrError("service");
     headers = await authHeaders().catch(() => { throw new OcrError("auth"); });
+    recovery.processId ??= crypto.randomUUID();
+    writeRecovery(owner, "ocr-job", recovery);
+    headers["x-process-id"] = recovery.processId;
+    headers["x-process-operation"] = "ocr.quotation_scan";
     const upload = async () => {
       onProgress?.("uploading");
       const source = file ?? await sourceFile(owner);
       if (!source) throw new OcrError("service");
       const body = new FormData();
       body.append("file", source, recovery!.name);
-      const res = await fetch(`${OCR_URL}/jobs`, { method: "POST", body, headers, signal: controller.signal });
+      const res = await diagnosticFetch(`${OCR_URL}/jobs`, { method: "POST", body, headers, signal: controller.signal });
       if (!res.ok) throw responseError(res.status);
       const accepted = await res.json();
       if (typeof accepted?.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(accepted.id)) throw new OcrError("service");
-      recovery = { name: recovery!.name, id: accepted.id };
+      recovery = { name: recovery!.name, id: accepted.id, processId: recovery!.processId };
       writeRecovery(owner, "ocr-job", recovery);
       jobUrl = `${OCR_URL}/jobs/${accepted.id}`;
       onProgress?.("queued");
@@ -142,7 +148,7 @@ export async function runOcr(file?: File, signal?: AbortSignal, onProgress?: (st
     while (!controller.signal.aborted) {
       let poll: Response;
       try {
-        poll = await fetch(jobUrl, { headers, signal: controller.signal, cache: "no-store" });
+        poll = await diagnosticFetch(jobUrl, { headers, signal: controller.signal, cache: "no-store" });
       } catch (error) {
         if (controller.signal.aborted || ++failures >= 3) throw error;
         await pollDelay(controller.signal);
@@ -175,24 +181,14 @@ export async function runOcr(file?: File, signal?: AbortSignal, onProgress?: (st
     }
     throw new OcrError("timeout");
   } catch (error) {
-    console.error("OCR diagnostic", error);
     if (error instanceof OcrError) throw error;
     throw new OcrError(controller.signal.aborted ? "timeout" : "service");
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", cancel);
+    void flushOcrDiagnostics();
     // Closing the modal/app or losing connectivity detaches this poller only.
     // The server keeps processing; the durable job handle resumes on reopen.
     console.info("OCR request duration", Math.round(performance.now() - started), "ms");
   }
-}
-
-export async function sendOcrLog(message: string): Promise<void> {
-  try {
-    await fetch(`${OCR_BASE}/log`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-      body: JSON.stringify({ message }),
-    });
-  } catch {}
 }

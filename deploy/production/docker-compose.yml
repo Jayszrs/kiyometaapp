@@ -15,7 +15,10 @@ services:
       OCR_MAX_CONCURRENT: 2
       SUPABASE_JWT_SECRET: ${JWT_SECRET}
       SUPABASE_JWKS_URL: ${VITE_SUPABASE_URL}/auth/v1/.well-known/jwks.json
+      APP_RELEASE: ${APP_RELEASE:-unknown}
     mem_limit: 2500m
+    volumes:
+      - /srv/kiyometa/logs:/logs
     networks: [kiyometa]
 
   orders-webapp:
@@ -25,6 +28,7 @@ services:
       args:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+        VITE_APP_RELEASE: ${APP_RELEASE:-unknown}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${ORDERS_WEBAPP_PORT}:80"

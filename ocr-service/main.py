@@ -38,10 +38,13 @@ import io
 from contextlib import asynccontextmanager
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
+import uuid
 from threading import Lock, Semaphore
+from collections import defaultdict, deque
 
 import cv2
 import numpy as np
@@ -53,6 +56,7 @@ from rapidocr_onnxruntime import RapidOCR
 from prepare_models import model_path
 from recognition import recognize_page
 from jobs import OcrJobs, JobsBusy, JobStopped
+from diagnostics import write_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +67,6 @@ log = logging.getLogger("kiyometa-ocr")
 MAX_PDF_PAGES = int(os.environ.get("MAX_PDF_PAGES", "3"))
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_MB", "25")) * 1024 * 1024
 MAX_PAGE_PIXELS = int(os.environ.get("MAX_PAGE_PIXELS", "20000000"))
-LOG_ENDPOINT_ENABLED = os.environ.get("OCR_LOG_ENDPOINT", "0") == "1"
 
 # Authentication. OCR is the most expensive thing this service does, and an open
 # endpoint is both a free compute service for anyone and a way to burn the
@@ -92,6 +95,111 @@ async def lifespan(app):
 
 app = FastAPI(title="Kiyometa Quotation OCR", lifespan=lifespan)
 
+_diagnostic_rate_lock = Lock()
+_diagnostic_hits = defaultdict(deque)
+_diagnostic_limit_per_minute = 120
+_ocr_started_processes = {}
+
+
+@app.middleware("http")
+async def trace_ocr_requests(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/ocr/") or path == "/ocr/diagnostics" or path == "/ocr/health":
+        return await call_next(request)
+    process_id = request.headers.get("x-process-id", "")[:64] or str(uuid.uuid4())
+    request_id = request.headers.get("x-request-id", "")[:64] or str(uuid.uuid4())
+    route = re.sub(r"/jobs/[^/]+", "/jobs/:job_id", path)
+    route = re.sub(r"/[0-9a-f]{8}-[0-9a-f-]{27,}", "/:id", route, flags=re.I)
+    operation = request.headers.get("x-process-operation", "").strip()[:120] or f"{request.method} {route}"
+    common = {
+        "event_id": str(uuid.uuid4()), "process_id": process_id, "request_id": request_id,
+        "operation": operation, "device_id": request.headers.get("x-device-id", "")[:64],
+        "release_id": request.headers.get("x-app-release", os.environ.get("APP_RELEASE", "unknown"))[:100],
+        "service_host": request.headers.get("host", "")[:160],
+        "client_ip": request.headers.get("x-kiyometa-client-ip", "")[:64],
+    }
+    with _diagnostic_rate_lock:
+        now = time.monotonic()
+        if process_id not in _ocr_started_processes:
+            _ocr_started_processes[process_id] = now
+            try:
+                write_event("ocr", {**common, "actor_id": "", "stage": "process.start", "rc": "00"})
+            except Exception:
+                log.error("Pencatatan diagnostik OCR gagal")
+        if len(_ocr_started_processes) > 5000:
+            for started_id, started_at in list(_ocr_started_processes.items()):
+                if now - started_at > 3600:
+                    _ocr_started_processes.pop(started_id, None)
+    started = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception as error:
+        fingerprint = hashlib.sha256((type(error).__name__ + ":" + str(error)).encode("utf-8", "replace")).hexdigest()[:16]
+        try:
+            write_event("ocr", {**common, "actor_id": getattr(request.state, "actor_id", ""), "session_id": getattr(request.state, "session_id", ""), "stage": "request.end", "rc": "SVC-001", "http_status": 500, "duration_ms": round((time.monotonic()-started)*1000), "error_class": type(error).__name__, "error_fingerprint": fingerprint})
+        except Exception:
+            log.error("Pencatatan diagnostik OCR gagal")
+        raise
+    status = response.status_code
+    rc = "00" if status < 400 else "AUTH-001" if status == 401 else "AUTH-002" if status == 403 else "DATA-001" if status == 404 else "SVC-002" if status == 429 else "VAL-002" if status in (400, 422) else "FILE-002" if status == 413 else "SVC-001" if status >= 500 else "SYS-001"
+    try:
+        write_event("ocr", {**common, "actor_id": getattr(request.state, "actor_id", ""), "session_id": getattr(request.state, "session_id", ""), "stage": "request.end", "rc": rc, "http_status": status, "duration_ms": round((time.monotonic()-started)*1000)})
+    except Exception:
+        log.error("Pencatatan diagnostik OCR gagal")
+    return response
+
+@app.post("/ocr/diagnostics")
+async def collect_diagnostics(request: Request):
+    if not REQUIRE_AUTH:
+        raise HTTPException(status_code=503, detail="Diagnostics unavailable")
+    owner = require_user(request)
+    now = time.monotonic()
+    with _diagnostic_rate_lock:
+        hits = _diagnostic_hits[owner]
+        while hits and now - hits[0] > 60:
+            hits.popleft()
+        if len(hits) >= _diagnostic_limit_per_minute:
+            raise HTTPException(status_code=429, detail="Diagnostics rate limit reached")
+        hits.append(now)
+        if len(_diagnostic_hits) > 5000:
+            for user, user_hits in list(_diagnostic_hits.items()):
+                if not user_hits or now - user_hits[-1] > 600:
+                    _diagnostic_hits.pop(user, None)
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > 65536:
+            raise HTTPException(status_code=413, detail="Request too large")
+        chunks.append(chunk)
+    try:
+        payload = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid diagnostics batch")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid diagnostics batch")
+    events = payload.get("events", [])
+    if not isinstance(events, list) or not events or len(events) > 50:
+        raise HTTPException(status_code=400, detail="Invalid events")
+    for event in events:
+        if not isinstance(event, dict):
+            raise HTTPException(status_code=400, detail="Invalid event")
+        if event.get("source", "web") not in ("web", "supabase"):
+            raise HTTPException(status_code=400, detail="Invalid source")
+        if not isinstance(event.get("event_id"), str) or len(event["event_id"]) > 64:
+            raise HTTPException(status_code=400, detail="Invalid event id")
+        if not isinstance(event.get("process_id"), str) or len(event["process_id"]) > 64:
+            raise HTTPException(status_code=400, detail="Invalid process id")
+        if not isinstance(event.get("operation"), str) or len(event["operation"]) > 160:
+            raise HTTPException(status_code=400, detail="Invalid operation")
+        if not isinstance(event.get("stage"), str) or len(event["stage"]) > 64:
+            raise HTTPException(status_code=400, detail="Invalid stage")
+        event["actor_id"] = owner
+        event["client_ip"] = request.headers.get("x-kiyometa-client-ip", "")[:64]
+        event["device_id"] = str(event.get("device_id", ""))[:64]
+        write_event(event.get("source", "web"), event)
+    return {"accepted": len(events)}
+
 _origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 if os.environ.get("CORS_ORIGINS", "").strip() == "*":
     # A wildcard with credentials is rejected by browsers, so it silently
@@ -105,7 +213,7 @@ if _origins:
         CORSMiddleware,
         allow_origins=_origins,
         allow_methods=["POST", "GET", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Process-Id", "X-Parent-Process-Id", "X-Request-Id", "X-Process-Operation", "X-Device-Id", "X-App-Release", "X-Session-Id"],
     )
 # Unset CORS_ORIGINS means no CORS headers at all, so other origins are refused
 # by the browser. The web app proxies same-origin and needs no CORS either.
@@ -216,7 +324,7 @@ def _fetch_jwks() -> dict:
             # A stale cache is better than refusing every request while the
             # endpoint is briefly unreachable.
             if _jwks_cache["keys"]:
-                log.warning("JWKS fetch failed, reusing cached keys: %s", exc)
+                log.warning("JWKS fetch failed; reusing cached keys")
                 return _jwks_cache["keys"]
             raise HTTPException(status_code=503, detail="Cannot verify the session right now.") from exc
         _jwks_cache["keys"] = keys
@@ -365,11 +473,12 @@ def require_user(request: Request) -> str:
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             raise HTTPException(status_code=401, detail="Invalid session token.")
+        request.state.actor_id = subject
+        request.state.session_id = claims.get("session_id", "")
         return subject
     except HTTPException as exc:
         if exc.status_code == 503:
             raise
-        log.info("Rejected OCR request: %s", exc.detail)
         raise HTTPException(status_code=401, detail="Sign in to use OCR.") from exc
 
 
@@ -386,10 +495,6 @@ class LineOut(BaseModel):
 class OcrResponse(BaseModel):
     source: str
     lines: list[LineOut]
-
-
-class LogIn(BaseModel):
-    message: str = ""
 
 
 def check_pixels(width: int, height: int, label: str) -> None:
@@ -461,16 +566,9 @@ def health() -> dict:
     return {"ok": True}
 
 
-@app.post("/log")
-def log_message(request: Request, payload: LogIn) -> dict:
-    if not LOG_ENDPOINT_ENABLED:
-        raise HTTPException(status_code=404, detail="Not found")
-    # It forwards log text into this service's stdout, so it is authenticated
-    # on the same terms as OCR even though it is cheap.
-    require_user(request)
-    lines = payload.message.splitlines()[:200]
-    for line in lines:
-        log.info("[webapp] %s", line[:500])
+@app.get("/ocr/health")
+def proxied_health() -> dict:
+    # Same-origin reverse proxy preserves the /ocr prefix.
     return {"ok": True}
 
 
@@ -522,16 +620,13 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda stage=None: None) -> OcrRes
     started = time.monotonic()
     name = safe_name(file.filename or "upload")
     is_pdf = name.lower().endswith(".pdf")
-    log.info("OCR request: %s (%d bytes, %s)", name, len(raw), "pdf" if is_pdf else "image")
     try:
         if is_pdf:
             images = rasterize_pdf(raw, dpi, check)
             if not images:
                 raise HTTPException(status_code=400, detail="PDF has no pages.")
-            log.info("Rasterized %d page(s) at %ddpi", len(images), dpi)
         else:
             images = [decode_image(raw)]
-            log.info("Decoded image %dx%d", images[0].shape[1], images[0].shape[0])
     except (HTTPException, JobStopped):
         raise
     except ValueError as exc:
@@ -539,9 +634,7 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda stage=None: None) -> OcrRes
     except Exception as exc:
         # A malformed PDF or image reaches the parsers as their own exception
         # types, which must not surface as a 500 with a traceback.
-        log.warning("OCR decode failed for %s: %s: %s", name, type(exc).__name__, exc)
         raise HTTPException(status_code=400, detail="The file could not be read as a PDF or image.") from exc
-    log.info("decode %.3fs", time.monotonic()-started)
     del raw
 
     lines: list[LineOut] = []
@@ -558,11 +651,8 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda stage=None: None) -> OcrRes
         except (HTTPException, JobStopped):
             raise
         except Exception as exc:
-            log.exception("OCR inference failed: %s", name)
             raise HTTPException(status_code=503, detail="Recognition is temporarily unavailable. Try again shortly.") from exc
-        log.info("[ocr] page %d: rotated %d degrees counterclockwise", pi, rotation)
         if not result:
-            log.info("[ocr] page %d: no text", pi)
             continue
         for box, text, score in result:
             xs = [p[0] for p in box]
@@ -579,14 +669,10 @@ def run_ocr(file: UploadFile, dpi: int, check=lambda stage=None: None) -> OcrRes
                     page=pi,
                 )
             )
-            log.info(
-                "[ocr] p%d x0=%-4d y0=%-4d x1=%-4d y1=%-4d conf=%.2f  %s",
-                pi, x0, y0, x1, y1, float(score), text,
-            )
     if not lines:
         raise HTTPException(status_code=422, detail="No recognizable text in the uploaded file.")
+    check("cleaning")
     lines.sort(key=lambda l: (l.page, l.y0, l.x0))
-    log.info("OCR done: %d line(s) -> %s (%.3fs)", len(lines), name, time.monotonic()-started)
     return OcrResponse(source=name, lines=lines)
 
 
@@ -610,7 +696,14 @@ def create_ocr_job(request: Request, file: UploadFile = File(...), dpi: int = 30
     if not raw: raise HTTPException(status_code=400,detail="Empty file.")
     if len(raw) > MAX_UPLOAD_BYTES: raise HTTPException(status_code=413,detail="File exceeds the upload size limit.")
     try:
-        job_id = _jobs.submit(owner,raw,safe_name(file.filename or "upload"),dpi)
+        job_id = _jobs.submit(owner,raw,safe_name(file.filename or "upload"),dpi, {
+            "process_id": request.headers.get("x-process-id", "")[:64],
+            "request_id": request.headers.get("x-request-id", "")[:64],
+            "device_id": request.headers.get("x-device-id", "")[:64],
+            "release_id": request.headers.get("x-app-release", "")[:100],
+            "client_ip": request.headers.get("x-kiyometa-client-ip", "")[:64],
+        "session_id": request.headers.get("x-session-id", "")[:64],
+        })
     except JobsBusy:
         raise HTTPException(status_code=429,detail="The OCR service is busy. Try again shortly.")
     return {"id":job_id}

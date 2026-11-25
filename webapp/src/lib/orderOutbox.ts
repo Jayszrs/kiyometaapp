@@ -1,6 +1,7 @@
 import type { OrderRecord } from "../App";
 import { supabase } from "./supabaseClient";
 import { submitOrderOnce, StaleOrderError } from "./db";
+import { userError } from "./resultCodes";
 import { genUUID } from "./uuid";
 import { readRecovery, writeRecovery } from "./recoveryStorage";
 
@@ -53,7 +54,7 @@ async function deliver(owner: string, item: PendingOrder): Promise<OrderRecord> 
     } catch (error) {
       if (error instanceof QueuedOrderError || isRetryable(error)) throw new QueuedOrderError();
       store(owner, pendingOrders(owner).map(entry => entry.requestId === item.requestId
-        ? { ...entry, state: "blocked", message: error instanceof Error ? error.message : (error as {message?: string})?.message || "Could not save order." }
+        ? { ...entry, state: "blocked", message: error instanceof StaleOrderError ? error.message : userError(error, "en") }
         : entry));
       throw error;
     }

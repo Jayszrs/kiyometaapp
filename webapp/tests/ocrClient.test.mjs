@@ -8,6 +8,7 @@ globalThis.localStorage = memoryStorage();
 beforeEach(() => localStorage.clear());
 import ts from 'typescript';
 let source = readFileSync(new URL('../src/lib/ocrClient.ts', import.meta.url), 'utf8')
+  .replace('import { diagnosticFetch, flushOcrDiagnostics } from "./diagnostics";', 'const diagnosticFetch = (...args) => fetch(...args); const flushOcrDiagnostics = async () => {};')
   .replace('import { supabase } from "./supabaseClient";', 'const supabase = {auth:{getSession:async()=>({data:{session:{access_token:"test-token",user:{id:"ocr-user"}}}})}};')
   .replace('import.meta.env.VITE_OCR_URL', 'undefined').replace('"./recoveryStorage"', JSON.stringify(storageUrl));
 const {outputText}=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}});

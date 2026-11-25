@@ -229,7 +229,11 @@ export async function readExcelRows(file: File, columns: ExcelColumn[]): Promise
   }
   const ExcelJSRuntime = await loadExcelJS();
   const workbook = new ExcelJSRuntime.Workbook();
-  await workbook.xlsx.load(await file.arrayBuffer());
+  try {
+    await workbook.xlsx.load(await file.arrayBuffer());
+  } catch {
+    throw new Error("The Excel file could not be read. Save it again as .xlsx and retry.");
+  }
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error("The workbook does not contain a worksheet.");
 

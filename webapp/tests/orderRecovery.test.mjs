@@ -16,6 +16,7 @@ globalThis.recoveryDb = { StaleOrderError, submitOrderOnce: async (id, order) =>
 const url = moduleUrl('orderOutbox.ts', {
   'import { supabase } from "./supabaseClient";': 'const supabase = globalThis.recoverySupabase;',
   'import { submitOrderOnce, StaleOrderError } from "./db";': 'const {submitOrderOnce, StaleOrderError} = globalThis.recoveryDb;',
+  'import { userError } from "./resultCodes";': 'const userError = () => "Save could not be confirmed.";',
   '"./uuid"': JSON.stringify(moduleUrl('uuid.ts')),
   '"./recoveryStorage"': JSON.stringify(storageUrl),
 });

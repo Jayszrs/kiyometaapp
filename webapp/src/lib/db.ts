@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { startProcess, traceQuery } from "./diagnostics";
 import type { Client, Product, ProductTask, OrderRecord } from "../App";
 
 // DB columns are snake_case; the UI types are camelCase. This module is the
@@ -184,17 +185,18 @@ const PRODUCT_LIST_COLUMNS =
 type ProductListRow = Omit<ProductRow, "tasks" | "drawings">;
 
 export async function fetchAll(signal?: AbortSignal) {
+  const processId = startProcess("master.initial_load");
   const [clients, products, orders] = await Promise.all([
     fetchAllPages((from, to) => {
-      const query = supabase.from("clients").select("*").order("name").order("id").range(from, to);
+      const query = traceQuery(supabase.from("clients").select("*").order("name").order("id").range(from, to), processId, "master.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
     fetchAllPages((from, to) => {
-      const query = supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name").order("id").range(from, to);
+      const query = traceQuery(supabase.from("products").select(PRODUCT_LIST_COLUMNS).order("product_name").order("id").range(from, to), processId, "master.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
     fetchAllPages((from, to) => {
-      const query = supabase.from("orders").select("*").order("delivery_date").order("id").range(from, to);
+      const query = traceQuery(supabase.from("orders").select("*").order("delivery_date").order("id").range(from, to), processId, "master.fetch_all");
       return signal ? query.abortSignal(signal) : query;
     }),
   ]);
@@ -219,7 +221,8 @@ async function fetchAllPages<T>(makeQuery: (from: number, to: number) => Promise
 
 // Full product row including tasks and drawing keys, for the product form only.
 export async function fetchProduct(id: string): Promise<Product | null> {
-  const { data, error } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
+  const processId = startProcess("product.open");
+  const { data, error } = await traceQuery(supabase.from("products").select("*").eq("id", id).maybeSingle(), processId, "product.fetch");
   if (error) throw error;
   return data ? productFromRow(data as ProductRow) : null;
 }
@@ -228,11 +231,12 @@ export async function fetchProduct(id: string): Promise<Product | null> {
 // selected orders, so fetching each product inside Promise.all created an N+1
 // burst on tablets. Fetch only the task schedule columns the print uses.
 export async function fetchProductTasksByIds(ids: readonly string[]): Promise<Map<string, ProductTask[]>> {
+  const processId = startProcess("order.preparation_print_data");
   const uniqueIds = [...new Set(ids.filter(Boolean))];
   const out = new Map<string, ProductTask[]>();
   for (let offset = 0; offset < uniqueIds.length; offset += 100) {
     const batch = uniqueIds.slice(offset, offset + 100);
-    const { data, error } = await supabase.from("products").select("id,tasks").in("id", batch);
+    const { data, error } = await traceQuery(supabase.from("products").select("id,tasks").in("id", batch), processId, "product.tasks_fetch");
     if (error) throw error;
     for (const row of data ?? []) out.set(row.id, row.tasks ?? []);
   }
@@ -242,16 +246,17 @@ export async function fetchProductTasksByIds(ids: readonly string[]): Promise<Ma
 // ---- Clients ----
 
 export async function upsertClient(c: Client): Promise<Client> {
+  const processId = startProcess("client.save");
   if (c.version == null) {
-    const { data, error } = await supabase.from("clients").insert({ id: c.id, ...clientToRow(c), version: 1 }).select().single();
+    const { data, error } = await traceQuery(supabase.from("clients").insert({ id: c.id, ...clientToRow(c), version: 1 }).select().single(), processId, "client.save");
     if (error) throw error;
     return clientFromRow(data as ClientRow);
   }
-  const { data, error } = await supabase.from("clients")
-    .update({ ...clientToRow(c), version: c.version + 1 }).eq("id", c.id).eq("version", c.version).select().maybeSingle();
+  const { data, error } = await traceQuery(supabase.from("clients")
+    .update({ ...clientToRow(c), version: c.version + 1 }).eq("id", c.id).eq("version", c.version).select().maybeSingle(), processId, "client.save");
   if (error) throw error;
   if (data) return clientFromRow(data as ClientRow);
-  const latest = await supabase.from("clients").select("*").eq("id", c.id).maybeSingle();
+  const latest = await traceQuery(supabase.from("clients").select("*").eq("id", c.id).maybeSingle(), processId, "client.save");
   if (latest.error) throw latest.error;
   throw new StaleClientError(latest.data ? clientFromRow(latest.data as ClientRow) : null);
 }
@@ -264,7 +269,7 @@ export class StaleClientError extends Error {
 }
 
 export async function deleteClient(id: string): Promise<void> {
-  const { error } = await supabase.from("clients").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("clients").delete().eq("id", id), startProcess("client.delete"), "client.delete");
   if (error) throw error;
 }
 
@@ -328,7 +333,7 @@ export function drawingExtension(mime: string): string {
   return EXTENSION_BY_MIME[mime] ?? "png";
 }
 
-async function persistDrawings(productId: string, drawings: string[], existingPaths: string[]): Promise<DrawingRef[]> {
+async function persistDrawings(productId: string, drawings: string[], existingPaths: string[], processId: string): Promise<DrawingRef[]> {
   const plan = planDrawingSlots(drawings, existingPaths);
   const out: DrawingRef[] = new Array(plan.length);
 
@@ -348,7 +353,7 @@ async function persistDrawings(productId: string, drawings: string[], existingPa
       (async () => {
         const { error } = await supabase.storage
           .from("product-drawings")
-          .upload(path, dataUriToBytes(d), { contentType: step.mime, upsert: true });
+          .upload(path, dataUriToBytes(d), { contentType: step.mime, upsert: true, headers: { "x-process-id": processId, "x-parent-process-id": processId, "x-process-operation": "product.drawing.upload", "x-device-id": localStorage.getItem("kiyometa-diagnostic-device") ?? "unavailable", "x-app-release": import.meta.env.VITE_APP_RELEASE ?? "dev" } });
         if (error) throw error;
         out[i] = { path };
       })(),
@@ -396,19 +401,20 @@ export async function signProductDrawings(paths: string[]): Promise<string[]> {
 }
 
 export async function upsertProduct(p: Product): Promise<Product> {
-  const drawingRefs = await persistDrawings(p.id, p.drawings, p.drawingPaths);
+  const processId = startProcess("product.save");
+  const drawingRefs = await persistDrawings(p.id, p.drawings, p.drawingPaths, processId);
   if (p.version == null) {
-    const { data, error } = await supabase.from("products")
-      .insert({ id: p.id, ...productToRow(p, drawingRefs), version: 1 }).select().single();
+    const { data, error } = await traceQuery(supabase.from("products")
+      .insert({ id: p.id, ...productToRow(p, drawingRefs), version: 1 }).select().single(), processId, "product.save");
     if (error) throw error;
     return productFromRow(data as ProductRow);
   }
-  const { data, error } = await supabase.from("products")
+  const { data, error } = await traceQuery(supabase.from("products")
     .update({ ...productToRow(p, drawingRefs), version: p.version + 1 })
-    .eq("id", p.id).eq("version", p.version).select().maybeSingle();
+    .eq("id", p.id).eq("version", p.version).select().maybeSingle(), processId, "product.save");
   if (error) throw error;
   if (data) return productFromRow(data as ProductRow);
-  const latest = await supabase.from("products").select("*").eq("id", p.id).maybeSingle();
+  const latest = await traceQuery(supabase.from("products").select("*").eq("id", p.id).maybeSingle(), processId, "product.save");
   if (latest.error) throw latest.error;
   throw new StaleProductError(latest.data ? productFromRow(latest.data as ProductRow) : null);
 }
@@ -421,7 +427,7 @@ export class StaleProductError extends Error {
 }
 
 export async function deleteProduct(id: string): Promise<void> {
-  const { error } = await supabase.from("products").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("products").delete().eq("id", id), startProcess("product.delete"), "product.delete");
   if (error) throw error;
 }
 
@@ -447,26 +453,27 @@ export class StaleOrderError extends Error {
 }
 
 export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
+  const processId = startProcess("order.save");
   const expectedVersion = o.version ?? 1;
 
-  const { data, error } = await supabase
+  const { data, error } = await traceQuery(supabase
     .from("orders")
     .update({ ...orderToRow(o), version: expectedVersion + 1 })
     .eq("id", o.id)
     .eq("version", expectedVersion)
     .select()
-    .single();
+    .single(), processId, "order.save");
 
   if (error) {
     if (error.code !== "PGRST116") throw error;
     // Postgres reports a missing row on .single() as 0 rows. That is either a
     // genuinely new order or a version that has moved on, so distinguish the
     // two before deciding to insert.
-    const { data: existing, error: lookupError } = await supabase
+    const { data: existing, error: lookupError } = await traceQuery(supabase
       .from("orders")
       .select("*")
       .eq("id", o.id)
-      .maybeSingle();
+      .maybeSingle(), processId, "order.save");
     if (lookupError) throw lookupError;
     if (existing) {
       if (existing.version !== expectedVersion) throw new StaleOrderError(o.id, existing.updated_by_username?.trim() || undefined);
@@ -476,22 +483,23 @@ export async function upsertOrder(o: OrderRecord): Promise<OrderRecord> {
 
   if (data) return orderFromRow(data as OrderRow);
 
-  const { data: inserted, error: insertError } = await supabase
+  const { data: inserted, error: insertError } = await traceQuery(supabase
     .from("orders")
     .insert({ id: o.id, ...orderToRow(o), version: 1 })
     .select()
-    .single();
+    .single(), processId, "order.save");
   if (insertError) throw insertError;
   return orderFromRow(inserted as OrderRow);
 }
 
 export async function submitOrderOnce(requestId: string, order: OrderRecord, owner: string): Promise<OrderRecord> {
-  const { data, error, status } = await supabase.rpc("submit_order_once", {
+  const processId = startProcess("order.submit", requestId);
+  const { data, error, status } = await traceQuery(supabase.rpc("submit_order_once", {
     p_request_id: requestId,
     p_owner_id: owner,
     p_order: { id: order.id, ...orderToRow(order) },
     p_expected_version: order.version ?? null,
-  });
+  }), processId, "order.submit");
   if (error) throw Object.assign(error, { status });
   if (data?.conflict) throw new StaleOrderError(order.id, data.latest?.updated_by_username?.trim() || undefined);
   if (!data?.id) throw new Error("No submission receipt returned.");
@@ -501,13 +509,14 @@ export async function submitOrderOnce(requestId: string, order: OrderRecord, own
 // Print metadata is a narrow update: never re-submit the printed snapshot's
 // quantity/progress/financial fields while another operator is editing them.
 export async function markPreparationPrinted(order: OrderRecord, printedAt: string): Promise<OrderRecord> {
+  const processId = startProcess("order.preparation_print_status");
   const expectedVersion = order.version ?? 1;
-  const { data, error } = await supabase.from("orders")
+  const { data, error } = await traceQuery(supabase.from("orders")
     .update({ preparation_print_status: "completed", preparation_printed_at: printedAt, version: expectedVersion + 1 })
-    .eq("id", order.id).eq("version", expectedVersion).select().single();
+    .eq("id", order.id).eq("version", expectedVersion).select().single(), processId, "order.preparation_print_status");
   if (data) return orderFromRow(data as OrderRow);
   if (error && error.code !== "PGRST116") throw error;
-  const { data: latest, error: lookupError } = await supabase.from("orders").select("*").eq("id", order.id).maybeSingle();
+  const { data: latest, error: lookupError } = await traceQuery(supabase.from("orders").select("*").eq("id", order.id).maybeSingle(), processId, "order.preparation_print_status");
   if (lookupError) throw lookupError;
   if (!latest) throw new Error("This order is no longer available. Load the latest orders.");
   if (latest.version !== expectedVersion) throw new StaleOrderError(order.id, latest.updated_by_username?.trim() || undefined);
@@ -516,12 +525,12 @@ export async function markPreparationPrinted(order: OrderRecord, printedAt: stri
 
 export async function fetchOrdersByIds(ids: string[]): Promise<OrderRecord[]> {
   if (!ids.length) return [];
-  const { data, error } = await supabase.from("orders").select("*").in("id", ids);
+  const { data, error } = await traceQuery(supabase.from("orders").select("*").in("id", ids), startProcess("order.fetch_selected"), "order.fetch_selected");
   if (error) throw error;
   return (data as OrderRow[]).map(orderFromRow);
 }
 
 export async function deleteOrder(id: string): Promise<void> {
-  const { error } = await supabase.from("orders").delete().eq("id", id);
+  const { error } = await traceQuery(supabase.from("orders").delete().eq("id", id), startProcess("order.delete"), "order.delete");
   if (error) throw error;
 }
