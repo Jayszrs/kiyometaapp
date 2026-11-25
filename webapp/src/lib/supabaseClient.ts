@@ -11,4 +11,10 @@ if (!url || !key) {
 // Do not let the SDK silently replay writes. Order submissions and manual
 // movements already have server idempotency keys; other edits surface errors
 // so the user can retry against the latest version.
-export const supabase = createClient(url, key, { db: { retry: false }, global: { fetch: loadingFetch } });
+export const supabase = createClient(url, key, {
+  // Keep browser/WebView sessions across app restarts and refresh short-lived
+  // access tokens using the stored refresh token.
+  auth: { persistSession: true, autoRefreshToken: true },
+  db: { retry: false },
+  global: { fetch: loadingFetch },
+});
