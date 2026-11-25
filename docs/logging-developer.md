@@ -51,9 +51,9 @@ The collector allowlists metadata fields and excludes request/response bodies, c
 
 The migration must be applied to the same Supabase project as the app. It does not create a Supabase log file. `supabase.log` is Kiyometa's copy of traced service-call metadata. Supabase's own platform logs remain separately available in the Supabase dashboard. Some SDK calls may bypass the traced fetch path; verify representative read/write/Storage calls in a deployed preview before claiming complete HTTP coverage.
 
-## Enable Edge Function forwarding
+## Edge Function forwarding
 
-Set this secret on the same Supabase project, using the production application URL:
+The `manage-users` function sends events to the production collector URL in its source code. To use another trusted collector, set this secret on the same Supabase project:
 
 ```sh
 supabase secrets set KIYOMETA_DIAGNOSTICS_URL=https://kiyometa.smartbsd.my.id/ocr/diagnostics --project-ref YOUR_PROJECT_REF
@@ -65,7 +65,7 @@ Deploy the updated function after releasing the branch:
 supabase functions deploy manage-users --project-ref YOUR_PROJECT_REF
 ```
 
-Without the secret, Edge events still appear in Supabase Edge Function logs as structured JSON but are not copied to `/srv/kiyometa/logs/supabase.log`. Collector delivery is best-effort and must not fail a user action.
+The function uses the production URL when this secret is absent. Edge events also appear in Supabase Edge Function logs as structured JSON. Collector delivery is best-effort and must not fail a user action.
 
 ## Return codes and investigation
 

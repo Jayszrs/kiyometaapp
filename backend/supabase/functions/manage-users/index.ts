@@ -5,6 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-process-id, x-parent-process-id, x-request-id, x-process-operation, x-device-id, x-app-release, x-session-id",
 };
+const defaultDiagnosticsUrl = "https://kiyometa.smartbsd.my.id/ocr/diagnostics";
 
 type Role = "administrator" | "operator";
 
@@ -32,7 +33,7 @@ function tracedFetch(input: RequestInfo | URL, init: RequestInit | undefined, tr
       parent_process_id: trace.parentProcessId || trace.processId, request_id: requestId,
       operation, stage, rc, http_status: status, duration_ms: Math.round(duration),
       service_host: url.hostname, device_id: trace.deviceId, release_id: trace.releaseId };
-    const endpoint = Deno.env.get("KIYOMETA_DIAGNOSTICS_URL");
+    const endpoint = Deno.env.get("KIYOMETA_DIAGNOSTICS_URL") ?? defaultDiagnosticsUrl;
     const delivery = endpoint && trace.token
       ? fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${trace.token}` }, body: JSON.stringify({ events: [{ ...event, source: "supabase" }] }), signal: AbortSignal.timeout(2500) }).catch(() => undefined)
       : Promise.resolve();
