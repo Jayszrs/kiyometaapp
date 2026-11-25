@@ -47,7 +47,7 @@ The collector allowlists metadata fields and excludes request/response bodies, c
 
 ## Supabase audit correlation
 
-`backend/supabase/migrations/20261125090000_audit_request_context.sql` adds process/request/session/device/release/operation and business-record lifecycle context to the existing `audit_logs.metadata` using a `BEFORE INSERT` trigger. The trigger runs inside the audit insert transaction, so it does not create a separate, partially committed audit record. Existing audit snapshots and undo behavior remain the source of historical changes.
+`backend/supabase/migrations/20261125071841_audit_request_context.sql` adds process/request/session/device/release/operation and business-record lifecycle context to the existing `audit_logs.metadata` using a `BEFORE INSERT` trigger. The trigger runs inside the audit insert transaction, so it does not create a separate, partially committed audit record. Existing audit snapshots and undo behavior remain the source of historical changes.
 
 The migration must be applied to the same Supabase project as the app. It does not create a Supabase log file. `supabase.log` is Kiyometa's copy of traced service-call metadata. Supabase's own platform logs remain separately available in the Supabase dashboard. Some SDK calls may bypass the traced fetch path; verify representative read/write/Storage calls in a deployed preview before claiming complete HTTP coverage.
 
