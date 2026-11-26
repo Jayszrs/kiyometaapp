@@ -1,146 +1,139 @@
 # Kiyometa Order Management
 
-The frontend UI lives in `webapp/` and is built with React, TypeScript, and
-Vite. The backend definition lives separately in `backend/supabase/`. Flutter
-provides a thin WebView wrapper so the same frontend can run on the shared
-Android tablet emulator, Windows, Chrome, and Edge.
+Kiyometa adalah aplikasi web untuk mengelola kegiatan manufaktur pada perusahaan baja Jepang. Aplikasi ini menggantikan software tablet lama dan menyatukan data quotation, order, produksi, BOM, dan inventory pada beberapa tablet.
 
-## Project structure
+## Modul
 
-- `webapp/src/` - React/TypeScript application source.
-- `webapp/public/` - static browser assets; `webapp/dist/` is generated output.
-- `backend/supabase/migrations/` - ordered PostgreSQL schema migrations.
-- `backend/supabase/functions/` - protected Supabase Edge Functions.
-- `lib/` - thin Flutter WebView wrapper source.
-- `android/`, `windows/`, and `web/` - Flutter platform projects. These paths are
-  required by Flutter and should not be moved into custom folders.
-- `assets/branding/` - canonical app branding used by the Flutter wrapper.
-- `tool/`, `.tools/`, and `.vscode/` - tablet runner and shared editor setup.
+| Modul | Fungsi |
+|---|---|
+| Home | Ringkasan aktivitas dan akses modul |
+| Quotation dan Order Entry | Membuat quotation dan mendaftarkan order |
+| Search & Billing | Mencari order, mencetak dokumen, dan membuat CSV |
+| Calendar | Melihat order berdasarkan tanggal |
+| Production Stage Progress | Melihat dan memperbarui tahap produksi |
+| Product Master | Mengelola produk, BOM, drawing, dan manufacturing process |
+| Client Master | Mengelola data client |
+| Inventory & Purchasing | Mengelola material, pembelian, stock movement, dan rekonsiliasi |
+| Role Management | Mengelola employee dan role |
+| Activity Audit | Melihat riwayat perubahan dan melakukan undo jika diizinkan |
 
-Generated dependencies and build output are intentionally not stored in Git:
-`node_modules/`, `dist/`, `.dart_tool/`, and `build/`. Local environment values
-in `webapp/.env.local` are also ignored.
+## Alur utama
 
-## First setup
+1. Staff menerima quotation dari client.
+2. Staff memakai OCR untuk membaca dokumen.
+3. Staff memeriksa hasil OCR dan membuat quotation atau order.
+4. BOM menghubungkan produk dengan material.
+5. Saat order masuk produksi, inventory berkurang sesuai BOM.
+6. Staff memantau produksi dan mencetak dokumen.
+7. Activity Audit menyimpan siapa yang mengubah data dan kapan perubahan terjadi.
 
-Create `webapp/.env.local` from the committed safe template, then run:
+## OCR dan offline
+
+OCR memakai Python, FastAPI, RapidOCR, dan OpenCV. Staff dapat crop atau rotate dokumen, memeriksa hasil pembacaan, lalu memperbaiki field sebelum data masuk ke order. Panduan lengkap ada di [ocr-service/README.md](ocr-service/README.md).
+
+Aplikasi menyimpan draft dan recovery event di IndexedDB. Aplikasi dapat melanjutkan OCR job dan mengirim submission saat koneksi pulih. Panduan recovery ada di [docs/recovery.md](docs/recovery.md).
+
+## Screenshot showcase
+
+Screenshot disimpan di [docs/screenshots/](docs/screenshots/). Gunakan nama modul berikut saat menambahkan capture:
+
+![Home](docs/screenshots/home.png)
+![Order Entry](docs/screenshots/order-entry.png)
+![Search and Billing](docs/screenshots/search-billing.png)
+![Calendar](docs/screenshots/calendar.png)
+![Production Stage Progress](docs/screenshots/production-progress.png)
+![Product Master](docs/screenshots/product-master.png)
+![Client Master](docs/screenshots/client-master.png)
+![Inventory and Purchasing](docs/screenshots/inventory-purchasing.png)
+![Activity Audit](docs/screenshots/activity-audit.png)
+
+## Technology
+
+React, TypeScript, dan Vite menjalankan web app. Supabase menyediakan authentication, PostgreSQL, file storage, dan Edge Functions. FastAPI menjalankan OCR service. Flutter menyediakan Android tablet wrapper. IndexedDB menyimpan draft dan recovery lokal.
+
+## Folder project
+
+- [webapp/](webapp/) berisi React application.
+- [backend/](backend/) berisi migration dan Supabase Edge Functions.
+- [ocr-service/](ocr-service/) berisi OCR service Python.
+- [lib/](lib/), [android/](android/), dan [web/](web/) berisi Flutter wrapper.
+- [deploy/](deploy/) berisi konfigurasi deployment.
+- [docs/](docs/) berisi panduan developer dan operasi.
+
+## Menjalankan web app
+
+1. Install Node.js.
+2. Salin template environment.
+3. Isi URL dan publishable key Supabase.
+4. Install dependency dan jalankan Vite.
 
 ```powershell
 Copy-Item webapp/.env.local.example webapp/.env.local
 cd webapp
 npm ci
-cd ..
-flutter pub get
-```
-
-Run these migrations in order from the Supabase SQL Editor when preparing a
-new Supabase project:
-
-1. `backend/supabase/migrations/001_order_management.sql`
-2. `backend/supabase/migrations/002_roles_inventory_audit.sql`
-3. `backend/supabase/migrations/003_business_numbers_excel.sql`
-4. `backend/supabase/migrations/004_business_number_permissions.sql`
-5. `backend/supabase/migrations/005_all_roles_safe_undo.sql`
-6. `backend/supabase/migrations/006_employee_profiles.sql`
-7. `backend/supabase/migrations/007_product_inventory_integration.sql`
-8. `backend/supabase/migrations/008_order_management_constraints.sql`
-9. `backend/supabase/migrations/009_private_product_drawings.sql`
-
-Then link the Supabase CLI to the project and deploy the protected user
-management function:
-
-```powershell
-cd backend
-npx supabase login
-npx supabase functions deploy manage-users --project-ref YOUR_PROJECT_REF
-cd ..
-```
-
-The second migration promotes the existing `operator@kiyometa.app` account to
-the initial administrator. Sign in with username `operator`; email addresses
-are no longer entered in the application. In **Role management**, reset that
-account to `operator1234` and create additional username-only employee
-accounts. If the current password is unknown, reset it once from Supabase
-Dashboard -> Authentication -> Users before using the in-app controls.
-
-## Roles, audit, and inventory
-
-- Administrators can create/deactivate accounts, assign roles, reset employee
-  passwords, and inspect the complete activity trail.
-- Role Management is hidden from operators and its server endpoint also
-  rejects operator requests.
-- Every active role can undo its own latest supported data change, including
-  accidental deletions. Administrators can additionally undo other users'
-  supported changes from the audit screen.
-- Every employee can edit their own display name, private profile photo, and
-  employee biodata without being able to change their username or role.
-- Inventory master data, purchases, printable purchase receipts, and stock
-  mutations are stored in Supabase.
-- Product material requirements (BOM) can be managed from Product Master or
-  Inventory. Stock is deducted when an order enters `In production`, remains
-  idempotent through `Complete`/`Shipped`, and is restored when the order moves
-  back before production or is deleted.
-- Database-level balance guards reject any order, purchase correction, import,
-  manual movement, or undo operation that would make inventory negative.
-- The supplied Excel workbooks were used as the field and workflow reference;
-  they are not runtime dependencies and are not copied into the repository.
-
-## Backend troubleshooting
-
-- `404` for `profiles`, `purchases`, or `inventory_balances` means migration
-  `002_roles_inventory_audit.sql` has not been run on that Supabase project.
-- A CORS/preflight failure for `manage-users` normally means the Edge Function
-  has not been deployed. The function already handles browser `OPTIONS`
-  requests after it exists on Supabase.
-- `401` or `403` from `/auth/v1/user` means the cached login session is invalid
-  or expired. The frontend clears it automatically; sign in again and verify
-  that it points to the same Supabase project where migrations were installed.
-- `ERR_BLOCKED_BY_CLIENT` and `feature_collector.js` normally come from a
-  browser extension or content blocker, not from the application bundle.
-- The React DevTools console line is an informational development message, not
-  an application error.
-
-## Run on the project tablet
-
-From a VS Code integrated terminal at the repository root:
-
-```powershell
-flutter run
-```
-
-Choose option `4` for **Kiyometa Tablet**. The runner creates or starts the
-Android tablet, waits until Android has finished booting, starts Vite, connects
-port 5173 to the emulator, syncs web dependencies when `package-lock.json`
-changes, and launches the Flutter wrapper. The tablet image and AVD are created
-on each developer's computer; they are not stored in Git. Install Flutter,
-Android SDK Emulator/Command-line Tools, and Node.js first. Copy
-`webapp/.env.local.example` to `webapp/.env.local` and fill in the project's
-public Supabase values once per computer.
-
-From a regular PowerShell terminal, launch the tablet with:
-
-```powershell
-.\run-tablet.cmd
-```
-
-`run-tablet.cmd` starts the emulator, Vite, port forwarding, and the Flutter
-app. `start-tablet.cmd` only prepares the emulator and is useful when the app
-will be launched separately from VS Code.
-
-## Run only the web application
-
-```powershell
-cd webapp
 npm run dev
 ```
 
-For a production bundle, run `npm run build`. The generated `webapp/dist/`
-directory can always be rebuilt and should not be committed.
+Isi VITE_SUPABASE_URL dan VITE_SUPABASE_PUBLISHABLE_KEY di webapp/.env.local. Jangan masukkan database password atau service role key.
 
-## Generated folders
+Untuk tablet:
 
-The following folders are local build products, not application source:
-`build/`, `.dart_tool/`, `android/.gradle/`, `webapp/node_modules/`,
-`webapp/dist/`, and `backend/supabase/.temp/`. Git ignores them. Use
-`flutter clean` when Flutter output becomes large; use `npm ci` to recreate
-frontend dependencies.
+```powershell
+cd ..
+flutter pub get
+flutter run
+```
+
+Atau jalankan run-tablet.cmd.
+
+## Database dan dokumentasi
+
+File di [backend/supabase/migrations/](backend/supabase/migrations/) menentukan schema, RLS, audit, inventory, dan business rules. Terapkan migration sesuai urutan nama file pada Supabase project baru. Seed demo tersedia di [backend/supabase/seed_demo_data.sql](backend/supabase/seed_demo_data.sql).
+
+Buka [docs/README.md](docs/README.md) untuk memilih panduan logging, result code, OCR, recovery, database, dan deployment.
+
+## Peta dokumentasi
+
+README pusat ini menjelaskan produk, modul, setup, dan cara menjalankan project. Gunakan link berikut untuk masuk langsung ke panduan yang lebih khusus.
+
+### Project dan design
+
+- [DESIGN.md](DESIGN.md): prinsip visual, layout, warna, typography, dan pola UI.
+- [docs/README.md](docs/README.md): daftar isi dokumentasi dan cara memilih panduan.
+
+### Backend dan database
+
+- [backend/README.md](backend/README.md): migration, RLS, dan Supabase Edge Functions.
+- [docs/logging-developer.md](docs/logging-developer.md): cara mencari satu proses dari Activity Audit sampai file log server.
+- [docs/result-codes.md](docs/result-codes.md): daftar result code dan tindakan untuk setiap error.
+- [docs/recovery.md](docs/recovery.md): draft, offline queue, dan recovery.
+
+### OCR
+
+- [ocr-service/README.md](ocr-service/README.md): install, API, konfigurasi, deployment, dan test OCR.
+- [ocr-service/tests/CAMERA_20261014.md](ocr-service/tests/CAMERA_20261014.md): hasil validasi kamera.
+- [ocr-service/tests/CAMERA_VALIDATION.md](ocr-service/tests/CAMERA_VALIDATION.md): prosedur validasi kamera.
+- [ocr-service/tests/POLLING_VALIDATION.md](ocr-service/tests/POLLING_VALIDATION.md): prosedur validasi polling OCR.
+
+### Deployment dan referensi bisnis
+
+- [deploy/production/README.md](deploy/production/README.md): file deployment, lokasi server, dan proses deploy.
+
+## Quality checks
+
+```powershell
+cd webapp
+npm test
+npm run typecheck
+npm run build
+```
+
+```sh
+cd ocr-service
+python -m unittest discover -s tests
+```
+
+## Security
+
+Jangan commit password, service role key, access token, customer document, atau file environment. RLS dan protected Edge Functions menjadi batas akses server. UI bukan pengganti security policy database.
+
